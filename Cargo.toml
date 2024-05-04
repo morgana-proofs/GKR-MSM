@@ -1,0 +1,22 @@
+[package]
+name = "BFMSM"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ark-ec = { version = "0.4.2", features = ["parallel"]}
+ark-ff = { version = "0.4.2", features = ["parallel", "asm"] }
+ark-std = { version = "0.4.0", features = ["parallel"] }
+ark-serialize = { version = "0.4.2", default-features = false, features = [
+    "derive",
+] }
+ark-bls12-381 = { version = "^0.4.0", default-features = false, features = [ "curve" ] }
+
+
+liblasso = { git = "https://github.com/rebenkoy/liblasso.git", branch = "master", features = ["default", "multicore"]}
+ark-ed-on-bls12-381-bandersnatch = "0.4.0"
+rayon = "1.10.0"
+itertools = "0.12.1"
+merlin = "3.0.0"
+# bandersnatch = { git = "https://github.com/zhenfeizhang/bandersnatch.git", version = "0.1.1", features = ["asm", "std"] }
+# ark-ed-on-bls12-381-bandersnatch = { git = "https://github.com/arkworks-rs/algebra.git", rev = "bf96a5b"}

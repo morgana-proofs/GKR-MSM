@@ -4,7 +4,7 @@ use ark_bls12_381::Fr;
 use ark_ec::{bls12::Bls12, pairing::Pairing, CurveGroup};
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_std::iterable::Iterable;
-use liblasso::{poly::{eq_poly::EqPolynomial, dense_mlpoly::DensePolynomial}, subprotocols::sumcheck::SumcheckInstanceProof};
+use liblasso::{poly::{eq_poly::EqPolynomial, dense_mlpoly::DensePolynomial}, subprotocols::sumcheck::SumcheckInstanceProof, utils::transcript::ProofTranscript};
 use merlin::Transcript;
 use core::num;
 use std::marker::PhantomData;
@@ -313,6 +313,7 @@ struct InnerLayerProof<F: PrimeField + TwistedEdwardsConfig> {
 }
 
 struct GrandAddArgument<F: PrimeField + TwistedEdwardsConfig> {
+    final_claim: [F; 2],
     first: FirstLayerProof<F>,
     inner: Vec<InnerLayerProof<F>>,
 }
@@ -321,7 +322,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
   pub fn prove<G>(
     grand_add_circuit: &mut GrandAddCircuit<F>,
     transcript: &mut Transcript,
-    rand: &mut Vec<F>,
+    mut rand: Vec<F>,
   ) -> Self
   where
     G: CurveGroup<ScalarField = F>,
@@ -330,17 +331,20 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
         let FirstLayer{deg2: first_deg2, deg4: first_deg4, deg8: first_deg8} = first;
         let first_layer_proof: FirstLayerProof<F>;
         let mut inner_layers_proofs: Vec<InnerLayerProof<F>> = Vec::new();
-
+        let final_claim;
         let num_inner_layers = inner.len();
 
+        let mut deg8_claim = if num_inner_layers > 0{
+            inner.last().unwrap().deg8.each_ref().map(|p| p.evaluate(&rand))
+        } else {
+            first_deg8.each_ref().map(|p| p.evaluate(&rand))
+        };
+
         for inner_layer_id in (0..num_inner_layers).rev() {
-
-            let deg8_claim = inner[inner_layer_id].deg8.each_ref().map(|p| p.evaluate(&rand));
-
             let mut polys: Vec<DensePolynomial<F>> = inner[inner_layer_id].deg4.to_vec();
             polys.push(DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals()));
 
-            let (deg8_proof, rnd, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 5, 3>(
+            let (deg8_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 5, 3>(
                 &deg8_claim,
                 0,
                 &mut polys.try_into().unwrap(),
@@ -348,13 +352,14 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
                 3,
                 transcript,
             );
+            rand = _rand;
 
-            let deg4_claim = inner[inner_layer_id].deg4.each_ref().map(|p| p.evaluate(&rand));
+            let deg4_claim = evals.try_into().unwrap();
 
             polys = inner[inner_layer_id].deg2.to_vec();
             polys.push(DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals()));
 
-            let (deg4_proof, rnd, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 5, 4>(
+            let (deg4_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 5, 4>(
                 &deg4_claim,
                 0,
                 &mut polys.try_into().unwrap(),
@@ -362,8 +367,9 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
                 3,
                 transcript,
             );
+            rand = _rand;
 
-            let deg2_claim = inner[inner_layer_id].deg2.each_ref().map(|p| p.evaluate(&rand));
+            let deg2_claim = evals.try_into().unwrap();
 
             if inner_layer_id == 0 {
                 polys = split_vecs(&first_deg8).to_vec();
@@ -373,7 +379,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
 
             polys.push(DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals()));
 
-            let (deg2_proof, rnd, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 7, 4>(
+            let (deg2_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 7, 4>(
                 &deg2_claim,
                 0,
                 &mut polys.try_into().unwrap(),
@@ -381,7 +387,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
                 3,
                 transcript,
             );
-
+            rand = _rand;
 
             inner_layers_proofs.push(InnerLayerProof {
                 deg8_proof,
@@ -390,16 +396,23 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
                 deg4_claim,
                 deg2_proof,
                 deg2_claim,
-            })
+            });
+            let layer_coef = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_layer_coef");
+    
+            deg8_claim = (0..3)
+                .map(|i| evals[i] + layer_coef * (evals[i] - evals[3 + i]))
+                .collect::<Vec<F>>().try_into().unwrap();
+
+            let mut ext = vec![layer_coef];
+            ext.extend(rand);
+            rand = ext
         }
 
         { // First layer
-            let deg8_claim = first_deg8.each_ref().map(|p| p.evaluate(&rand));
-
             let mut polys: Vec<DensePolynomial<F>> = first_deg4.to_vec();
             polys.push(DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals()));
 
-            let (deg8_proof, rnd, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 4, 3>(
+            let (deg8_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 4, 3>(
                 &deg8_claim,
                 0,
                 &mut polys.try_into().unwrap(),
@@ -407,13 +420,14 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
                 3,
                 transcript,
             );
+            rand = _rand;
 
-            let deg4_claim = first_deg4.each_ref().map(|p| p.evaluate(&rand));
+            let deg4_claim = evals.try_into().unwrap();
 
             polys = first_deg2.to_vec();
             polys.push(DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals()));
 
-            let (deg4_proof, rnd, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 4, 3>(
+            let (deg4_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 4, 3>(
                 &deg4_claim,
                 0,
                 &mut polys.try_into().unwrap(),
@@ -421,13 +435,14 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
                 3,
                 transcript,
             );
+            rand = _rand;
 
-            let deg2_claim = first_deg2.each_ref().map(|p| p.evaluate(&rand));
+            let deg2_claim = evals.try_into().unwrap();
 
             polys = split_vecs(&input).to_vec();
             polys.push(DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals()));
 
-            let (deg2_proof, rnd, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 5, 3>(
+            let (deg2_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 5, 3>(
                 &deg2_claim,
                 0,
                 &mut polys.try_into().unwrap(),
@@ -435,6 +450,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
                 3,
                 transcript,
             );
+            rand = _rand;
 
             first_layer_proof = FirstLayerProof {
                 deg8_proof,
@@ -443,92 +459,19 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
                 deg4_claim,
                 deg2_proof,
                 deg2_claim,
-            }
+            };
+
+            let layer_coef = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_layer_coef");
+
+            final_claim = (0..2)
+                .map(|i| evals[i] + layer_coef * (evals[i] - evals[2 + i]))
+                .collect::<Vec<F>>().try_into().unwrap();
         }
-
-
-        
-        //     // prepare parallel instance that share poly_C first
-     
-        //     let len = grand_product_circuit.left_vec[layer_id].len() + grand_product_circuit.right_vec[layer_id].len();
-
-        //     let mut poly_C_par = DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals());
-        //     assert_eq!(poly_C_par.len(), len / 2);
-
-        //     let num_rounds_prod = poly_C_par.len().log_2() as usize;
-        //     let comb_func_prod = |poly_A_comp: &F, poly_B_comp: &F, poly_C_comp: &F| -> F {
-        //         *poly_A_comp * *poly_B_comp * *poly_C_comp
-        //     };
-
-        //     let mut poly_A_batched_par: Vec<&mut DensePolynomial<F>> = Vec::new();
-        //     let mut poly_B_batched_par: Vec<&mut DensePolynomial<F>> = Vec::new();
-        //     for prod_circuit in grand_product_circuits.iter_mut() {
-        //         poly_A_batched_par.push(&mut prod_circuit.left_vec[layer_id]);
-        //         poly_B_batched_par.push(&mut prod_circuit.right_vec[layer_id])
-        //     }
-        //     let poly_vec_par = (
-        //         &mut poly_A_batched_par,
-        //         &mut poly_B_batched_par,
-        //         &mut poly_C_par,
-        //     );
-
-        //     // produce a fresh set of coeffs and a joint claim
-        //     let coeff_vec: Vec<F> = <Transcript as ProofTranscript<G>>::challenge_vector(
-        //         transcript,
-        //         b"rand_coeffs_next_layer",
-        //         claims_to_verify.len(),
-        //     );
-        //     let claim = (0..claims_to_verify.len())
-        //         .map(|i| claims_to_verify[i] * coeff_vec[i])
-        //         .sum();
-
-        //     let (proof, rand_prod, claims_prod) = SumcheckInstanceProof::<F>::prove_cubic_batched::<_, G>(
-        //         &claim,
-        //         num_rounds_prod,
-        //         poly_vec_par,
-        //         &coeff_vec,
-        //         comb_func_prod,
-        //         transcript,
-        //     );
-
-        //     let (claims_prod_left, claims_prod_right, _claims_eq) = claims_prod;
-        //     for i in 0..grand_product_circuits.len() {
-        //         <Transcript as ProofTranscript<G>>::append_scalar(
-        //         transcript,
-        //         b"claim_prod_left",
-        //         &claims_prod_left[i],
-        //         );
-
-        //         <Transcript as ProofTranscript<G>>::append_scalar(
-        //         transcript,
-        //         b"claim_prod_right",
-        //         &claims_prod_right[i],
-        //         );
-        //     }
-
-        //     // produce a random challenge to condense two claims into a single claim
-        //     let r_layer =
-        //         <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_r_layer");
-
-        //     claims_to_verify = (0..grand_product_circuits.len())
-        //         .map(|i| claims_prod_left[i] + r_layer * (claims_prod_right[i] - claims_prod_left[i]))
-        //         .collect::<Vec<F>>();
-
-        //     let mut ext = vec![r_layer];
-        //     ext.extend(rand_prod);
-        //     rand = ext;
-
-        //     inner_layers_proofs.push(InnerLayerProof {
-        //         _pd: PhantomData
-        //         // proof,
-        //         // claims_prod_left,
-        //         // claims_prod_right,
-        //     });
-        // }
 
         GrandAddArgument {
             first: first_layer_proof,
             inner: inner_layers_proofs,
+            final_claim,
         }
   }
 

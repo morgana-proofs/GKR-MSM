@@ -4,6 +4,7 @@ use ark_bls12_381::Fr;
 use ark_ec::{bls12::Bls12, pairing::Pairing, CurveGroup};
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_std::iterable::Iterable;
+use itertools::Itertools;
 use liblasso::{poly::{eq_poly::EqPolynomial, dense_mlpoly::DensePolynomial}, subprotocols::sumcheck::SumcheckInstanceProof, utils::transcript::ProofTranscript};
 use merlin::Transcript;
 use core::num;
@@ -47,99 +48,106 @@ impl TwistedEdwardsConfig for Fr {
 }
 
 
-pub fn affine_twisted_edwards_add_l1<F: Field + TwistedEdwardsConfig>(pts: &[F; 4]) -> [F; 3]  {
-    let [x1, y1, x2, y2] = pts;
-    [*x1 * y2, *x2 * y1, *y1 * y2 - (*x1 * x2).mul_by_a()]
+pub fn affine_twisted_edwards_add_l1<F: Field + TwistedEdwardsConfig>(pts: &Vec<F>) -> Vec<F>  {
+    assert_eq!(pts.len(), 4);
+    let [x1, y1, x2, y2] = pts.as_slice().first_chunk().unwrap();
+    vec![*x1 * y2, *x2 * y1, *y1 * y2 - (*x1 * x2).mul_by_a()]
 }
 
-pub fn affine_twisted_edwards_add_l2<F: Field + TwistedEdwardsConfig>(pts: &[F; 3]) -> [F; 3]  {
-    let [x1y2, x2y1, y1y2_ax1x2] = pts;
-    [(*x1y2 + x2y1), *y1y2_ax1x2, *x1y2 * x2y1]
+pub fn affine_twisted_edwards_add_l2<F: Field + TwistedEdwardsConfig>(pts: &Vec<F>) -> Vec<F>  {
+    assert_eq!(pts.len(), 3);
+    let [x1y2, x2y1, y1y2_ax1x2] = pts.as_slice().first_chunk().unwrap();
+    vec![(*x1y2 + x2y1), *y1y2_ax1x2, *x1y2 * x2y1]
 }
 
-pub fn affine_twisted_edwards_add_l3<F: Field + TwistedEdwardsConfig>(pts: &[F; 3]) -> [F; 3]  {
-    let [X, Y, XY] = pts;
+pub fn affine_twisted_edwards_add_l3<F: Field + TwistedEdwardsConfig>(pts: &Vec<F>) -> Vec<F>  {
+    assert_eq!(pts.len(), 3);
+    let [X, Y, XY] = pts.as_slice().first_chunk().unwrap();
     let dXY = XY.mul_by_d();
     let Z2_dXY = F::one() - dXY;
     let Z2__dXY = F::one() + dXY;
-    [Z2_dXY * X, Z2__dXY * Y, Z2_dXY * Z2__dXY]
+    vec![Z2_dXY * X, Z2__dXY * Y, Z2_dXY * Z2__dXY]
 }
 
-pub fn affine_twisted_edwards_add<F: Field + TwistedEdwardsConfig>(pts: &[F; 4]) -> [F; 3] {
+pub fn affine_twisted_edwards_add<F: Field + TwistedEdwardsConfig>(pts: &Vec<F>) -> Vec<F> {
+    assert_eq!(pts.len(), 4);
     affine_twisted_edwards_add_l3(&affine_twisted_edwards_add_l2(&affine_twisted_edwards_add_l1(pts)))
 }
 
 
-pub fn twisted_edwards_add_l1<F: Field + TwistedEdwardsConfig>(pts: &[F; 6]) -> [F; 4]  {
-    let [x1, y1, z1, x2, y2, z2] = pts;
-    [*x1 * y2, *x2 * y1, *y1 * y2 - (*x1 * x2).mul_by_a(), *z1 * z2]
+pub fn twisted_edwards_add_l1<F: Field + TwistedEdwardsConfig>(pts: &Vec<F>) -> Vec<F>  {
+    assert_eq!(pts.len(), 6);
+    let [x1, y1, z1, x2, y2, z2] = pts.as_slice().first_chunk().unwrap();
+    vec![*x1 * y2, *x2 * y1, *y1 * y2 - (*x1 * x2).mul_by_a(), *z1 * z2]
 }
 
-pub fn twisted_edwards_add_l2<F: Field + TwistedEdwardsConfig>(pts: &[F; 4]) -> [F; 4]  {
-    let [x1y2, x2y1, y1y2_ax1x2, z1z2] = pts;
-    [(*x1y2 + x2y1) * z1z2, *y1y2_ax1x2 * z1z2, z1z2.square(), *x1y2 * x2y1]
+pub fn twisted_edwards_add_l2<F: Field + TwistedEdwardsConfig>(pts: &Vec<F>) -> Vec<F>  {
+    assert_eq!(pts.len(), 4);
+    let [x1y2, x2y1, y1y2_ax1x2, z1z2] = pts.as_slice().first_chunk().unwrap();
+    vec![(*x1y2 + x2y1) * z1z2, *y1y2_ax1x2 * z1z2, z1z2.square(), *x1y2 * x2y1]
 }
 
-pub fn twisted_edwards_add_l3<F: Field + TwistedEdwardsConfig>(pts: &[F; 4]) -> [F; 3]  {
-    let [X, Y, Z2, XY] = pts;
+pub fn twisted_edwards_add_l3<F: Field + TwistedEdwardsConfig>(pts: &Vec<F>) -> Vec<F>  {
+    assert_eq!(pts.len(), 4);
+    let [X, Y, Z2, XY] = pts.as_slice().first_chunk().unwrap();
     let dXY = XY.mul_by_d();
     let Z2_dXY = *Z2 - dXY;
     let Z2__dXY = *Z2 + dXY;
-    [Z2_dXY * X, Z2__dXY * Y, Z2_dXY * Z2__dXY]
+    vec![Z2_dXY * X, Z2__dXY * Y, Z2_dXY * Z2__dXY]
 }
 
-pub fn twisted_edwards_add<F: Field + TwistedEdwardsConfig>(pts: &[F; 6]) -> [F; 3] {
+pub fn twisted_edwards_add<F: Field + TwistedEdwardsConfig>(pts: &Vec<F>) -> Vec<F> {
     twisted_edwards_add_l3(&twisted_edwards_add_l2(&twisted_edwards_add_l1(pts)))
 }
 
 
-pub fn scale<F: Field + TwistedEdwardsConfig, const ALPHA: usize, const BETA: usize>(f: fn (&[F; ALPHA - 1]) -> [F; BETA]) -> impl Fn (&[F; ALPHA]) -> [F; BETA] {
-    move |data: &[F; ALPHA]| -> [F; BETA] {
-        let (pts, factor) = data.split_at(ALPHA);
-        f(pts.try_into().unwrap()).map(|p| p * factor[0])
+pub fn scale<F: Field + TwistedEdwardsConfig, T: Fn (&Vec<F>) -> Vec<F>>(f: T) -> impl Fn (&Vec<F>) -> Vec<F> {
+    move |data: &Vec<F>| -> Vec<F> {
+        let (pts, factor) = data.split_at(data.len() - 1);
+        f(&pts.to_vec()).iter().map(|p| *p * factor[0]).collect()
     }
 }
 
 // GKR
 
 struct FirstLayer<F: Field + TwistedEdwardsConfig> {
-    pub deg2: [DensePolynomial<F>; 3],
-    pub deg4: [DensePolynomial<F>; 3],
-    pub deg8: [DensePolynomial<F>; 3],
+    pub deg2: Vec<DensePolynomial<F>>,  // len = 3
+    pub deg4: Vec<DensePolynomial<F>>,  // len = 3
+    pub deg8: Vec<DensePolynomial<F>>,  // len = 3
 }
 
 struct InnerLayer<F: Field + TwistedEdwardsConfig> {
-    pub deg2: [DensePolynomial<F>; 4],
-    pub deg4: [DensePolynomial<F>; 4],
-    pub deg8: [DensePolynomial<F>; 3],
+    pub deg2: Vec<DensePolynomial<F>>,  // len = 4
+    pub deg4: Vec<DensePolynomial<F>>,  // len = 4
+    pub deg8: Vec<DensePolynomial<F>>,  // len = 3
 }
 
 struct GrandAddCircuit<F: Field + TwistedEdwardsConfig> {
-    pub input: [DensePolynomial<F>; 2],
+    pub input: Vec<DensePolynomial<F>>,  // len = 2
     pub first: FirstLayer<F>,
     pub inner: Vec<InnerLayer<F>>,
 }
 
-pub fn split_vecs<F: PrimeField, const ALPHA: usize>(ins: &[DensePolynomial<F>; ALPHA]) -> [DensePolynomial<F>; ALPHA * 2] {
-    let mut res = Vec::<DensePolynomial::<F>>::with_capacity(ALPHA * 2);
-    for _i in 0..(ALPHA * 2) {
+pub fn split_vecs<F: PrimeField>(ins: &Vec<DensePolynomial<F>>) -> Vec<DensePolynomial<F>> {
+    let mut res = Vec::<DensePolynomial::<F>>::with_capacity(ins.len() * 2);
+    for _i in 0..(ins.len() * 2) {
         res.push(DensePolynomial::new(vec![]))
     }
 
-    ins.iter().enumerate().map(|(idx, poly)| (res[idx], res[ALPHA + idx]) = poly.split(poly.len() / 2)).count();
+    ins.iter().enumerate().map(|(idx, poly)| (res[idx], res[ins.len() + idx]) = poly.split(poly.len() / 2)).count();
     res.try_into().unwrap()
 }
 
-pub fn map_over_poly<F: PrimeField, const ALPHA: usize, const BETA: usize>(
-    ins: &[DensePolynomial<F>; ALPHA],
-    f: impl Fn(&[F; ALPHA]) -> [F; BETA] + Send + Sync + Clone
-) -> [DensePolynomial<F>; BETA] {
-    let ins_refs = ins.each_ref();
-    let applications: Vec<[F; BETA]> = (0..ins[0].len()).into_par_iter()
+pub fn map_over_poly<F: PrimeField>(
+    ins: &Vec<DensePolynomial<F>>,
+    f: impl Fn(&Vec<F>) -> Vec<F> + Send + Sync + Clone
+) -> Vec<DensePolynomial<F>> {
+    let applications: Vec<Vec<F>> = (0..ins[0].len()).into_par_iter()
         .map(|idx| {
-            f(&ins_refs.map(|p| p[idx]))
+            f(&ins.iter().map(|p| p[idx]).collect_vec())
         }).collect();
-    (0..BETA).into_iter()
+    
+    (0..applications.first().unwrap().len()).into_iter()
         .map(|idx| {
             DensePolynomial::new(applications.iter().map(|v| v[idx]).collect())
     }).collect::<Vec<DensePolynomial::<F>>>().try_into().unwrap()
@@ -154,7 +162,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddCircuit<F> {
         let num_layers = x.len().log_2() as usize;
         assert_eq!(x.len(), 1 << num_layers);
 
-        let input = [x.clone(), y.clone()];
+        let input = vec![x.clone(), y.clone()];
         let deg1 = split_vecs(&input);
         let deg2 = map_over_poly(&deg1, affine_twisted_edwards_add_l1);
         let deg4 = map_over_poly(&deg2, affine_twisted_edwards_add_l2);
@@ -185,29 +193,29 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddCircuit<F> {
 }
 
 struct FirstLayerProof<F: PrimeField + TwistedEdwardsConfig> {
-    deg8_claim: [F; 3],
+    deg8_claim: Vec<F>, // len = 3
     deg8_proof: SumcheckInstanceProof<F>,
-    deg4_claim: [F; 3],
+    deg4_claim: Vec<F>, // len = 3
     deg4_proof: SumcheckInstanceProof<F>,
-    deg2_claim: [F; 3],
+    deg2_claim: Vec<F>, // len = 3
     deg2_proof: SumcheckInstanceProof<F>,
 }
 
 struct InnerLayerProof<F: PrimeField + TwistedEdwardsConfig> {
-    deg8_claim: [F; 3],
+    deg8_claim: Vec<F>, // len = 3
     deg8_proof: SumcheckInstanceProof<F>,
-    deg4_claim: [F; 4],
+    deg4_claim: Vec<F>, // len = 4
     deg4_proof: SumcheckInstanceProof<F>,
-    deg2_claim: [F; 4],
+    deg2_claim: Vec<F>, // len = 4
     deg2_proof: SumcheckInstanceProof<F>,
 }
 
 struct GrandAddArgument<F: PrimeField + TwistedEdwardsConfig> {
-    final_claim: [F; 2],
+    final_claim: Vec<F>, // len = 2
     first: FirstLayerProof<F>,
     inner: Vec<InnerLayerProof<F>>,
 }
-
+ 
 impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
   pub fn prove<G>(
     grand_add_circuit: &mut GrandAddCircuit<F>,
@@ -225,16 +233,16 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
         let num_inner_layers = inner.len();
 
         let mut deg8_claim = if num_inner_layers > 0{
-            inner.last().unwrap().deg8.each_ref().map(|p| p.evaluate(&rand))
+            inner.last().unwrap().deg8.iter().map(|p| p.evaluate(&rand)).collect()
         } else {
-            first_deg8.each_ref().map(|p| p.evaluate(&rand))
+            first_deg8.iter().map(|p| p.evaluate(&rand)).collect()
         };
 
         for inner_layer_id in (0..num_inner_layers).rev() {
             let mut polys: Vec<DensePolynomial<F>> = inner[inner_layer_id].deg4.to_vec();
             polys.push(DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals()));
 
-            let (deg8_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 5, 3>(
+            let (deg8_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec_dyn::<_, G, _>(
                 &deg8_claim,
                 0,
                 &mut polys.try_into().unwrap(),
@@ -249,7 +257,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
             polys = inner[inner_layer_id].deg2.to_vec();
             polys.push(DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals()));
 
-            let (deg4_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 5, 4>(
+            let (deg4_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec_dyn::<_, G, _>(
                 &deg4_claim,
                 0,
                 &mut polys.try_into().unwrap(),
@@ -269,7 +277,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
 
             polys.push(DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals()));
 
-            let (deg2_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 7, 4>(
+            let (deg2_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec_dyn::<_, G, _>(
                 &deg2_claim,
                 0,
                 &mut polys.try_into().unwrap(),
@@ -302,7 +310,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
             let mut polys: Vec<DensePolynomial<F>> = first_deg4.to_vec();
             polys.push(DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals()));
 
-            let (deg8_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 4, 3>(
+            let (deg8_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec_dyn::<_, G, _>(
                 &deg8_claim,
                 0,
                 &mut polys.try_into().unwrap(),
@@ -317,7 +325,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
             polys = first_deg2.to_vec();
             polys.push(DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals()));
 
-            let (deg4_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 4, 3>(
+            let (deg4_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec_dyn::<_, G, _>(
                 &deg4_claim,
                 0,
                 &mut polys.try_into().unwrap(),
@@ -332,7 +340,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
             polys = split_vecs(&input).to_vec();
             polys.push(DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals()));
 
-            let (deg2_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec::<_, G, _, 5, 3>(
+            let (deg2_proof, _rand, evals, gamma) = SumcheckInstanceProof::prove_arbitrary_vec_dyn::<_, G, _>(
                 &deg2_claim,
                 0,
                 &mut polys.try_into().unwrap(),
@@ -355,7 +363,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
 
             final_claim = (0..2)
                 .map(|i| evals[i] + layer_coef * (evals[i] - evals[2 + i]))
-                .collect::<Vec<F>>().try_into().unwrap();
+                .collect::<Vec<F>>();
         }
 
         GrandAddArgument {
@@ -453,7 +461,9 @@ mod tests {
         let pt1 = EdwardsProjective::rand(&mut rng);
         let pt2 = EdwardsProjective::rand(&mut rng);
         let bandersnatch_sum =  pt1 + pt2;
-        let [x, y, z] = twisted_edwards_add(&[pt1.x, pt1.y, pt1.z, pt2.x, pt2.y, pt2.z]);
+        let a = twisted_edwards_add(&vec![pt1.x, pt1.y, pt1.z, pt2.x, pt2.y, pt2.z]);
+        assert_eq!(a.len(), 3);
+        let [x, y, z] = a.as_slice().first_chunk().unwrap();
         assert_eq!(bandersnatch_sum, EdwardsAffine::new(x / z, y / z));
     }
 
@@ -466,20 +476,22 @@ mod tests {
         let pt1 = EdwardsAffine::rand(&mut rng);
         let pt2 = EdwardsAffine::rand(&mut rng);
         let bandersnatch_sum =  pt1 + pt2;
-        let [x, y, z] = affine_twisted_edwards_add(&[pt1.x, pt1.y, pt2.x, pt2.y]);
+        let a = affine_twisted_edwards_add(&vec![pt1.x, pt1.y, pt2.x, pt2.y]);  
+        assert_eq!(a.len(), 3);
+        let [x, y, z] = a.as_slice().first_chunk().unwrap();
         assert_eq!(bandersnatch_sum, EdwardsAffine::new(x / z, y / z));
     }
 
     #[test]
     fn map_over_poly_check() {
-        let ins = [
+        let ins = vec![
             DensePolynomial::new(vec![Fr::from(5)]),
             DensePolynomial::new(vec![Fr::from(3)]),
             DensePolynomial::new(vec![Fr::from(2)]),
             DensePolynomial::new(vec![Fr::from(4)]),
         ];
         let outs = map_over_poly(&ins, affine_twisted_edwards_add);
-        let ans = affine_twisted_edwards_add(&[Fr::from(5), Fr::from(3), Fr::from(2), Fr::from(4)]).map(|x| DensePolynomial::new(vec![x]));
+        let ans: Vec<DensePolynomial<Fr>> = affine_twisted_edwards_add(&vec![Fr::from(5), Fr::from(3), Fr::from(2), Fr::from(4)]).iter().map(|&x| DensePolynomial::new(vec![x])).collect();
         zip_eq(outs.iter(), ans.iter()).enumerate().map(|(idx, (o, a))| assert_eq!(o.Z, a.Z, "Mismatch in position {:?}: {:?} != {:?}", idx, o, a)).count();
     }
 }

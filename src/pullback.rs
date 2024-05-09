@@ -1,6 +1,11 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::IndexedParallelIterator;
+use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::IntoParallelRefMutIterator;
+use rayon::iter::ParallelIterator;
 use crate::msm_nonaffine::VariableBaseMSM_Nonaffine;
 
 /// This structure hosts a counter c, an array a,
@@ -20,13 +25,50 @@ impl<F: PrimeField> Pullback<F> {
 
     /// Computes pullback's MSM by first aggregating repeated elements, and then doing normal MSM.
     pub fn bucketed_msm<G: CurveGroup<ScalarField = F>>(&self, bases: &[G::MulBase]) -> G {
+        let Self{mapping, image} = self;
+        
+        assert!(mapping.len() == bases.len());
+
         let zero = G::zero();
-        let mut buckets = vec![zero; self.image.len()];
-        for (i, counter) in self.mapping.iter().enumerate() {
-            buckets[*counter] += bases[i];
+        let num_threads = rayon::current_num_threads();
+        
+        let chunks = split_into_chunks_balanced(bases, num_threads)
+            .zip(split_into_chunks_balanced(mapping, num_threads))
+            .collect::<Vec<_>>();
+
+        let thread_buckets : Vec<_> = chunks
+            .into_par_iter()
+            .map(|(bases, mapping)| {
+                let mut buckets = vec![zero; image.len()];
+                for (base, counter) in bases.iter().zip(mapping.iter()) {
+                    buckets[*counter] += base;
+                }
+                buckets
+            }).collect();
+
+        let mut buckets = vec![zero; image.len()];
+
+        
+        for i in 0..num_threads {
+            let buckets_iter = buckets.par_iter_mut();
+            buckets_iter.zip(thread_buckets[i].par_iter()).map(|(acc, inc)| *acc += inc).count();
         }
+        
         G::msm_nonaff(&buckets, &self.image).unwrap()
     }
+}
+
+
+fn split_into_chunks_balanced<T>(arr: &[T], num_threads: usize) -> impl Iterator<Item = &[T]> + '_ {
+
+    let l = arr.len();
+    let base_size = l / num_threads;
+    let num_large_chunks = l - base_size * num_threads;
+
+    let (m_hi, m_lo) = arr.split_at(num_large_chunks*num_threads);
+    let chunks_hi = m_hi.chunks(base_size + 1);
+    let chunks_lo = m_lo.chunks(base_size);
+    chunks_hi.chain(chunks_lo)
 }
 
 mod tests{

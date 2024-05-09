@@ -196,7 +196,7 @@ fn msm_bigint_nonaff<V: VariableBaseMSM_Nonaffine>(
   let one = V::ScalarField::one().into_bigint();
 
   let zero = V::zero();
-  let window_starts = (0..num_bits).step_by(c);
+  let window_starts = ark_std::cfg_into_iter!(0..num_bits).step_by(c);
 
   // Each window is of size `c`.
   // We divide up the bits 0..num_bits into windows of size `c`, and

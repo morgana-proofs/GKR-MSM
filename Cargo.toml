@@ -20,3 +20,10 @@ itertools = "0.12.1"
 merlin = "3.0.0"
 # bandersnatch = { git = "https://github.com/zhenfeizhang/bandersnatch.git", version = "0.1.1", features = ["asm", "std"] }
 # ark-ed-on-bls12-381-bandersnatch = { git = "https://github.com/arkworks-rs/algebra.git", rev = "bf96a5b"}
+
+[features]
+
+parallel = []
+default = [
+    "parallel"
+]

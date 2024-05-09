@@ -3,7 +3,7 @@
 version = 3
 
 [[package]]
-name = "BFMSM"
+name = "GKR-MSM"
 version = "0.1.0"
 dependencies = [
  "ark-bls12-381",

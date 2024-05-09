@@ -1,5 +1,8 @@
 #![feature(generic_const_exprs)]
 
+pub mod pullback;
+pub mod msm_nonaffine;
+
 use ark_bls12_381::Fr;
 use ark_ec::{bls12::Bls12, pairing::Pairing, CurveGroup};
 use ark_ff::{BigInt, Field, PrimeField};

@@ -127,6 +127,12 @@ struct GrandAddCircuit<F: Field + TwistedEdwardsConfig> {
     pub inner: Vec<InnerLayer<F>>,
 }
 
+pub fn fold_with_coef<F: Field>(evals: &Vec<F>, layer_coef: F) -> Vec<F> {
+    (0..(evals.len() / 2))
+        .map(|i| evals[i] + layer_coef * (evals[i] - evals[2 + i]))
+        .collect()
+}
+
 pub fn split_vecs<F: PrimeField>(ins: &Vec<DensePolynomial<F>>) -> Vec<DensePolynomial<F>> {
     let mut res = Vec::<DensePolynomial::<F>>::with_capacity(ins.len() * 2);
     for _i in 0..(ins.len() * 2) {
@@ -283,9 +289,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
             
             let layer_coef = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_layer_coef");
     
-            deg8_claim = (0..3)
-                .map(|i| deg2_proof.evals()[i] + layer_coef * (deg2_proof.evals()[i] - deg2_proof.evals()[3 + i]))
-                .collect::<Vec<F>>().try_into().unwrap();
+            deg8_claim = fold_with_coef(deg2_proof.evals(), layer_coef);
 
             let mut ext = vec![layer_coef];
             ext.extend(rand);
@@ -343,19 +347,16 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
             );
             rand = _rand;
 
-            let evals = deg2_proof.evals().clone();
+
+            let layer_coef = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_layer_coef");
+
+            final_claim = fold_with_coef(deg2_proof.evals(), layer_coef);
 
             first_layer_proof = FirstLayerProof {
                 deg8_proof, 
                 deg4_proof,
                 deg2_proof,
             };
-
-            let layer_coef = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_layer_coef");
-
-            final_claim = (0..2)
-                .map(|i| evals[i] + layer_coef * (evals[i] - evals[2 + i]))
-                .collect::<Vec<F>>();
         }
 
         GrandAddArgument {
@@ -365,71 +366,42 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
         }
   }
 
-//   pub fn verify<G, T: ProofTranscript<G>>(
-//     &self,
-//     claim: &Vec<F>,
-//     transcript: &mut T,
-//   ) -> Result<(Vec<F>, Vec<F>), ProofVerifyError>
-//   where
-//     G: CurveGroup<ScalarField = F>,
-//   {
-//     {  // First layer
-//         let layer_coef = <Transcript as ProofTranscript<G>>::challenge_scalar(transcript, b"challenge_layer_coef");
+  pub fn verify<G, T: ProofTranscript<G>>(
+    &self,
+    claim: &Vec<F>,
+    transcript: &mut T,
+  ) -> Result<(Vec<F>, Vec<F>), ProofVerifyError>
+  where
+    G: CurveGroup<ScalarField = F>,
+  {
+    let mut last_claim;
+    {  // First layer
+        let layer_coef = transcript.challenge_scalar(b"challenge_layer_coef");
 
-//         let (eval, point) = self.first.deg8_proof.verify_vec_dyn(claim, 0, 0, transcript)?;
-//     }
+        assert_eq!(self.final_claim, fold_with_coef(self.first.deg2_proof.evals(), layer_coef));
 
-    
-//     let num_layers = len.log_2() as usize;
-//     let mut rand: Vec<F> = Vec::new();
-//     assert_eq!(self.proof.len(), num_layers);
+        self.first.deg2_proof.verify(claim, 0, 0, scale(affine_twisted_edwards_add_l1), transcript)?;
+        self.first.deg4_proof.verify(claim, 0, 0, scale(affine_twisted_edwards_add_l2), transcript)?;
+        self.first.deg8_proof.verify(claim, 0, 0, scale(affine_twisted_edwards_add_l3), transcript)?;
+        
+        last_claim = self.first.deg8_proof.evals();
+    }
 
-//     let mut claims_to_verify = claims_prod_vec.to_owned();
-//     for (num_rounds, i) in (0..num_layers).enumerate() {
-//       // produce random coefficients, one for each instance
-//       let coeff_vec =
-//         transcript.challenge_vector(b"rand_coeffs_next_layer", claims_to_verify.len());
+    for layer_idx in 0..self.inner.len() {
+        let layer_coef = transcript.challenge_scalar(b"challenge_layer_coef");
 
-//       // produce a joint claim
-//       let claim = (0..claims_to_verify.len())
-//         .map(|i| claims_to_verify[i] * coeff_vec[i])
-//         .sum();
+        assert_eq!(self.final_claim, fold_with_coef(self.first.deg2_proof.evals(), layer_coef));
 
-//       let (claim_last, rand_prod) = self.proof[i].verify::<G, T>(claim, num_rounds, 3, transcript);
+        self.inner[layer_idx].deg2_proof.verify(claim, 0, 0, scale(twisted_edwards_add_l1), transcript)?;
+        self.inner[layer_idx].deg4_proof.verify(claim, 0, 0, scale(twisted_edwards_add_l2), transcript)?;
+        self.inner[layer_idx].deg8_proof.verify(claim, 0, 0, scale(twisted_edwards_add_l3), transcript)?;
 
-//       let claims_prod_left = &self.proof[i].claims_prod_left;
-//       let claims_prod_right = &self.proof[i].claims_prod_right;
-//       assert_eq!(claims_prod_left.len(), claims_prod_vec.len());
-//       assert_eq!(claims_prod_right.len(), claims_prod_vec.len());
+        last_claim = self.inner[layer_idx].deg8_proof.evals();
+    }
 
-//       for i in 0..claims_prod_vec.len() {
-//         transcript.append_scalar(b"claim_prod_left", &claims_prod_left[i]);
-//         transcript.append_scalar(b"claim_prod_right", &claims_prod_right[i]);
-//       }
-
-//       assert_eq!(rand.len(), rand_prod.len());
-//       let eq: F = (0..rand.len())
-//         .map(|i| rand[i] * rand_prod[i] + (F::one() - rand[i]) * (F::one() - rand_prod[i]))
-//         .product();
-//       let claim_expected: F = (0..claims_prod_vec.len())
-//         .map(|i| coeff_vec[i] * (claims_prod_left[i] * claims_prod_right[i] * eq))
-//         .sum();
-
-//       assert_eq!(claim_expected, claim_last);
-
-//       // produce a random challenge
-//       let r_layer = transcript.challenge_scalar(b"challenge_r_layer");
-
-//       claims_to_verify = (0..claims_prod_left.len())
-//         .map(|i| claims_prod_left[i] + r_layer * (claims_prod_right[i] - claims_prod_left[i]))
-//         .collect::<Vec<F>>();
-
-//       let mut ext = vec![r_layer];
-//       ext.extend(rand_prod);
-//       rand = ext;
-//     }
-//     (claims_to_verify, rand)
-//   }
+    assert_eq!(claim, last_claim);
+    Err(ProofVerifyError::InputTooLarge) // placeholder instead of actual output
+  }
 }
 
 

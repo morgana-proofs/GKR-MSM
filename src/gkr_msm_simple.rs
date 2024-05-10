@@ -13,9 +13,9 @@ pub trait MSMCircuitConfig {
 pub struct MSMCircuit {}
 
 /// Creates bit decompositions 
-pub fn prepare_bit_table<M: MSMCircuitConfig>(scalars: &[M::F], num_columns: usize) -> () {
+pub fn prepare_witness<M: MSMCircuitConfig>(scalars: &[M::F], num_columns: usize) -> () {
     let scalars_per_column = div_ceil(scalars.len(), num_columns);
-    
+
 }
 
 

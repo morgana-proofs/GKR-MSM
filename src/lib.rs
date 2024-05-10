@@ -130,8 +130,9 @@ struct GrandAddCircuit<F: Field + TwistedEdwardsConfig> {
 
 pub fn fold_with_coef<F: Field>(evals: &Vec<F>, layer_coef: F) -> Vec<F> {
     assert_eq!(evals.len() % 2, 0);
-    (0..(evals.len() / 2))
-        .map(|i| evals[i] + layer_coef * (evals[i] - evals[2 + i]))
+    let half = evals.len() / 2;
+    (0..half)
+        .map(|i| evals[i] + layer_coef * (evals[half + i] - evals[i]))
         .collect()
 }
 
@@ -142,7 +143,7 @@ pub fn split_vecs<F: PrimeField>(ins: &Vec<DensePolynomial<F>>) -> Vec<DensePoly
     }
 
     ins.iter().enumerate().map(|(idx, poly)| (res[idx], res[ins.len() + idx]) = poly.split(poly.len() / 2)).count();
-    res.try_into().unwrap()
+    res
 }
 
 pub fn map_over_poly<F: PrimeField>(
@@ -172,16 +173,23 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddCircuit<F> {
         let deg2 = map_over_poly(&deg1, affine_twisted_edwards_add_l1);
         let deg4 = map_over_poly(&deg2, affine_twisted_edwards_add_l2);
         let deg8 = map_over_poly(&deg4, affine_twisted_edwards_add_l3);
-        let mut inner_deg1 = split_vecs(&deg8);
+        let mut inner_deg1 = vec![];
+        
+        if num_layers > 1 {
+            inner_deg1 = split_vecs(&deg8);
+        }
+
         let first_layer = FirstLayer {deg2, deg4, deg8};
 
         let mut inner_layers = Vec::with_capacity(num_layers - 1);
 
-        for _ in 1..num_layers {
+        for j in 1..num_layers {
             let inner_deg2 = map_over_poly(&inner_deg1, twisted_edwards_add_l1);
             let inner_deg4 = map_over_poly(&inner_deg2, twisted_edwards_add_l2);
             let inner_deg8 = map_over_poly(&inner_deg4, twisted_edwards_add_l3);
-            inner_deg1 = split_vecs(&inner_deg8);
+            if j + 1 < num_layers {
+                inner_deg1 = split_vecs(&inner_deg8);
+            }
             inner_layers.push(InnerLayer {
                 deg2: inner_deg2,
                 deg4: inner_deg4,
@@ -247,6 +255,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
         };
 
         for inner_layer_id in (0..num_inner_layers).rev() {
+
             let (deg8_proof, _rand) = VecSumcheckInstanceProof::prove::<_, G, _>(
                 &deg8_claim,
                 input_log_size - inner_layer_id - 2,
@@ -314,8 +323,8 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
             let (deg8_proof, _rand) = VecSumcheckInstanceProof::prove::<_, G, _>(
                 &deg8_claim,
                 input_log_size - 1,
-                &mut vec![DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals())],
                 &mut first_deg4.to_vec(),
+                &mut vec![DensePolynomial::new(EqPolynomial::<F>::new(rand.clone()).evals())],
                 scale(affine_twisted_edwards_add_l3),
                 3,
                 transcript,
@@ -382,53 +391,51 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
     G: CurveGroup<ScalarField = F>,
   {
     let mut rand = _rand.clone();
-    let mut running_claim = claim.clone();
+    let mut deg8_claim = claim.clone();
     let input_log_size = self.input_log_size;
     let output_log_size = input_log_size - self.inner.len() - 1;
 
     for layer_idx in 0..self.inner.len() {
-        rand = self.inner[layer_idx].deg8_proof.verify(&running_claim, output_log_size + layer_idx, 3, &[&|r| EqPolynomial::new(rand.clone()).evaluate(r)], scale(twisted_edwards_add_l3), transcript)?;
-        println!("{} 8", layer_idx);
+        rand = self.inner[layer_idx].deg8_proof.verify(&deg8_claim, output_log_size + layer_idx, 3, &[& |r| EqPolynomial::new(rand.clone()).evaluate(r)], scale(twisted_edwards_add_l3), transcript)?;
         
         let mut deg4_claim = self.inner[layer_idx].deg8_proof.inner_proof.final_evals.clone();
         deg4_claim.pop();
-        rand = self.inner[layer_idx].deg4_proof.verify(&deg4_claim, output_log_size + layer_idx, 3, &[&|r| EqPolynomial::new(rand.clone()).evaluate(r)], scale(twisted_edwards_add_l2), transcript)?;
-        println!("{} 4", layer_idx);
+        rand = self.inner[layer_idx].deg4_proof.verify(&deg4_claim, output_log_size + layer_idx, 3, &[& |r| EqPolynomial::new(rand.clone()).evaluate(r)], scale(twisted_edwards_add_l2), transcript)?;
 
         let mut deg2_claim = self.inner[layer_idx].deg4_proof.inner_proof.final_evals.clone();
         deg2_claim.pop();
-        rand = self.inner[layer_idx].deg2_proof.verify(&deg2_claim, output_log_size + layer_idx, 3, &[&|r| EqPolynomial::new(rand.clone()).evaluate(r)], scale(twisted_edwards_add_l1), transcript)?;
-        println!("{} 2", layer_idx);
+        rand = self.inner[layer_idx].deg2_proof.verify(&deg2_claim, output_log_size + layer_idx, 3, &[& |r| EqPolynomial::new(rand.clone()).evaluate(r)], scale(twisted_edwards_add_l1), transcript)?;
 
         let layer_coef = transcript.challenge_scalar(b"challenge_layer_coef");
 
-        running_claim = self.inner[layer_idx].deg2_proof.inner_proof.final_evals.clone();
-        running_claim.pop();
-        running_claim = fold_with_coef(&running_claim, layer_coef);
+        deg8_claim = self.inner[layer_idx].deg2_proof.inner_proof.final_evals.clone();
+        deg8_claim.pop();
+        deg8_claim = fold_with_coef(&deg8_claim, layer_coef);
 
         let mut ext = vec![layer_coef];
         ext.extend(rand);
         rand = ext;
+
     }
 
     {  // First layer
-        rand = self.first.deg2_proof.verify(&running_claim, input_log_size - 1, 3, &[&|r| EqPolynomial::new(rand.clone()).evaluate(r)], scale(affine_twisted_edwards_add_l1), transcript)?;
-        
+        rand = self.first.deg8_proof.verify(&deg8_claim, input_log_size - 1, 3, &[&|r| EqPolynomial::new(rand.clone()).evaluate(r)], scale(affine_twisted_edwards_add_l3), transcript)?;
+
         let mut deg4_claim = self.first.deg8_proof.inner_proof.final_evals.clone();
         deg4_claim.pop();
         rand = self.first.deg4_proof.verify(&deg4_claim, input_log_size - 1, 3, &[&|r| EqPolynomial::new(rand.clone()).evaluate(r)], scale(affine_twisted_edwards_add_l2), transcript)?;
         
         let mut deg2_claim = self.first.deg4_proof.inner_proof.final_evals.clone();
         deg2_claim.pop();
-        rand = self.first.deg8_proof.verify(&deg2_claim, input_log_size - 1, 3, &[&|r| EqPolynomial::new(rand.clone()).evaluate(r)], scale(affine_twisted_edwards_add_l3), transcript)?;
-        
+        rand = self.first.deg2_proof.verify(&deg2_claim, input_log_size - 1, 3, &[&|r| EqPolynomial::new(rand.clone()).evaluate(r)], scale(affine_twisted_edwards_add_l1), transcript)?;
+
         let layer_coef = transcript.challenge_scalar(b"challenge_layer_coef");  
 
-        running_claim = self.first.deg2_proof.inner_proof.final_evals.clone();
-        running_claim.pop();
+        deg8_claim = self.first.deg2_proof.inner_proof.final_evals.clone();
+        deg8_claim.pop();
 
-        running_claim = fold_with_coef(&running_claim, layer_coef);
-        assert_eq!(&self.final_claim, &running_claim);
+        deg8_claim = fold_with_coef(&deg8_claim, layer_coef);
+        assert_eq!(&self.final_claim, &deg8_claim);
     }
 
     Ok(rand)
@@ -452,9 +459,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn check_that_constants_are_same_as_other_constants_that_we_can_not_access_due_to_version_conflicts() {
+    fn check_constants() {
         assert_eq!(Fr::from_str("45022363124591815672509500913686876175488063829319466900776701791074614335719").unwrap(), Fr::COEFF_D);
-        assert_eq!(8.log_2(), 3);
     }
 
     #[test]
@@ -498,6 +504,30 @@ mod tests {
     }
 
     #[test]
+    fn witness_gen() {
+        let mut rng = ark_std::test_rng();
+        let coords: Vec<(Fr, Fr)> = (0..16).map(|i| EdwardsAffine::rand(&mut rng)).map(|p| (p.x, p.y)).collect();
+        let (mut xs, mut ys) = (Vec::with_capacity(coords.len()), Vec::with_capacity(coords.len()));
+        for i in 0..coords.len() {
+            xs.push(coords[i].0);
+            ys.push(coords[i].1);
+        }
+        let _coords = coords.clone();
+        let mut grand_add_circuit = GrandAddCircuit::new(&DensePolynomial::new(xs), &DensePolynomial::new(ys), 4);
+
+        let naive_sum = _coords.iter()
+            .map(|x| EdwardsAffine::new(x.0, x.1))
+            .fold(EdwardsProjective::from(EdwardsAffine::zero()), |a, b| a + b);
+
+        let witness_sum : Vec<_> = grand_add_circuit.inner.last().unwrap().deg8.iter().map(|p| p[0]).collect();
+        assert!(witness_sum.len() == 3);
+        let zinv = Fr::from(1)/witness_sum[2];
+        let x = witness_sum[0] * zinv;
+        let y = witness_sum[1] * zinv;
+        assert!(naive_sum == EdwardsAffine::new(x, y));
+    }
+
+    #[test]
     fn grand_addition() {
         let mut rng = ark_std::test_rng();
         let coords: Vec<(Fr, Fr)> = (0..16).map(|i| EdwardsAffine::rand(&mut rng)).map(|p| (p.x, p.y)).collect();
@@ -512,7 +542,7 @@ mod tests {
 
         let mut grand_add_circuit = GrandAddCircuit::new(&DensePolynomial::new(xs), &DensePolynomial::new(ys), 3);
 
-        let mut point = vec![Fr::from(228)];
+        let point = vec![Fr::from(322)];
 
         let output_claim = if grand_add_circuit.inner.len() > 0{
             grand_add_circuit.inner.last().unwrap().deg8.iter().map(|p| p.evaluate(&point)).collect()
@@ -520,7 +550,7 @@ mod tests {
             grand_add_circuit.first.deg8.iter().map(|p| p.evaluate(&point)).collect()
         };
         
-        let argument = GrandAddArgument::prove::<G1Projective, _>(&mut grand_add_circuit, &mut point, &mut transcript);
+        let argument = GrandAddArgument::prove::<G1Projective, _>(&mut grand_add_circuit, &point, &mut transcript);
         
         let mut transcript: TestTranscript<Fr> = TestTranscript::as_this(&transcript);
         let _ = argument.verify::<G1Projective, _>(&output_claim, &point, &mut transcript);

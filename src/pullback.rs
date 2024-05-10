@@ -60,19 +60,18 @@ impl<F: PrimeField> Pullback<F> {
 
 
 fn split_into_chunks_balanced<T>(arr: &[T], num_threads: usize) -> impl Iterator<Item = &[T]> + '_ {
-
     let l = arr.len();
     let base_size = l / num_threads;
     let num_large_chunks = l - base_size * num_threads;
 
-    let (m_hi, m_lo) = arr.split_at(num_large_chunks*num_threads);
+    let (m_hi, m_lo) = arr.split_at(num_large_chunks * num_threads);
     let chunks_hi = m_hi.chunks(base_size + 1);
     let chunks_lo = m_lo.chunks(base_size);
     chunks_hi.chain(chunks_lo)
 }
 
 mod tests{
-    use std::iter::repeat_with;
+    use std::{iter::repeat_with, time::{Duration, Instant}};
 
     use super::*;
     use ark_bls12_381::Fr;
@@ -95,8 +94,14 @@ mod tests{
 
         let values = pullback.values();
 
+        let t1 = Instant::now();
         let lhs = G::msm(&bases, &values);
+        let t2 = Instant::now();
         let rhs = pullback.bucketed_msm::<G>(&bases);
+        let t3 = Instant::now();
+
+        println!("Non-bucketed msm of size 1024 took {}ms", (t2-t1).as_millis());
+        println!("Same msm with 64 different values bucketed took {}ms.", (t3-t2).as_millis());
 
         assert!(lhs.unwrap() == rhs);
     }

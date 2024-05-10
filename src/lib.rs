@@ -2,6 +2,7 @@
 
 pub mod pullback;
 pub mod msm_nonaffine;
+pub mod gkr_msm_simple;
 
 use ark_bls12_381::Fr;
 use ark_ec::{bls12::Bls12, pairing::Pairing, CurveGroup};

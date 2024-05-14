@@ -3,6 +3,7 @@
 pub mod pullback;
 pub mod msm_nonaffine;
 pub mod gkr_msm_simple;
+pub mod sumcheck_trait;
 
 use ark_bls12_381::Fr;
 use ark_ec::{bls12::Bls12, pairing::Pairing, CurveGroup};
@@ -147,8 +148,8 @@ pub fn split_vecs<F: PrimeField>(ins: &Vec<DensePolynomial<F>>) -> Vec<DensePoly
 }
 
 pub fn map_over_poly<F: PrimeField>(
-    ins: &Vec<DensePolynomial<F>>,
-    f: impl Fn(&Vec<F>) -> Vec<F> + Send + Sync + Clone
+    ins: &[DensePolynomial<F>],
+    f: impl Fn(&Vec<F>) -> Vec<F> + Send + Sync
 ) -> Vec<DensePolynomial<F>> {
     let applications: Vec<Vec<F>> = (0..ins[0].len()).into_par_iter()
         .map(|idx| {

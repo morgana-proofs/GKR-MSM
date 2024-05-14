@@ -26,6 +26,8 @@ merlin = "3.0.0"
 [features]
 
 parallel = []
+multicore = []
 default = [
-    "parallel"
+    "parallel",
+    "multicore",
 ]

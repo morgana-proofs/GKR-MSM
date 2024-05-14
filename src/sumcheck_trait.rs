@@ -1,0 +1,542 @@
+
+use core::panic;
+use std::{borrow::Borrow, marker::PhantomData, sync::{atomic::{AtomicU64, Ordering}, Arc}};
+
+use ark_ec::CurveGroup;
+use ark_ff::PrimeField;
+use itertools::Itertools;
+use liblasso::{poly::{dense_mlpoly::DensePolynomial, eq_poly::{self, EqPolynomial}, unipoly::{CompressedUniPoly, UniPoly}}, subprotocols::sumcheck::SumcheckRichProof, utils::transcript::{AppendToTranscript, ProofTranscript}};
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
+
+use crate::map_over_poly;
+
+
+#[derive(Clone)]
+pub struct PolynomialMapping<F: PrimeField> {
+    exec: Arc<dyn Fn(&[F]) -> Vec<F> + Send + Sync>,
+    degree: usize,
+    num_i: usize,
+    num_o: usize,
+}
+
+// Claim
+pub struct Claim<F: PrimeField> {
+    point: Vec<F>,
+    value: F,
+}
+pub enum Either<T1, T2>{
+    A(T1),
+    B(T2),
+}
+
+
+pub trait Protocol<F: PrimeField> {
+    
+    type Prover : ProtocolProver<
+        F,
+        ClaimsToReduce = Self::ClaimsToReduce,
+        ClaimsNew = Self::ClaimsNew,
+        Proof = Self::Proof,
+        Params = Self::Params,
+        WitnessInput = Self::WitnessInput,
+    >;
+
+    type Verifier : ProtocolVerifier<
+        F,
+        ClaimsToReduce = Self::ClaimsToReduce,
+        ClaimsNew = Self::ClaimsNew,
+        Proof = Self::Proof,
+        Params = Self::Params,
+    >;
+
+    type ClaimsToReduce;
+    type ClaimsNew;
+
+    type WitnessInput;
+    type WitnessOutput;
+
+    type Proof;
+    type Params;
+
+    fn witness(args: &Self::WitnessInput, params: &Self::Params) -> Self::WitnessOutput;
+
+}
+
+
+pub trait ProtocolProver<F: PrimeField> {
+
+    type ClaimsToReduce;
+    type ClaimsNew;
+    type Proof;
+    type Params;
+    type WitnessInput;
+
+    fn start(
+        claims_to_reduce: Self::ClaimsToReduce,
+        args: Self::WitnessInput,
+        params: &Self::Params,
+    ) -> Self;
+
+
+    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
+        ->
+    Option<(Self::ClaimsNew, Self::Proof)>;
+}
+
+pub trait ProtocolVerifier<F: PrimeField> {
+    type Params;
+    type ClaimsToReduce;
+    type ClaimsNew;
+    type Proof;
+
+    fn start(
+        claims_to_reduce: Self::ClaimsToReduce,
+        proof: Self::Proof,
+        params: &Self::Params,
+    ) -> Self;
+
+
+    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
+        ->
+    Option<Self::ClaimsNew>;
+}
+
+pub trait TranscriptReceiver<F: PrimeField> {
+    fn append_scalar(&mut self, label: &'static [u8], scalar: &F);
+    fn append_scalars(&mut self, label: &'static [u8], scalars: &[F]);
+}
+
+pub trait TranscriptSender<F: PrimeField> {
+    fn challenge_scalar(&mut self, label: &'static [u8]) -> Challenge<F>;
+}
+
+#[derive(Clone, Copy)]
+pub struct Challenge<X> {
+    pub value: X,
+    pub round_id: usize,
+}
+
+/// A very thin wrapper over normal proof transcript from liblasso,
+/// counting amount of challenges. Protocols under parallel composition
+/// should check that their index monotonically increases.
+pub struct IndexedProofTranscript<G : CurveGroup, P: ProofTranscript<G>> {
+    global_round: usize,
+    transcript: P,
+    _marker: PhantomData<G>,
+}
+
+impl<G: CurveGroup, P: ProofTranscript<G>> IndexedProofTranscript<G, P> {
+    pub fn new(transcript: P) -> Self {
+        Self { global_round: 0, transcript, _marker: PhantomData }
+    }
+
+    pub fn release(self) -> P {
+        self.transcript
+    }
+
+    pub fn current_global_round(&self) -> usize {
+        self.global_round
+    }
+}
+
+impl<G: CurveGroup, P: ProofTranscript<G>> TranscriptReceiver<G::ScalarField> for IndexedProofTranscript<G, P> {
+    fn append_scalar(&mut self, label: &'static [u8], scalar: &<G>::ScalarField) {
+        self.transcript.append_scalar(label, scalar)
+    }
+    fn append_scalars(&mut self, label: &'static [u8], scalars: &[<G>::ScalarField]) {
+        self.transcript.append_scalars(label, scalars)
+    }
+}
+
+impl<G: CurveGroup, P: ProofTranscript<G>> TranscriptSender<G::ScalarField> for IndexedProofTranscript<G, P> {
+    fn challenge_scalar(&mut self, label: &'static [u8]) -> Challenge<<G>::ScalarField> {
+        let ret = Challenge {value: self.transcript.challenge_scalar(label), round_id : self.global_round};
+        self.global_round += 1;
+        ret
+    }
+}
+
+
+// Impls
+
+
+pub struct Split<F: PrimeField> {
+    _marker: PhantomData<F>,
+}
+
+pub struct SplitProver<F: PrimeField> {
+    claims_to_reduce: (Vec<F>, Vec<(F, F)>),
+    done: bool,
+}
+
+pub struct SplitVerifier<F: PrimeField> {
+    claims_to_reduce: (Vec<F>, Vec<(F, F)>),
+    done: bool,
+}
+
+impl<F: PrimeField> Protocol<F> for Split<F> {
+    type Prover = SplitProver<F>;
+    type Verifier = SplitVerifier<F>;
+    type ClaimsToReduce = (Vec<F>, Vec<(F, F)>);
+    type ClaimsNew = (Vec<F>, Vec<F>);
+    type Proof = ();
+    type Params = ();
+    type WitnessInput = Vec<DensePolynomial<F>>;
+    type WitnessOutput = Vec<(DensePolynomial<F>, DensePolynomial<F>)>;
+
+    fn witness(args: &Self::WitnessInput, params: &Self::Params) -> Self::WitnessOutput {
+        let num_vars = args[0].num_vars;
+        assert!(num_vars > 0);
+        for arg in args {
+            assert!(arg.num_vars == num_vars);
+        }
+
+        let mut ret = vec![];
+
+        for arg in args {
+            ret.push(arg.split(1 << (num_vars - 1)));
+        }
+
+        ret
+    }
+}
+
+impl<F: PrimeField> ProtocolProver<F> for SplitProver<F> {
+    type ClaimsToReduce = (Vec<F>, Vec<(F, F)>);
+    type ClaimsNew = (Vec<F>, Vec<F>);
+    type Proof = ();
+    type Params = ();
+    type WitnessInput = Vec<DensePolynomial<F>>;
+
+    fn start(
+        claims_to_reduce: Self::ClaimsToReduce,
+        args: Vec<DensePolynomial<F>>,
+        params: &Self::Params,
+    ) -> Self {
+        let num_vars = args[0].num_vars;
+        assert!(num_vars > 0);
+        for arg in args {
+            assert!(arg.num_vars == num_vars);
+        }
+        
+        Self { claims_to_reduce, done: false}
+    }
+
+    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
+        ->
+    Option<(Self::ClaimsNew, Self::Proof)> {
+        let Self{ claims_to_reduce, done } = self;
+        assert!(!*done);
+        let r = challenge.value;
+        let (pt, evs) = claims_to_reduce;
+        let evs_new = evs.iter().map(|(x, y)| *x + r * (*y - x)).collect();
+        let mut r = vec![r];
+        r.extend(pt.iter());
+        Some(((r, evs_new), ()))
+    }
+}
+
+impl<F: PrimeField> ProtocolVerifier<F> for SplitVerifier<F> {
+    type ClaimsToReduce = (Vec<F>, Vec<(F, F)>);
+    type ClaimsNew = (Vec<F>, Vec<F>);
+    type Proof = ();
+    type Params = ();
+    
+    fn start(
+        claims_to_reduce: Self::ClaimsToReduce,
+        proof: Self::Proof,
+        params: &Self::Params,
+    ) -> Self {
+        Self { claims_to_reduce, done: false }
+    }
+    
+    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
+        ->
+    Option<Self::ClaimsNew> {
+        let Self{ claims_to_reduce, done } = self;
+        assert!(!*done);
+        let r = challenge.value;
+        let (pt, evs) = claims_to_reduce;
+        let evs_new = evs.iter().map(|(x, y)| *x + r * (*y - x)).collect();
+        let mut r = vec![r];
+        r.extend(pt.iter());
+        Some((r, evs_new))
+    }
+}
+
+
+pub struct SumcheckPolyMap<F: PrimeField> {
+    _marker: PhantomData<F>,
+}
+
+pub struct SumcheckPolyMapProver<F: PrimeField> {
+    polys : Vec<DensePolynomial<F>>,
+    round_polys : Vec<CompressedUniPoly<F>>,
+    rs: Vec<F>,
+    f: PolynomialMapping<F>,
+    f_folded: Option<Box<dyn Fn(&[F]) -> F + Sync + Send>>,
+    claims: MultiClaim<F>,
+    ev_folded: Option<F>,
+    num_vars: usize,
+}
+
+pub struct SumcheckPolyMapVerifier<F: PrimeField> {
+    _marker: PhantomData<F>,
+}
+
+pub struct SumcheckPolyMapProof<F: PrimeField> {
+    round_polys : Vec<CompressedUniPoly<F>>,
+    final_evaluations: Vec<F>,
+}
+
+pub struct SumcheckPolyMapParams<F: PrimeField> {
+    pub f: PolynomialMapping<F>,
+    pub num_vars: usize,
+}
+
+#[derive(Clone)]
+pub struct MultiClaim<F: PrimeField> {
+    pub points: Vec<Vec<F>>,
+    pub evs: Vec<Vec<(usize, F)>>,
+}
+
+impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
+    type Prover = SumcheckPolyMapProver<F>;
+
+    type Verifier = SumcheckPolyMapVerifier<F>;
+
+    type ClaimsToReduce = MultiClaim<F>;
+
+    type ClaimsNew = (Vec<F>, Vec<F>);
+
+    type WitnessInput = Vec<DensePolynomial<F>>;
+
+    type WitnessOutput = Vec<DensePolynomial<F>>;
+
+    type Proof = SumcheckPolyMapProof<F>;
+
+    type Params = SumcheckPolyMapParams<F>;
+
+    fn witness(args: &Self::WitnessInput, params: &Self::Params) -> Self::WitnessOutput {
+        map_over_poly(args, |x|(params.f.exec)(x))
+    }
+}
+
+impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
+    type ClaimsToReduce = MultiClaim<F>;
+
+    type ClaimsNew = (Vec<F>, Vec<F>);
+
+    type Proof = SumcheckPolyMapProof<F>;
+
+    type Params = SumcheckPolyMapParams<F>;
+
+    type WitnessInput = Vec<DensePolynomial<F>>;
+
+    fn start(
+        claims_to_reduce: Self::ClaimsToReduce,
+        mut args: Self::WitnessInput,
+        params: &Self::Params,
+    ) -> Self {
+        assert!(args.len() == params.f.num_i);
+        
+        
+        let eqs_iter = claims_to_reduce
+            .points
+            .iter()
+            .map(|r|
+                DensePolynomial::new(EqPolynomial::new(r.clone()).evals())
+            );
+
+        args.extend(eqs_iter);
+
+
+        Self {
+            polys: args,
+            round_polys: vec![],
+            rs: vec![],
+            f: params.f.clone(),
+            claims: claims_to_reduce,
+            f_folded: None,
+            ev_folded: None,
+            num_vars: params.num_vars,
+        }
+    }
+
+    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
+        ->
+    Option<(Self::ClaimsNew, Self::Proof)> {
+
+        assert!(self.round_polys.len() < self.num_vars);
+
+        if let None = self.f_folded {
+
+            let Self {
+                claims,
+                polys: _,
+                round_polys: _,
+                rs: _,
+                f,
+                f_folded,
+                ev_folded,
+                num_vars: _,
+            } = self;
+
+            let num_claims = claims.evs.iter().fold(0, |acc, upd| acc + upd.len());
+
+            let gamma = challenge.value;
+            let mut gamma_pows = vec![F::one(), gamma];
+            for i in 2..num_claims {
+                let tmp = gamma_pows[i-1];
+                gamma_pows.push(tmp * gamma);
+            }
+
+            let mut i = 0;
+            *ev_folded = Some(claims.evs.iter()
+                .flatten()
+                .fold(F::zero(), |acc, upd| {i+=1; acc + gamma_pows[i-1] * upd.1}));
+
+            let PolynomialMapping{num_i, num_o: _, exec, degree: _} = f;
+
+            let exec = exec.clone();
+            let claims = claims.clone();
+            let num_i = *num_i;
+
+            *f_folded = Some(Box::new(
+                move |args: &[F]| {
+                let (args, eqpolys) = args.split_at(num_i);
+                let out = exec(args);
+                let mut i = 0;
+                (claims.evs.iter().enumerate()).fold(
+                    F::zero(),
+                    |acc, (j, evs)| {
+                        let mut _acc = F::zero();
+                        for ev in evs {
+                            _acc += out[ev.0] * gamma_pows[i];
+                            i += 1;
+                        }
+                        acc + _acc * eqpolys[j]
+
+                    }
+                )
+            }));
+            return None;
+        } else {
+            let combined_degree = self.f.degree + 1;
+
+            let mut eval_points = vec![F::zero(); combined_degree + 1];
+
+            let mle_half = self.polys[0].len() / 2;
+      
+            // let mut accum = vec![vec![F::zero(); combined_degree + 1]; mle_half];
+            #[cfg(feature = "multicore")]
+            let iterator = (0..mle_half).into_par_iter();
+      
+            #[cfg(not(feature = "multicore"))]
+            let iterator = 0..mle_half;
+      
+            let comb_func = self.f_folded.as_ref().unwrap();
+
+            let accum: Vec<Vec<F>> = iterator
+              .map(|poly_term_i| {
+                let diffs: Vec<F> = self.polys.iter().map(|p| p[mle_half + poly_term_i] - p[poly_term_i]).collect();
+                let mut accum = vec![F::zero(); combined_degree + 1];
+                // Evaluate P({0, ..., |g(r)|})
+      
+                // TODO(#28): Optimize
+                // Tricks can be used here for low order bits {0,1} but general premise is a running sum for each
+                // of the m terms in the Dense multilinear polynomials. Formula is:
+                // half = | D_{n-1} | / 2
+                // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
+      
+                // eval 0: bound_func is A(low)
+                // eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
+                let eval_at_zero: Vec<F> = self.polys.iter().map(|p| p[poly_term_i]).collect();
+                accum[0] += comb_func(&eval_at_zero);
+      
+                // TODO(#28): Can be computed from prev_round_claim - eval_point_0
+                let eval_at_one: Vec<F> = self.polys.iter().map(|p| p[mle_half + poly_term_i]).collect();
+                accum[1] += comb_func(&eval_at_one);
+      
+                // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
+                // D_n(index, 0) = D_{n-1} +
+                // D_n(index, 1) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+                // D_n(index, 2) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+                // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+                // ...
+      
+                let mut existing_term = eval_at_one;
+                for acc in accum.iter_mut().skip(2) {
+                  for poly_i in 0..self.polys.len() {
+                    existing_term[poly_i] += diffs[poly_i];
+                  }
+      
+                  *acc += comb_func(&existing_term)
+                }
+                accum
+              })
+              .collect();
+      
+            #[cfg(feature = "multicore")]
+            eval_points
+              .par_iter_mut()
+              .enumerate()
+              .for_each(|(poly_i, eval_point)| {
+                *eval_point = accum
+                  .par_iter()
+                  .take(mle_half)
+                  .map(|mle| mle[poly_i])
+                  .sum::<F>();
+              });
+      
+            #[cfg(not(feature = "multicore"))]
+            for (poly_i, eval_point) in eval_points.iter_mut().enumerate() {
+              for mle in accum.iter().take(mle_half) {
+                *eval_point += mle[poly_i];
+              }
+            }
+            
+      
+            let round_uni_poly = UniPoly::from_evals(&eval_points);
+      
+            // append the prover's message to the transcript
+
+            transcript.append_scalars(b"poly", &round_uni_poly.as_vec());
+
+            let r_j = challenge.value;
+            self.rs.push(r_j);
+      
+            // bound all tables to the verifier's challenege
+            for poly in &mut self.polys {
+              poly.bound_poly_var_top(&r_j);
+            }
+            self.round_polys.push(round_uni_poly.compress());
+
+            panic!();
+        }
+    }
+}
+
+impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
+    type Params = SumcheckPolyMapParams<F>;
+
+    type ClaimsToReduce = MultiClaim<F>;
+
+    type ClaimsNew = (Vec<F>, Vec<F>);
+
+    type Proof = SumcheckPolyMapProof<F>;
+    
+    fn start(
+        claims_to_reduce: Self::ClaimsToReduce,
+        proof: Self::Proof,
+        params: &Self::Params,
+    ) -> Self {
+        todo!()
+    }
+
+    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
+        ->
+    Option<Self::ClaimsNew> {
+        todo!()
+    }
+}

@@ -271,7 +271,7 @@ pub struct SumcheckPolyMap<F: PrimeField> {
 
 pub struct SumcheckPolyMapProver<F: PrimeField> {
     polys : Vec<DensePolynomial<F>>,
-    round_polys : Vec<CompressedUniPoly<F>>,
+    round_polys : Option<Vec<CompressedUniPoly<F>>>,
     rs: Vec<F>,
     f: PolynomialMapping<F>,
     f_folded: Option<Box<dyn Fn(&[F]) -> F + Sync + Send>>,
@@ -353,7 +353,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
         Self {
             polys: args,
-            round_polys: vec![],
+            round_polys: Some(vec![]),
             rs: vec![],
             f: params.f.clone(),
             claims: claims_to_reduce,
@@ -367,20 +367,23 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
         ->
     Option<(Self::ClaimsNew, Self::Proof)> {
 
-        assert!(self.round_polys.len() < self.num_vars);
+        let Self {
+            claims,
+            polys,
+            round_polys,
+            rs,
+            f,
+            f_folded,
+            ev_folded,
+            num_vars,
+        } = self;
 
-        if let None = self.f_folded {
+        let round_polys = round_polys.as_mut().unwrap();
 
-            let Self {
-                claims,
-                polys: _,
-                round_polys: _,
-                rs: _,
-                f,
-                f_folded,
-                ev_folded,
-                num_vars: _,
-            } = self;
+        assert!(round_polys.len() < *num_vars);
+
+
+        if let None = f_folded {
 
             let num_claims = claims.evs.iter().fold(0, |acc, upd| acc + upd.len());
 
@@ -420,100 +423,122 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
                     }
                 )
             }));
-            return None;
         } else {
-            let combined_degree = self.f.degree + 1;
-
-            let mut eval_points = vec![F::zero(); combined_degree + 1];
-
-            let mle_half = self.polys[0].len() / 2;
-      
-            // let mut accum = vec![vec![F::zero(); combined_degree + 1]; mle_half];
-            #[cfg(feature = "multicore")]
-            let iterator = (0..mle_half).into_par_iter();
-      
-            #[cfg(not(feature = "multicore"))]
-            let iterator = 0..mle_half;
-      
-            let comb_func = self.f_folded.as_ref().unwrap();
-
-            let accum: Vec<Vec<F>> = iterator
-              .map(|poly_term_i| {
-                let diffs: Vec<F> = self.polys.iter().map(|p| p[mle_half + poly_term_i] - p[poly_term_i]).collect();
-                let mut accum = vec![F::zero(); combined_degree + 1];
-                // Evaluate P({0, ..., |g(r)|})
-      
-                // TODO(#28): Optimize
-                // Tricks can be used here for low order bits {0,1} but general premise is a running sum for each
-                // of the m terms in the Dense multilinear polynomials. Formula is:
-                // half = | D_{n-1} | / 2
-                // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
-      
-                // eval 0: bound_func is A(low)
-                // eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
-                let eval_at_zero: Vec<F> = self.polys.iter().map(|p| p[poly_term_i]).collect();
-                accum[0] += comb_func(&eval_at_zero);
-      
-                // TODO(#28): Can be computed from prev_round_claim - eval_point_0
-                let eval_at_one: Vec<F> = self.polys.iter().map(|p| p[mle_half + poly_term_i]).collect();
-                accum[1] += comb_func(&eval_at_one);
-      
-                // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
-                // D_n(index, 0) = D_{n-1} +
-                // D_n(index, 1) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-                // D_n(index, 2) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-                // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-                // ...
-      
-                let mut existing_term = eval_at_one;
-                for acc in accum.iter_mut().skip(2) {
-                  for poly_i in 0..self.polys.len() {
-                    existing_term[poly_i] += diffs[poly_i];
-                  }
-      
-                  *acc += comb_func(&existing_term)
-                }
-                accum
-              })
-              .collect();
-      
-            #[cfg(feature = "multicore")]
-            eval_points
-              .par_iter_mut()
-              .enumerate()
-              .for_each(|(poly_i, eval_point)| {
-                *eval_point = accum
-                  .par_iter()
-                  .take(mle_half)
-                  .map(|mle| mle[poly_i])
-                  .sum::<F>();
-              });
-      
-            #[cfg(not(feature = "multicore"))]
-            for (poly_i, eval_point) in eval_points.iter_mut().enumerate() {
-              for mle in accum.iter().take(mle_half) {
-                *eval_point += mle[poly_i];
-              }
-            }
-            
-      
-            let round_uni_poly = UniPoly::from_evals(&eval_points);
-      
-            // append the prover's message to the transcript
-
-            transcript.append_scalars(b"poly", &round_uni_poly.as_vec());
-
             let r_j = challenge.value;
-            self.rs.push(r_j);
-      
+            rs.push(r_j);
+        
             // bound all tables to the verifier's challenege
-            for poly in &mut self.polys {
-              poly.bound_poly_var_top(&r_j);
+            for poly in polys.iter_mut() {
+                poly.bound_poly_var_top(&r_j);
             }
-            self.round_polys.push(round_uni_poly.compress());
 
-            panic!();
+            if rs.len() == *num_vars {
+                let final_evaluations: Vec<F> = polys.iter().map(|poly| poly[0]).collect();
+
+                transcript.append_scalars(b"sumcheck_final_evals", &final_evaluations[0..f.num_i]);
+    
+                return Some(((vec![], vec![]), SumcheckPolyMapProof{
+                    round_polys : self.round_polys.take().unwrap(),
+                    final_evaluations,
+                }))
+            }
+
         }
+
+
+        let combined_degree = f.degree + 1;
+
+        let mut eval_points = vec![F::zero(); combined_degree + 1];
+
+        let mle_half = polys[0].len() / 2;
+    
+        // let mut accum = vec![vec![F::zero(); combined_degree + 1]; mle_half];
+        #[cfg(feature = "multicore")]
+        let iterator = (0..mle_half).into_par_iter();
+    
+        #[cfg(not(feature = "multicore"))]
+        let iterator = 0..mle_half;
+    
+        let comb_func = f_folded.as_ref().unwrap();
+
+        let accum: Vec<Vec<F>> = iterator
+            .map(|poly_term_i| {
+            let diffs: Vec<F> = polys.iter().map(|p| p[mle_half + poly_term_i] - p[poly_term_i]).collect();
+            let mut accum = vec![F::zero(); combined_degree + 1];
+            // Evaluate P({0, ..., |g(r)|})
+    
+            // TODO(#28): Optimize
+            // Tricks can be used here for low order bits {0,1} but general premise is a running sum for each
+            // of the m terms in the Dense multilinear polynomials. Formula is:
+            // half = | D_{n-1} | / 2
+            // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
+    
+            // eval 0: bound_func is A(low)
+            // eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
+            let eval_at_zero: Vec<F> = polys.iter().map(|p| p[poly_term_i]).collect();
+            accum[0] += comb_func(&eval_at_zero);
+    
+            // TODO(#28): Can be computed from prev_round_claim - eval_point_0
+            let eval_at_one: Vec<F> = polys.iter().map(|p| p[mle_half + poly_term_i]).collect();
+            accum[1] += comb_func(&eval_at_one);
+    
+            // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
+            // D_n(index, 0) = D_{n-1} +
+            // D_n(index, 1) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+            // D_n(index, 2) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+            // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+            // ...
+    
+            let mut existing_term = eval_at_one;
+            for acc in accum.iter_mut().skip(2) {
+                for poly_i in 0..polys.len() {
+                existing_term[poly_i] += diffs[poly_i];
+                }
+    
+                *acc += comb_func(&existing_term)
+            }
+            accum
+            })
+            .collect();
+    
+        #[cfg(feature = "multicore")]
+        eval_points
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(poly_i, eval_point)| {
+            *eval_point = accum
+                .par_iter()
+                .take(mle_half)
+                .map(|mle| mle[poly_i])
+                .sum::<F>();
+            });
+    
+        #[cfg(not(feature = "multicore"))]
+        for (poly_i, eval_point) in eval_points.iter_mut().enumerate() {
+            for mle in accum.iter().take(mle_half) {
+            *eval_point += mle[poly_i];
+            }
+        }
+        
+        let round_uni_poly = UniPoly::from_evals(&eval_points);
+    
+        // append the prover's message to the transcript
+        transcript.append_scalars(b"poly", &round_uni_poly.as_vec());
+        // and to proof
+        round_polys.push(round_uni_poly.compress());
+
+
+        // let r_j = challenge.value;
+        // rs.push(r_j);
+    
+        // // bound all tables to the verifier's challenege
+        // for poly in polys {
+        //     poly.bound_poly_var_top(&r_j);
+        // }
+        // round_polys.push(round_uni_poly.compress());
+
+        None
+
     }
 }
 

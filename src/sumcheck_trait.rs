@@ -275,7 +275,7 @@ pub struct SumcheckPolyMapProver<F: PrimeField> {
     rs: Vec<F>,
     f: PolynomialMapping<F>,
     f_folded: Option<Box<dyn Fn(&[F]) -> F + Sync + Send>>,
-    claims: MultiClaim<F>,
+    claims: MultiEvalClaim<F>,
     ev_folded: Option<F>,
     num_vars: usize,
 }
@@ -295,19 +295,27 @@ pub struct SumcheckPolyMapParams<F: PrimeField> {
 }
 
 #[derive(Clone)]
-pub struct MultiClaim<F: PrimeField> {
+pub struct MultiEvalClaim<F: PrimeField> {
     pub points: Vec<Vec<F>>,
     pub evs: Vec<Vec<(usize, F)>>,
 }
+
+#[derive(Clone)]
+pub struct EvalClaim<F: PrimeField> {
+    pub point: Vec<F>,
+    pub evs: Vec<F>,
+}
+
+
 
 impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
     type Prover = SumcheckPolyMapProver<F>;
 
     type Verifier = SumcheckPolyMapVerifier<F>;
 
-    type ClaimsToReduce = MultiClaim<F>;
+    type ClaimsToReduce = MultiEvalClaim<F>;
 
-    type ClaimsNew = (Vec<F>, Vec<F>);
+    type ClaimsNew = EvalClaim<F>;
 
     type WitnessInput = Vec<DensePolynomial<F>>;
 
@@ -323,9 +331,9 @@ impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
 }
 
 impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
-    type ClaimsToReduce = MultiClaim<F>;
+    type ClaimsToReduce = MultiEvalClaim<F>;
 
-    type ClaimsNew = (Vec<F>, Vec<F>);
+    type ClaimsNew = EvalClaim<F>;
 
     type Proof = SumcheckPolyMapProof<F>;
 
@@ -437,10 +445,16 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
                 transcript.append_scalars(b"sumcheck_final_evals", &final_evaluations[0..f.num_i]);
     
-                return Some(((vec![], vec![]), SumcheckPolyMapProof{
-                    round_polys : self.round_polys.take().unwrap(),
-                    final_evaluations,
-                }))
+                return Some((
+                    EvalClaim{
+                        point: rs.clone(),
+                        evs: final_evaluations.clone()
+                    },
+                    SumcheckPolyMapProof{
+                        round_polys : self.round_polys.take().unwrap(),
+                        final_evaluations,
+                    }
+                ))
             }
 
         }
@@ -545,9 +559,9 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
     type Params = SumcheckPolyMapParams<F>;
 
-    type ClaimsToReduce = MultiClaim<F>;
+    type ClaimsToReduce = MultiEvalClaim<F>;
 
-    type ClaimsNew = (Vec<F>, Vec<F>);
+    type ClaimsNew = EvalClaim<F>;
 
     type Proof = SumcheckPolyMapProof<F>;
     

@@ -380,7 +380,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
         let round_polys = round_polys.as_mut().unwrap();
 
-        assert!(round_polys.len() < *num_vars);
+        assert!(rs.len() < *num_vars);
 
 
         if let None = f_folded {

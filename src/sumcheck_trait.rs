@@ -603,8 +603,9 @@ mod test {
         let num_vars: usize = 5;
         let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|i| DensePolynomial::new((0..32).map(|i| Fr::from(i)).collect())).collect();
         let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
-        let claims = polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
+        let claims : Vec<_> = polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
         let known_poly = EqPolynomial::new(point.clone());
+
 
         fn combfunc(i: &[Fr]) -> Vec<Fr> {
             vec![i[0], i[1], i[2] * i[2] * i[0], i[2] * i[2] * i[0]]
@@ -612,7 +613,7 @@ mod test {
 
         let multiclaim = MultiEvalClaim {
             points: vec![point],
-            evs: vec![claims],
+            evs: vec![claims.clone()],
         };
 
         let params = SumcheckPolyMapParams {
@@ -645,7 +646,6 @@ mod test {
         let (EvalClaim{point: proof_point, evs}, proof) = res.unwrap();
         assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
 
-        let _claim = prover.ev_folded.unwrap();
 
         let SumcheckPolyMapProof { round_polys, final_evaluations } = proof;
         let frankenproof = SumcheckRichProof::<Fr> {
@@ -659,6 +659,8 @@ mod test {
 
         let combfunc = scale_c00l(combfunc);
 
+        let folded_claim = claims.iter().rev().fold(Fr::from(0), |acc, (_, n)| acc * gamma + n);
+
         let final_eval = combfunc(&frankenproof.final_evals).iter().rev().fold(Fr::from(0), |acc, n| acc * gamma + n);
         let final_eval_2 = prover.f_folded.unwrap()(&frankenproof.final_evals);
 
@@ -671,7 +673,7 @@ mod test {
         
         
         frankenproof.verify::<G1Projective, _, _>(
-            _claim,
+            folded_claim,
             num_vars,
             4,
             &verifier_evaluators,

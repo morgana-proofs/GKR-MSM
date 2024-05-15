@@ -306,8 +306,6 @@ pub struct EvalClaim<F: PrimeField> {
     pub evs: Vec<F>,
 }
 
-
-
 impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
     type Prover = SumcheckPolyMapProver<F>;
 
@@ -448,7 +446,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
                 return Some((
                     EvalClaim{
                         point: rs.clone(),
-                        evs: final_evaluations.clone()
+                        evs: final_evaluations[0..f.num_i].to_vec(),
                     },
                     SumcheckPolyMapProof{
                         round_polys : self.round_polys.take().unwrap(),

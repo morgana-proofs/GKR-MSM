@@ -584,12 +584,22 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
 mod test {
     use std::iter::repeat;
     use ark_bls12_381::G1Projective;
+    use ark_ff::Field;
     use liblasso::utils::test_lib::TestTranscript;
+
     use super::*;
 
 
+    pub fn scale_c00l<F: Field, T: Fn (&[F]) -> Vec<F>>(f: T) -> impl Fn (&[F]) -> Vec<F> {
+        move |data| -> Vec<F> {
+            let (pts, factor) = data.split_at(data.len() - 1);
+            f(&pts.to_vec()).iter().map(|p| *p * factor[0]).collect()
+        }
+    }
+
+
     #[test]
-    fn ours_prover_against_liblasso_verifier() {
+    fn our_prover_against_liblasso_verifier() {
         let num_vars: usize = 5;
         let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|i| DensePolynomial::new((0..32).map(|i| Fr::from(i)).collect())).collect();
         let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
@@ -635,20 +645,33 @@ mod test {
         let (EvalClaim{point: proof_point, evs}, proof) = res.unwrap();
         assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
 
+        let _claim = prover.ev_folded.unwrap();
+
         let SumcheckPolyMapProof { round_polys, final_evaluations } = proof;
         let frankenproof = SumcheckRichProof::<Fr> {
             compressed_polys: round_polys,
             final_evals: final_evaluations,
         };
 
-        let final_eval = combfunc(&evs).iter().rev().fold(Fr::from(0), |acc, n| acc * gamma + n);
+        let mut _final_evals = frankenproof.final_evals.clone();
+        _final_evals.pop();
+        assert!(evs == _final_evals, "1");
+
+        let combfunc = scale_c00l(combfunc);
+
+        let final_eval = combfunc(&frankenproof.final_evals).iter().rev().fold(Fr::from(0), |acc, n| acc * gamma + n);
+        let final_eval_2 = prover.f_folded.unwrap()(&frankenproof.final_evals);
+
+        assert!(final_eval == final_eval_2, "2");
 
         let known_poly_evaluator = |x: &[Fr]| known_poly.evaluate(x);
         let verifier_evaluators = vec![&known_poly_evaluator as &dyn Fn(&[Fr]) -> Fr];
         let mut v_transcript = TestTranscript::as_this(&p_transcript.transcript);
         assert_eq!(gamma, <TestTranscript<Fr> as ProofTranscript<G1Projective>>::challenge_scalar(&mut v_transcript,b"challenge_combine_outputs"));
+        
+        
         frankenproof.verify::<G1Projective, _, _>(
-            final_eval,
+            _claim,
             num_vars,
             4,
             &verifier_evaluators,
@@ -659,4 +682,3 @@ mod test {
         v_transcript.assert_end()
     }
 }
-

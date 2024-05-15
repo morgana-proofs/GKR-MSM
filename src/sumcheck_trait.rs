@@ -1,7 +1,7 @@
-
 use core::panic;
 use std::{borrow::Borrow, marker::PhantomData, sync::{atomic::{AtomicU64, Ordering}, Arc}};
 
+use ark_bls12_381::Fr;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use itertools::Itertools;
@@ -577,3 +577,86 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
         todo!()
     }
 }
+
+
+
+#[cfg(test)]
+mod test {
+    use std::iter::repeat;
+    use ark_bls12_381::G1Projective;
+    use liblasso::utils::test_lib::TestTranscript;
+    use super::*;
+
+
+    #[test]
+    fn ours_prover_against_liblasso_verifier() {
+        let num_vars: usize = 5;
+        let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|i| DensePolynomial::new((0..32).map(|i| Fr::from(i)).collect())).collect();
+        let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
+        let claims = polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
+        let known_poly = EqPolynomial::new(point.clone());
+
+        fn combfunc(i: &[Fr]) -> Vec<Fr> {
+            vec![i[0], i[1], i[2] * i[2] * i[0], i[2] * i[2] * i[0]]
+        }
+
+        let multiclaim = MultiEvalClaim {
+            points: vec![point],
+            evs: vec![claims],
+        };
+
+        let params = SumcheckPolyMapParams {
+            f: PolynomialMapping {
+                exec: Arc::new(combfunc),
+                degree: 3,
+                num_i: 3,
+                num_o: 4,
+            },
+            num_vars,
+        };
+
+        let mut prover = SumcheckPolyMapProver::start(
+            multiclaim,
+            polys.clone(),
+            &params,
+        );
+
+        let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new((0..100).map(|i| Fr::from(i)).collect(), vec![]));
+        let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
+        let Challenge { value: gamma, round_id: _ } = gamma_c;
+        let mut res = prover.round(gamma_c, &mut p_transcript);
+        while res.is_none() {
+            let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
+            res = prover.round(challenge, &mut p_transcript);
+        }
+
+        println!("{:?}", p_transcript.transcript.log);
+
+        let (EvalClaim{point: proof_point, evs}, proof) = res.unwrap();
+        assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+
+        let SumcheckPolyMapProof { round_polys, final_evaluations } = proof;
+        let frankenproof = SumcheckRichProof::<Fr> {
+            compressed_polys: round_polys,
+            final_evals: final_evaluations,
+        };
+
+        let final_eval = combfunc(&evs).iter().rev().fold(Fr::from(0), |acc, n| acc * gamma + n);
+
+        let known_poly_evaluator = |x: &[Fr]| known_poly.evaluate(x);
+        let verifier_evaluators = vec![&known_poly_evaluator as &dyn Fn(&[Fr]) -> Fr];
+        let mut v_transcript = TestTranscript::as_this(&p_transcript.transcript);
+        assert_eq!(gamma, <TestTranscript<Fr> as ProofTranscript<G1Projective>>::challenge_scalar(&mut v_transcript,b"challenge_combine_outputs"));
+        frankenproof.verify::<G1Projective, _, _>(
+            final_eval,
+            num_vars,
+            4,
+            &verifier_evaluators,
+            |d: &Vec<Fr>| combfunc(&d).iter().rev().fold(Fr::from(0), |acc, n| acc * gamma + n),
+            &mut v_transcript,
+        ).unwrap();
+
+        v_transcript.assert_end()
+    }
+}
+

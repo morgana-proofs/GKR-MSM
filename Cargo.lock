@@ -665,7 +665,7 @@ checksum = "ae743338b92ff9146ce83992f766a31066a91a8c84a45e0e9f21e7cf6de6d346"
 [[package]]
 name = "liblasso"
 version = "0.4.0"
-source = "git+https://github.com/rebenkoy/liblasso.git?branch=master#6a19033b345bd159fad78d598efca00194b366e1"
+source = "git+https://github.com/rebenkoy/liblasso.git?branch=master#a052defb9d32f3b9a1c5199b2d2051c905f57a4a"
 dependencies = [
  "ark-curve25519",
  "ark-ec",

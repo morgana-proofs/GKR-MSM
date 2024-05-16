@@ -629,10 +629,17 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
             
             sumcheck_round_idx = rs.len();
             
-
-            *current_sum = current_poly.as_ref().unwrap().evaluate(&r_j);
             // This unwrap never fails, because rounds after 0th always have the poly (which is last prover's message).
+            let current_poly = current_poly.as_ref().unwrap();
+            assert!(
+                current_poly.degree() == f.degree + 1,
+                "Verifier failure: polynomial degree {} at round {} incorrect",
+                current_poly.degree(),
+                sumcheck_round_idx
+            );
 
+            *current_sum = current_poly.evaluate(&r_j);
+            
             if rs.len() == *num_vars {
 
                 transcript.append_scalars(b"sumcheck_final_evals", &final_evaluations[0..f.num_i]);
@@ -656,7 +663,8 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
         // This indexing never fails, because n-th round will return from the else clause.
         transcript.append_scalars(b"poly", &new_poly.as_vec());
         *current_poly = Some(new_poly);
-        return None;
+        
+        None
     }
 }
 
@@ -782,7 +790,7 @@ mod test {
         };
 
         let mut _final_evals = frankenproof.final_evals.clone();
-        _final_evals.pop();
+    //    _final_evals.pop();
         assert!(evs == _final_evals, "1");
 
         let combfunc = scale_c00l(combfunc);

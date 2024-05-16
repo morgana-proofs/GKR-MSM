@@ -8,7 +8,7 @@ use itertools::Itertools;
 use liblasso::{poly::{dense_mlpoly::DensePolynomial, eq_poly::{self, EqPolynomial}, unipoly::{CompressedUniPoly, UniPoly}}, subprotocols::sumcheck::SumcheckRichProof, utils::transcript::{AppendToTranscript, ProofTranscript}};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 
-use crate::map_over_poly;
+use crate::utils::map_over_poly;
 
 
 #[derive(Clone)]
@@ -628,7 +628,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
             rs.push(r_j);
             
             sumcheck_round_idx = rs.len();
-            
+
             // This unwrap never fails, because rounds after 0th always have the poly (which is last prover's message).
             let current_poly = current_poly.as_ref().unwrap();
             assert!(
@@ -639,7 +639,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
             );
 
             *current_sum = current_poly.evaluate(&r_j);
-            
+
             if rs.len() == *num_vars {
 
                 transcript.append_scalars(b"sumcheck_final_evals", &final_evaluations[0..f.num_i]);
@@ -663,7 +663,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
         // This indexing never fails, because n-th round will return from the else clause.
         transcript.append_scalars(b"poly", &new_poly.as_vec());
         *current_poly = Some(new_poly);
-        
+
         None
     }
 }
@@ -722,17 +722,9 @@ mod test {
     use ark_bls12_381::G1Projective;
     use ark_ff::Field;
     use liblasso::utils::test_lib::TestTranscript;
+    use crate::utils::scale;
 
     use super::*;
-
-
-    pub fn scale_c00l<F: Field, T: Fn (&[F]) -> Vec<F>>(f: T) -> impl Fn (&[F]) -> Vec<F> {
-        move |data| -> Vec<F> {
-            let (pts, factor) = data.split_at(data.len() - 1);
-            f(&pts.to_vec()).iter().map(|p| *p * factor[0]).collect()
-        }
-    }
-
 
     #[test]
     fn our_prover_against_liblasso_verifier() {
@@ -798,7 +790,7 @@ mod test {
         // _final_evals.pop();
         // assert!(evs == _final_evals, "1");
 
-        let combfunc = scale_c00l(combfunc);
+        let combfunc = scale(combfunc);
 
         let folded_claim = claims.iter().rev().fold(Fr::from(0), |acc, (_, n)| acc * gamma + n);
 
@@ -811,14 +803,13 @@ mod test {
         let verifier_evaluators = vec![&known_poly_evaluator as &dyn Fn(&[Fr]) -> Fr];
         let mut v_transcript = TestTranscript::as_this(&p_transcript.transcript);
         assert_eq!(gamma, <TestTranscript<Fr> as ProofTranscript<G1Projective>>::challenge_scalar(&mut v_transcript,b"challenge_combine_outputs"));
-        
-        
+
         frankenproof.verify::<G1Projective, _, _>(
             folded_claim,
             num_vars,
             4,
             &verifier_evaluators,
-            |d: &Vec<Fr>| combfunc(&d).iter().rev().fold(Fr::from(0), |acc, n| acc * gamma + n),
+            |d: &[Fr]| combfunc(&d).iter().rev().fold(Fr::from(0), |acc, n| acc * gamma + n),
             &mut v_transcript,
         ).unwrap();
 

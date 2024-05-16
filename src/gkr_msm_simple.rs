@@ -1,7 +1,7 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 
-use crate::TwistedEdwardsConfig;
+use crate::utils::TwistedEdwardsConfig;
 
 pub trait MSMCircuitConfig {
     type F : PrimeField;

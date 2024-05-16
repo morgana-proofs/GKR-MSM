@@ -281,7 +281,15 @@ pub struct SumcheckPolyMapProver<F: PrimeField> {
 }
 
 pub struct SumcheckPolyMapVerifier<F: PrimeField> {
-    _marker: PhantomData<F>,
+    f: PolynomialMapping<F>,
+    num_vars: usize,
+    proof: SumcheckPolyMapProof<F>,
+    claims_to_reduce: MultiEvalClaim<F>,
+
+    f_folded: Option<Box<dyn Fn(&[F]) -> F + Sync + Send>>,
+    current_sum: Option<F>,
+    current_poly: Option<UniPoly<F>>,
+    rs: Vec<F>,
 }
 
 pub struct SumcheckPolyMapProof<F: PrimeField> {
@@ -388,47 +396,14 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
         assert!(rs.len() < *num_vars);
 
-
         if let None = f_folded {
 
-            let num_claims = claims.evs.iter().fold(0, |acc, upd| acc + upd.len());
-
             let gamma = challenge.value;
-            let mut gamma_pows = vec![F::one(), gamma];
-            for i in 2..num_claims {
-                let tmp = gamma_pows[i-1];
-                gamma_pows.push(tmp * gamma);
-            }
+            let gamma_pows = make_gamma_pows(claims, gamma);
 
-            let mut i = 0;
-            *ev_folded = Some(claims.evs.iter()
-                .flatten()
-                .fold(F::zero(), |acc, upd| {i+=1; acc + gamma_pows[i-1] * upd.1}));
-
-            let PolynomialMapping{num_i, num_o: _, exec, degree: _} = f;
-
-            let exec = exec.clone();
-            let claims = claims.clone();
-            let num_i = *num_i;
-
-            *f_folded = Some(Box::new(
-                move |args: &[F]| {
-                let (args, eqpolys) = args.split_at(num_i);
-                let out = exec(args);
-                let mut i = 0;
-                (claims.evs.iter().enumerate()).fold(
-                    F::zero(),
-                    |acc, (j, evs)| {
-                        let mut _acc = F::zero();
-                        for ev in evs {
-                            _acc += out[ev.0] * gamma_pows[i];
-                            i += 1;
-                        }
-                        acc + _acc * eqpolys[j]
-
-                    }
-                )
-            }));
+            *ev_folded = Some(make_folded_claim(claims, &gamma_pows));
+            
+            *f_folded = Some(make_folded_f(claims, &gamma_pows, f));
         } else {
             let r_j = challenge.value;
             rs.push(r_j);
@@ -450,7 +425,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
                     },
                     SumcheckPolyMapProof{
                         round_polys : self.round_polys.take().unwrap(),
-                        final_evaluations,
+                        final_evaluations : final_evaluations[0..f.num_i].to_vec(),
                     }
                 ))
             }
@@ -568,15 +543,168 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
         proof: Self::Proof,
         params: &Self::Params,
     ) -> Self {
-        todo!()
+        
+        let f = params.f.clone();
+
+        let num_ins = f.num_i;
+        let num_outs = f.num_o;
+        let num_vars = params.num_vars;
+        let num_points = claims_to_reduce.points.len();
+        
+        // Validate that claims are well-formed.
+        
+        assert!(
+            claims_to_reduce.evs.len() == num_points,
+            "Verifier failure. Claim ill-formed: number of points {} != number of evaluation groups {}",
+            num_points,
+            claims_to_reduce.evs.len(),
+        );
+
+        for (i, point) in claims_to_reduce.points.iter().enumerate() {
+            assert!(
+                point.len() == num_vars,
+                "Verifier failure. Claim ill-formed: point {} has num variables {}, but declared num variables is {}",
+                i,
+                point.len(),
+                num_vars
+            );
+        }
+
+        for ptevs in &claims_to_reduce.evs {
+            for ev in ptevs {
+                assert!(
+                    ev.0 < num_outs,
+                    "Verifier failure. Claim ill-formed: argument index {} out of range {}",
+                    ev.0,
+                    num_outs,
+                );
+            }
+        }
+
+        // Validate that proof is well-formed.
+        // We can not validate round_polys size here (compressed polynomial does not expose
+        // degree and I'm too lazy to vandalize liblasso once again),so this will be done during
+        // round function.
+        // TODO: Vandalize liblasso once again to expose this method ;)
+
+        assert!(proof.round_polys.len() == num_vars);
+        assert!(proof.final_evaluations.len() == num_ins);
+        
+        Self {
+            proof,
+            f,
+            num_vars,
+            claims_to_reduce,
+
+            current_sum: None,
+            current_poly: None,
+            f_folded: None,
+            rs: vec![],
+            
+        }
     }
 
     fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
         ->
     Option<Self::ClaimsNew> {
-        todo!()
+
+        let Self {current_sum, f, f_folded, num_vars, claims_to_reduce, proof, rs, current_poly} = self;
+
+        let SumcheckPolyMapProof { round_polys, final_evaluations } = proof;
+
+        
+        let sumcheck_round_idx;
+        // Detect 0-th round (gamma challenge).
+        if let None = current_sum {
+            let gamma = challenge.value;
+            let gamma_pows = make_gamma_pows(&claims_to_reduce, gamma);
+            *current_sum = Some(make_folded_claim(&claims_to_reduce, &gamma_pows));
+            *f_folded = Some(make_folded_f(&claims_to_reduce, &gamma_pows, &f));
+            sumcheck_round_idx = 0;
+        } else {
+
+            let r_j = challenge.value;
+            let current_sum = current_sum.as_mut().unwrap();
+            rs.push(r_j);
+            
+            sumcheck_round_idx = rs.len();
+            
+
+            *current_sum = current_poly.as_ref().unwrap().evaluate(&r_j);
+            // This unwrap never fails, because rounds after 0th always have the poly (which is last prover's message).
+
+            if rs.len() == *num_vars {
+
+                transcript.append_scalars(b"sumcheck_final_evals", &final_evaluations[0..f.num_i]);
+                
+                // Cloning final evals to not change the proof. We probably do not need it, as we consume it anyway.
+                let mut args = final_evaluations.clone();
+                args.extend(claims_to_reduce.points.iter().map(|p| EqPolynomial::new(p.to_vec()).evaluate(&rs)));
+
+                assert!((f_folded.as_ref().unwrap())(&args) == *current_sum, "Verifier failure: final check incorrect");
+
+                return Some(
+                    EvalClaim{
+                        point: rs.clone(),
+                        evs: final_evaluations.clone(),
+                    }
+                )
+            }
+        }
+
+        let new_poly = round_polys[sumcheck_round_idx].decompress(&current_sum.unwrap());
+        // This indexing never fails, because n-th round will return from the else clause.
+        transcript.append_scalars(b"poly", &new_poly.as_vec());
+        *current_poly = Some(new_poly);
+        return None;
     }
 }
+
+fn make_gamma_pows<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma: F) -> Vec<F> {
+    let num_claims = claims.evs.iter().fold(0, |acc, upd| acc + upd.len());
+
+    let mut gamma_pows = vec![F::one(), gamma];
+    for i in 2..num_claims {
+        let tmp = gamma_pows[i-1];
+        gamma_pows.push(tmp * gamma);
+    }
+    gamma_pows
+}
+
+fn make_folded_claim<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F]) -> F {
+    let mut i = 0;
+    claims.evs.iter()
+        .flatten()
+        .fold(F::zero(), |acc, upd| {i+=1; acc + gamma_pows[i-1] * upd.1})
+}
+
+fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f: &PolynomialMapping<F>)
+        -> Box<dyn Fn(&[F]) -> F + Send + Sync> 
+{
+    let claims = claims.clone();
+    let gamma_pows = gamma_pows.to_vec();
+    let PolynomialMapping{exec, degree: _, num_i, num_o: _} = f.clone();
+    Box::new(
+        move |args: &[F]| {
+        let (args, eqpolys) = args.split_at(num_i);
+        let out = exec(args);
+        let mut i = 0;
+        (claims.evs.iter().enumerate()).fold(
+            F::zero(),
+            |acc, (j, evs)| {
+                let mut _acc = F::zero();
+                for ev in evs {
+                    _acc += out[ev.0] * gamma_pows[i];
+                    i += 1;
+                }
+                acc + _acc * eqpolys[j]
+
+                }
+            )
+        }
+    )
+}
+
 
 
 

@@ -1,4 +1,3 @@
-use core::panic;
 use std::{borrow::Borrow, marker::PhantomData, sync::{atomic::{AtomicU64, Ordering}, Arc}};
 
 use ark_bls12_381::Fr;
@@ -274,6 +273,9 @@ pub struct ExtProdProof<F: PrimeField> {
     claim_a: F,
     claim_b: F,
 }
+
+// We do not implement "protocol" traits because they assume there is at least a single round, and this is
+// a direct reduction.
 
 impl<F: PrimeField> ExtProd<F> {
 
@@ -771,10 +773,11 @@ fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f:
 
 #[cfg(test)]
 mod test {
-    use std::iter::repeat;
+    use std::iter::{repeat_with};
     use ark_bls12_381::G1Projective;
     use ark_ff::Field;
-    use liblasso::utils::test_lib::TestTranscript;
+    use ark_std::{rand::Rng, UniformRand};
+    use liblasso::{benches::bench::gen_random_point, utils::test_lib::TestTranscript};
     use crate::utils::scale;
 
     use super::*;
@@ -867,5 +870,57 @@ mod test {
         ).unwrap();
 
         v_transcript.assert_end()
+    }
+
+
+    fn gen_random_vec<F: PrimeField>(rng: &mut impl Rng,size: usize) -> Vec<F> {
+        repeat_with(|| F::rand(rng)).take(size).collect()
+    }
+
+    #[test]
+
+    fn split_protocol() -> () {
+        let num_vars: usize = 5;
+        let rng = &mut ark_std::test_rng();
+
+        let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|_| {
+            DensePolynomial::new(gen_random_vec(rng, 1 << num_vars))
+        }).collect();
+        let point: Vec<Fr> = gen_random_vec(rng, num_vars - 1);
+
+        let split_polys = Split::witness(&polys, &());
+
+
+        let evals : Vec<_> = split_polys.iter().map(|(p0, p1)| (p0.evaluate(&point), p1.evaluate(&point))).collect();
+
+        let p_transcript: &mut IndexedProofTranscript<G1Projective, _> = &mut IndexedProofTranscript::new(TestTranscript::new((0..100).map(|i| Fr::from(i)).collect(), vec![]));
+
+        let claims_to_reduce = (point.clone(), evals.clone());
+
+        let c = p_transcript.challenge_scalar(b"split");
+        let mut expected_point = vec![c.value];
+        expected_point.extend(point.iter());
+        let expected_evals : Vec<_> = polys.iter().map(|poly| poly.evaluate(&expected_point)).collect();
+
+        let mut prover = SplitProver::start(claims_to_reduce, polys, &());
+
+
+       let ((p_point, p_evals), _) = (&mut prover).round(c, p_transcript).unwrap();
+
+       assert!(p_point == expected_point);
+       assert!(p_evals == expected_evals);
+
+       let v_transcript : &mut IndexedProofTranscript<G1Projective, _> = &mut IndexedProofTranscript::new(TestTranscript::as_this(&p_transcript.transcript));
+
+       let claims_to_reduce = (point.clone(), evals.clone());
+       let c : Challenge<Fr> = v_transcript.challenge_scalar(b"split");
+       let mut verifier = SplitVerifier::start(claims_to_reduce, (), &());
+       let (v_point, v_evals) = verifier.round(c, v_transcript).unwrap();
+
+       assert!(v_point == p_point);
+       assert!(v_evals == p_evals);
+       (*v_transcript).transcript.assert_end();
+
+
     }
 }

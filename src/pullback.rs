@@ -8,9 +8,9 @@ use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
 use crate::msm_nonaffine::VariableBaseMSM_Nonaffine;
 
-/// This structure hosts a counter c, an array a,
+/// This structure hosts a counter 'mapping', an array 'image',
 /// and represents a pullback, i.e. a table
-/// (c* a)[i] = a[c[i]]
+/// T[i] = image[mapping[i]]
 pub struct Pullback<F: PrimeField> {
     pub mapping: Vec<usize>,
     pub image: Vec<F>,

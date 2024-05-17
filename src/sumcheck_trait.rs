@@ -280,7 +280,7 @@ pub struct ExtProdProof<F: PrimeField> {
 impl<F: PrimeField> ExtProd<F> {
 
     pub fn witness(a: &DensePolynomial<F>, b: &DensePolynomial<F>) -> DensePolynomial<F> {
-        DensePolynomial::new( 
+        DensePolynomial::new(
             a.Z.par_iter()
                 .map(|a_coeff| {
                     b.Z.par_iter()
@@ -303,18 +303,18 @@ impl<F: PrimeField> ExtProd<F> {
             claim_a: val_a,
             claim_b: val_b
         }
-    } 
+    }
 
     pub fn validate_claims(claim: (Vec<F>, F), split: usize, proof: ExtProdProof<F>) -> ((Vec<F>, F), (Vec<F>, F)) {
         let ExtProdProof{claim_a, claim_b} = proof;
-        
+
         let (point, value) = claim;
         assert!(split <= point.len());
         let (point_a, point_b) = point.split_at(split);
         assert!(claim_a * claim_b == value);
 
         ((point_a.to_vec(), claim_a), (point_b.to_vec(), claim_b))
-    } 
+    }
 
 }
 
@@ -667,7 +667,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
         let SumcheckPolyMapProof { round_polys, final_evaluations } = proof;
 
         assert!(rs.len() < *num_vars, "Verifier failure: attempt to call already finished verifier.");
-        
+
         let sumcheck_round_idx;
         // Detect 0-th round (gamma challenge).
         if let None = current_sum {
@@ -773,7 +773,7 @@ fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f:
 
 #[cfg(test)]
 mod test {
-    use std::iter::{repeat_with};
+    use std::iter::repeat_with;
     use ark_bls12_381::G1Projective;
     use ark_ff::Field;
     use ark_std::{rand::Rng, UniformRand};
@@ -817,7 +817,7 @@ mod test {
             &params,
         );
 
-        let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new((0..100).map(|i| Fr::from(i)).collect(), vec![]));
+        let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
         let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
         let Challenge { value: gamma, round_id: _ } = gamma_c;
         let mut res = prover.round(gamma_c, &mut p_transcript);
@@ -842,18 +842,9 @@ mod test {
             final_evals: extended_final_evaluations,
         };
 
-        // let mut _final_evals = frankenproof.final_evals.clone();
-        // _final_evals.pop();
-        // assert!(evs == _final_evals, "1");
-
         let combfunc = scale(combfunc);
 
         let folded_claim = claims.iter().rev().fold(Fr::from(0), |acc, (_, n)| acc * gamma + n);
-
-        // let final_eval = combfunc(&frankenproof.final_evals).iter().rev().fold(Fr::from(0), |acc, n| acc * gamma + n);
-        // let final_eval_2 = prover.f_folded.unwrap()(&frankenproof.final_evals);
-
-        // assert!(final_eval == final_eval_2, "2");
 
         let known_poly_evaluator = |x: &[Fr]| known_poly.evaluate(x);
         let verifier_evaluators = vec![&known_poly_evaluator as &dyn Fn(&[Fr]) -> Fr];
@@ -878,7 +869,6 @@ mod test {
     }
 
     #[test]
-
     fn split_protocol() -> () {
         let num_vars: usize = 5;
         let rng = &mut ark_std::test_rng();
@@ -893,7 +883,7 @@ mod test {
 
         let evals : Vec<_> = split_polys.iter().map(|(p0, p1)| (p0.evaluate(&point), p1.evaluate(&point))).collect();
 
-        let p_transcript: &mut IndexedProofTranscript<G1Projective, _> = &mut IndexedProofTranscript::new(TestTranscript::new((0..100).map(|i| Fr::from(i)).collect(), vec![]));
+        let p_transcript: &mut IndexedProofTranscript<G1Projective, _> = &mut IndexedProofTranscript::new(TestTranscript::new());
 
         let claims_to_reduce = (point.clone(), evals.clone());
 
@@ -922,5 +912,165 @@ mod test {
        (*v_transcript).transcript.assert_end();
 
 
+    }
+
+    #[test]
+    fn test_sumcheck_lite() {
+        let num_vars: usize = 5;
+        let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|i| DensePolynomial::new((0..32).map(|i| Fr::from(i)).collect())).collect();
+        let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
+        let claims : Vec<_> = polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
+        let known_poly = EqPolynomial::new(point.clone());
+
+        let _point = point.clone();
+
+        fn combfunc(i: &[Fr]) -> Vec<Fr> {
+            vec![i[0], i[1], i[2] * i[2] * i[0], i[2] * i[2] * i[0]]
+        }
+
+        let multiclaim = MultiEvalClaim {
+            points: vec![point],
+            evs: vec![claims.clone()],
+        };
+
+        let params = SumcheckPolyMapParams {
+            f: PolynomialMapping {
+                exec: Arc::new(combfunc),
+                degree: 3,
+                num_i: 3,
+                num_o: 4,
+            },
+            num_vars,
+        };
+
+        let mut prover = SumcheckPolyMapProver::start(
+            multiclaim.clone(),
+            polys.clone(),
+            &params,
+        );
+
+        let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
+        let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
+        let Challenge { value: gamma, round_id: _ } = gamma_c;
+        let mut res = prover.round(gamma_c, &mut p_transcript);
+        while res.is_none() {
+            let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
+            res = prover.round(challenge, &mut p_transcript);
+        }
+
+        println!("{:?}", p_transcript.transcript.log);
+
+        let (EvalClaim{point: proof_point, evs}, proof) = res.unwrap();
+        assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+
+        let mut verifier = SumcheckPolyMapVerifier::start(
+            multiclaim,
+            proof,
+            &params,
+        );
+
+        let mut v_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::as_this(&p_transcript.transcript));
+        let gamma_c = v_transcript.challenge_scalar(b"challenge_combine_outputs");
+        let Challenge { value: gamma, round_id: _ } = gamma_c;
+        let mut res = verifier.round(gamma_c, &mut v_transcript);
+        while res.is_none() {
+            let challenge = v_transcript.challenge_scalar(b"challenge_nextround");
+            res = verifier.round(challenge, &mut v_transcript);
+        }
+
+        println!("{:?}", v_transcript.transcript.log);
+
+        let EvalClaim{point: proof_point, evs} = res.unwrap();
+        assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+    }
+
+    #[test]
+    fn test_sumcheck_multiclaim() {
+        let num_vars: usize = 5;
+        let num_points: usize = 3;
+        let num_polys: usize = 4;
+        let poly_eval_matrix = vec![
+            vec![1, 1, 0, 1],
+            vec![1, 0, 1, 1],
+            vec![1, 1, 0, 0],
+        ];
+        let polys: Vec<DensePolynomial<Fr>> = (0..num_polys).map(|j| DensePolynomial::new((0..32).map(|i| Fr::from((j * i + i + j * 18) as u64)).collect())).collect();
+        let points: Vec<Vec<Fr>> = (0..(num_points as u64)).map(|j| (0..(num_vars as u64)).map(|i| Fr::from(i * i * 13 + i * j + j )).collect()).collect();
+        let claims = poly_eval_matrix.iter().zip_eq(points.iter()).map(
+            |(selector, point)| {
+                polys.iter().enumerate().zip_eq(selector.iter()).filter(|(_, &y)| y == 1).map(
+                    |((i, poly), _)| {
+                        (i, poly.evaluate(point))
+                    }
+                ).collect()
+            }
+        ).collect();
+
+        let known_polys: Vec<EqPolynomial<Fr>> = points.iter().map(|p| EqPolynomial::new(p.clone())).collect();
+
+        fn combfunc(i: &[Fr]) -> Vec<Fr> {
+            vec![
+                i[0],
+                i[1],
+                i[2] * i[2] * i[0],
+                i[2] * i[2] * i[0],
+                i[3] * i[2]
+            ]
+        }
+
+        let multiclaim = MultiEvalClaim {
+            points,
+            evs: claims,
+        };
+
+        let params = SumcheckPolyMapParams {
+            f: PolynomialMapping {
+                exec: Arc::new(combfunc),
+                degree: 3,
+                num_i: 4,
+                num_o: 5,
+            },
+            num_vars,
+        };
+
+        let mut prover = SumcheckPolyMapProver::start(
+            multiclaim.clone(),
+            polys.clone(),
+            &params,
+        );
+
+        let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
+        let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
+        let Challenge { value: gamma, round_id: _ } = gamma_c;
+        let mut res = prover.round(gamma_c, &mut p_transcript);
+        while res.is_none() {
+            let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
+            res = prover.round(challenge, &mut p_transcript);
+        }
+
+        println!("{:?}", p_transcript.transcript.log);
+
+        let (EvalClaim{point: proof_point, evs}, proof) = res.unwrap();
+        assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+
+        let mut verifier = SumcheckPolyMapVerifier::start(
+            multiclaim,
+            proof,
+            &params,
+        );
+
+        let mut v_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::as_this(&p_transcript.transcript));
+        let gamma_c = v_transcript.challenge_scalar(b"challenge_combine_outputs");
+        let Challenge { value: gamma, round_id: _ } = gamma_c;
+        let mut res = verifier.round(gamma_c, &mut v_transcript);
+        while res.is_none() {
+            let challenge = v_transcript.challenge_scalar(b"challenge_nextround");
+            res = verifier.round(challenge, &mut v_transcript);
+        }
+
+        println!("{:?}", v_transcript.transcript.log);
+
+        let EvalClaim{point: proof_point, evs} = res.unwrap();
+        assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
     }
 }

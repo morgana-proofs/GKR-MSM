@@ -455,7 +455,7 @@ mod tests {
         }
 
         let r: Vec<Fr> = (0..100).map(|i| Fr::from(i)).collect();
-        let mut transcript: TestTranscript<Fr> = TestTranscript::new(r.clone(), vec![]);
+        let mut transcript: TestTranscript<Fr> = TestTranscript::new();
 
         let mut grand_add_circuit = GrandAddCircuit::new(&DensePolynomial::new(xs), &DensePolynomial::new(ys), 3);
 

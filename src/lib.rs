@@ -8,3 +8,4 @@ pub mod gkr_msm_simple;
 pub mod sumcheck_trait;
 pub mod grand_add;
 mod utils;
+mod binary_msm;

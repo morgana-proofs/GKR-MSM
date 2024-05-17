@@ -227,6 +227,7 @@ impl<F: PrimeField> ProtocolProver<F> for SplitProver<F> {
     Option<(Self::ClaimsNew, Self::Proof)> {
         let Self{ claims_to_reduce, done } = self;
         assert!(!*done);
+        *done = true;
         let r = challenge.value;
         let (pt, evs) = claims_to_reduce;
         let evs_new = evs.iter().map(|(x, y)| *x + r * (*y - x)).collect();
@@ -255,6 +256,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for SplitVerifier<F> {
     Option<Self::ClaimsNew> {
         let Self{ claims_to_reduce, done } = self;
         assert!(!*done);
+        *done = true;
         let r = challenge.value;
         let (pt, evs) = claims_to_reduce;
         let evs_new = evs.iter().map(|(x, y)| *x + r * (*y - x)).collect();
@@ -262,6 +264,56 @@ impl<F: PrimeField> ProtocolVerifier<F> for SplitVerifier<F> {
         r.extend(pt.iter());
         Some((r, evs_new))
     }
+}
+
+pub struct ExtProd<F: PrimeField> {
+    _marker: PhantomData<F>,
+}
+
+pub struct ExtProdProof<F: PrimeField> {
+    claim_a: F,
+    claim_b: F,
+}
+
+impl<F: PrimeField> ExtProd<F> {
+
+    pub fn witness(a: &DensePolynomial<F>, b: &DensePolynomial<F>) -> DensePolynomial<F> {
+        DensePolynomial::new( 
+            a.Z.par_iter()
+                .map(|a_coeff| {
+                    b.Z.par_iter()
+                        .map(|b_coeff| *a_coeff * b_coeff)
+                    }
+                ).flatten().collect()
+        )
+    }
+
+    pub fn compute_claims(claim: (Vec<F>, F), split: usize, a: DensePolynomial<F>, b: DensePolynomial<F>) -> ExtProdProof<F> {
+        assert!(split == a.num_vars);
+        let (point, value) = claim;
+        let (point_a, point_b) = point.split_at(split);
+        let val_a = a.evaluate(&point_a);
+        let val_b = b.evaluate(&point_b);
+
+        assert!(val_a * val_b == value);
+
+        ExtProdProof{
+            claim_a: val_a,
+            claim_b: val_b
+        }
+    } 
+
+    pub fn validate_claims(claim: (Vec<F>, F), split: usize, proof: ExtProdProof<F>) -> ((Vec<F>, F), (Vec<F>, F)) {
+        let ExtProdProof{claim_a, claim_b} = proof;
+        
+        let (point, value) = claim;
+        assert!(split <= point.len());
+        let (point_a, point_b) = point.split_at(split);
+        assert!(claim_a * claim_b == value);
+
+        ((point_a.to_vec(), claim_a), (point_b.to_vec(), claim_b))
+    } 
+
 }
 
 
@@ -612,6 +664,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
 
         let SumcheckPolyMapProof { round_polys, final_evaluations } = proof;
 
+        assert!(rs.len() < *num_vars, "Verifier failure: attempt to call already finished verifier.");
         
         let sumcheck_round_idx;
         // Detect 0-th round (gamma challenge).
@@ -775,12 +828,12 @@ mod test {
         let (EvalClaim{point: proof_point, evs}, proof) = res.unwrap();
         assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
 
-        let eq_eval = (EqPolynomial::new(proof_point).evaluate(&_point));
+        let eq_eval = EqPolynomial::new(proof_point).evaluate(&_point);
 
-        let mut extended_final_evaluations = proof.final_evaluations.clone();
+        let SumcheckPolyMapProof { round_polys, final_evaluations } = proof;
+        let mut extended_final_evaluations = final_evaluations.clone();
         extended_final_evaluations.push(eq_eval);
 
-        let SumcheckPolyMapProof { round_polys, final_evaluations : _ } = proof;
         let frankenproof = SumcheckRichProof::<Fr> {
             compressed_polys: round_polys,
             final_evals: extended_final_evaluations,

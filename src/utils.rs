@@ -6,6 +6,7 @@ use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 use std::marker::PhantomData;
 use rayon::{prelude::*};
+use crate::sumcheck_trait::MultiEvalClaim;
 
 
 pub trait TwistedEdwardsConfig {
@@ -77,4 +78,15 @@ pub fn split_vecs<F: PrimeField>(ins: &[DensePolynomial<F>]) -> Vec<DensePolynom
 
     ins.iter().enumerate().map(|(idx, poly)| (res[idx], res[ins.len() + idx]) = poly.split(poly.len() / 2)).count();
     res
+}
+
+pub fn make_gamma_pows<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma: F) -> Vec<F> {
+    let num_claims = claims.evs.iter().fold(0, |acc, upd| acc + upd.len());
+
+    let mut gamma_pows = vec![F::one(), gamma];
+    for i in 2..num_claims {
+        let tmp = gamma_pows[i-1];
+        gamma_pows.push(tmp * gamma);
+    }
+    gamma_pows
 }

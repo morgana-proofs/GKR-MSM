@@ -456,8 +456,8 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
             let gamma_pows = make_gamma_pows(claims, gamma);
 
             *ev_folded = Some(make_folded_claim(claims, &gamma_pows));
-            
             *f_folded = Some(make_folded_f(claims, &gamma_pows, f));
+
         } else {
             let r_j = challenge.value;
             rs.push(r_j);
@@ -735,10 +735,18 @@ fn make_gamma_pows<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma: F) -> Vec<F
 }
 
 fn make_folded_claim<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F]) -> F {
-    let mut i = 0;
-    claims.evs.iter()
-        .flatten()
-        .fold(F::zero(), |acc, upd| {i+=1; acc + gamma_pows[i-1] * upd.1})
+    let mut i = 0; 
+    (claims.evs.iter().enumerate()).fold(
+        F::zero(),
+        |acc, (_, evs)| {
+            let mut _acc = F::zero();
+            for ev in evs {
+                _acc += ev.1 * gamma_pows[i];
+                i += 1;
+            }
+            acc + _acc 
+        }
+    )
 }
 
 fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f: &PolynomialMapping<F>)
@@ -786,15 +794,32 @@ mod test {
     fn our_prover_against_liblasso_verifier() {
         let num_vars: usize = 5;
         let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|i| DensePolynomial::new((0..32).map(|i| Fr::from(i)).collect())).collect();
+        
+        fn combfunc(i: &[Fr]) -> Vec<Fr> {
+            vec![i[0], i[1], i[2] * i[2] * i[0], i[2] * i[2] * i[0]]
+        }
+
+        let params = SumcheckPolyMapParams {
+            f: PolynomialMapping {
+                exec: Arc::new(combfunc),
+                degree: 3,
+                num_i: 3,
+                num_o: 4,
+            },
+            num_vars,
+        };
+
+        let image_polys = SumcheckPolyMap::witness(&polys, &params);
+
         let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
-        let claims : Vec<_> = polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
+        let claims : Vec<_> = image_polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
+        
+        
+        let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
         let known_poly = EqPolynomial::new(point.clone());
 
         let _point = point.clone();
 
-        fn combfunc(i: &[Fr]) -> Vec<Fr> {
-            vec![i[0], i[1], i[2] * i[2] * i[0], i[2] * i[2] * i[0]]
-        }
 
         let multiclaim = MultiEvalClaim {
             points: vec![point],
@@ -918,20 +943,10 @@ mod test {
     fn test_sumcheck_lite() {
         let num_vars: usize = 5;
         let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|i| DensePolynomial::new((0..32).map(|i| Fr::from(i)).collect())).collect();
-        let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
-        let claims : Vec<_> = polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
-        let known_poly = EqPolynomial::new(point.clone());
-
-        let _point = point.clone();
 
         fn combfunc(i: &[Fr]) -> Vec<Fr> {
             vec![i[0], i[1], i[2] * i[2] * i[0], i[2] * i[2] * i[0]]
         }
-
-        let multiclaim = MultiEvalClaim {
-            points: vec![point],
-            evs: vec![claims.clone()],
-        };
 
         let params = SumcheckPolyMapParams {
             f: PolynomialMapping {
@@ -942,6 +957,20 @@ mod test {
             },
             num_vars,
         };
+
+        let image_polys = SumcheckPolyMap::witness(&polys, &params);
+
+        let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
+        let claims : Vec<_> = image_polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
+//        let known_poly = EqPolynomial::new(point.clone());
+
+        let _point = point.clone();
+
+        let multiclaim = MultiEvalClaim {
+            points: vec![point],
+            evs: vec![claims.clone()],
+        };
+
 
         let mut prover = SumcheckPolyMapProver::start(
             multiclaim.clone(),
@@ -990,23 +1019,11 @@ mod test {
         let num_points: usize = 3;
         let num_polys: usize = 4;
         let poly_eval_matrix = vec![
-            vec![1, 1, 0, 1],
-            vec![1, 0, 1, 1],
-            vec![1, 1, 0, 0],
+            vec![1, 1, 0, 1, 0],
+            vec![1, 0, 1, 1, 0],
+            vec![1, 1, 0, 0, 1],
         ];
         let polys: Vec<DensePolynomial<Fr>> = (0..num_polys).map(|j| DensePolynomial::new((0..32).map(|i| Fr::from((j * i + i + j * 18) as u64)).collect())).collect();
-        let points: Vec<Vec<Fr>> = (0..(num_points as u64)).map(|j| (0..(num_vars as u64)).map(|i| Fr::from(i * i * 13 + i * j + j )).collect()).collect();
-        let claims = poly_eval_matrix.iter().zip_eq(points.iter()).map(
-            |(selector, point)| {
-                polys.iter().enumerate().zip_eq(selector.iter()).filter(|(_, &y)| y == 1).map(
-                    |((i, poly), _)| {
-                        (i, poly.evaluate(point))
-                    }
-                ).collect()
-            }
-        ).collect();
-
-        let known_polys: Vec<EqPolynomial<Fr>> = points.iter().map(|p| EqPolynomial::new(p.clone())).collect();
 
         fn combfunc(i: &[Fr]) -> Vec<Fr> {
             vec![
@@ -1018,10 +1035,6 @@ mod test {
             ]
         }
 
-        let multiclaim = MultiEvalClaim {
-            points,
-            evs: claims,
-        };
 
         let params = SumcheckPolyMapParams {
             f: PolynomialMapping {
@@ -1031,6 +1044,28 @@ mod test {
                 num_o: 5,
             },
             num_vars,
+        };
+
+        let image_polys = SumcheckPolyMap::witness(&polys, &params);
+
+        let points: Vec<Vec<Fr>> = (0..(num_points as u64)).map(|j| (0..(num_vars as u64)).map(|i| Fr::from(i * i * 13 + i * j + j )).collect()).collect();
+        let claims = poly_eval_matrix.iter().zip_eq(points.iter()).map(
+            |(selector, point)| {
+                image_polys.iter().enumerate().zip_eq(selector.iter()).filter(|(_, &y)| y == 1).map(
+                    |((i, poly), _)| {
+                        (i, poly.evaluate(point))
+                    }
+                ).collect()
+            }
+        ).collect();
+
+        let known_polys: Vec<EqPolynomial<Fr>> = points.iter().map(|p| EqPolynomial::new(p.clone())).collect();
+
+
+
+        let multiclaim = MultiEvalClaim {
+            points,
+            evs: claims,
         };
 
         let mut prover = SumcheckPolyMapProver::start(

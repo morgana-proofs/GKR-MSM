@@ -31,7 +31,7 @@ pub trait Protocol<F: PrimeField> {
         ClaimsNew = Self::ClaimsNew,
         Proof = Self::Proof,
         Params = Self::Params,
-        WitnessInput = Self::WitnessInput,
+        Trace = Self::Trace,
     >;
 
     type Verifier : ProtocolVerifier<
@@ -46,13 +46,12 @@ pub trait Protocol<F: PrimeField> {
     type ClaimsNew;
 
     type WitnessInput;
+    type Trace;
     type WitnessOutput;
-
     type Proof;
     type Params;
 
-    fn witness(args: &Self::WitnessInput, params: &Self::Params) -> Self::WitnessOutput;
-
+    fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput);
 }
 
 
@@ -62,11 +61,11 @@ pub trait ProtocolProver<F: PrimeField> {
     type ClaimsNew;
     type Proof;
     type Params;
-    type WitnessInput;
+    type Trace;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
-        args: Self::WitnessInput,
+        args: Self::Trace,
         params: &Self::Params,
     ) -> Self;
 

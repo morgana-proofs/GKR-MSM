@@ -14,6 +14,7 @@ dependencies = [
  "ark-std",
  "itertools 0.12.1",
  "liblasso",
+ "log",
  "merlin",
  "rayon",
 ]

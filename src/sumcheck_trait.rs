@@ -36,22 +36,23 @@ impl<F: PrimeField> Protocol<F> for Split<F> {
     type Proof = ();
     type Params = ();
     type WitnessInput = Vec<DensePolynomial<F>>;
+    type Trace = Self::WitnessInput;
     type WitnessOutput = Vec<(DensePolynomial<F>, DensePolynomial<F>)>;
 
-    fn witness(args: &Self::WitnessInput, params: &Self::Params) -> Self::WitnessOutput {
+    fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
         let num_vars = args[0].num_vars;
         assert!(num_vars > 0);
-        for arg in args {
+        for arg in &args {
             assert!(arg.num_vars == num_vars);
         }
 
         let mut ret = vec![];
 
-        for arg in args {
+        for arg in &args {
             ret.push(arg.split(1 << (num_vars - 1)));
         }
 
-        ret
+        (args, ret)
     }
 }
 
@@ -60,11 +61,11 @@ impl<F: PrimeField> ProtocolProver<F> for SplitProver<F> {
     type ClaimsNew = (Vec<F>, Vec<F>);
     type Proof = ();
     type Params = ();
-    type WitnessInput = Vec<DensePolynomial<F>>;
+    type Trace = Vec<DensePolynomial<F>>;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
-        args: Vec<DensePolynomial<F>>,
+        args: Self::Trace,
         params: &Self::Params,
     ) -> Self {
         let num_vars = args[0].num_vars;
@@ -234,14 +235,17 @@ impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
 
     type WitnessInput = Vec<DensePolynomial<F>>;
 
+    type Trace = Self::WitnessInput;
+
     type WitnessOutput = Vec<DensePolynomial<F>>;
 
     type Proof = SumcheckPolyMapProof<F>;
 
     type Params = SumcheckPolyMapParams<F>;
 
-    fn witness(args: &Self::WitnessInput, params: &Self::Params) -> Self::WitnessOutput {
-        map_over_poly(args, |x|(params.f.exec)(x))
+    fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
+        let out = map_over_poly(&args, |x|(params.f.exec)(x));
+        (args, out)
     }
 }
 
@@ -254,11 +258,11 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
     type Params = SumcheckPolyMapParams<F>;
 
-    type WitnessInput = Vec<DensePolynomial<F>>;
+    type Trace = Vec<DensePolynomial<F>>;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
-        mut args: Self::WitnessInput,
+        mut args: Self::Trace,
         params: &Self::Params,
     ) -> Self {
         assert!(args.len() == params.f.num_i);
@@ -653,7 +657,7 @@ mod test {
             num_vars,
         };
 
-        let image_polys = SumcheckPolyMap::witness(&polys, &params);
+        let (trace, image_polys) = SumcheckPolyMap::witness(polys.clone(), &params);
 
         let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
         let claims : Vec<_> = image_polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
@@ -682,7 +686,7 @@ mod test {
 
         let mut prover = SumcheckPolyMapProver::start(
             multiclaim,
-            polys.clone(),
+            trace,
             &params,
         );
 
@@ -747,7 +751,7 @@ mod test {
         }).collect();
         let point: Vec<Fr> = gen_random_vec(rng, num_vars - 1);
 
-        let split_polys = Split::witness(&polys, &());
+        let (trace, split_polys) = Split::witness(polys.clone(), &());
 
 
         let evals : Vec<_> = split_polys.iter().map(|(p0, p1)| (p0.evaluate(&point), p1.evaluate(&point))).collect();
@@ -761,7 +765,7 @@ mod test {
         expected_point.extend(point.iter());
         let expected_evals : Vec<_> = polys.iter().map(|poly| poly.evaluate(&expected_point)).collect();
 
-        let mut prover = SplitProver::start(claims_to_reduce, polys, &());
+        let mut prover = SplitProver::start(claims_to_reduce, trace, &());
 
 
        let ((p_point, p_evals), _) = (&mut prover).round(c, p_transcript).unwrap();
@@ -802,7 +806,7 @@ mod test {
             num_vars,
         };
 
-        let image_polys = SumcheckPolyMap::witness(&polys, &params);
+        let (trace, image_polys) = SumcheckPolyMap::witness(polys.clone(), &params);
 
         let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
         let claims : Vec<_> = image_polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
@@ -818,7 +822,7 @@ mod test {
 
         let mut prover = SumcheckPolyMapProver::start(
             multiclaim.clone(),
-            polys.clone(),
+            trace,
             &params,
         );
 
@@ -890,7 +894,7 @@ mod test {
             num_vars,
         };
 
-        let image_polys = SumcheckPolyMap::witness(&polys, &params);
+        let (trace, image_polys) = SumcheckPolyMap::witness(polys.clone(), &params);
 
         let points: Vec<Vec<Fr>> = (0..(num_points as u64)).map(|j| (0..(num_vars as u64)).map(|i| Fr::from(i * i * 13 + i * j + j )).collect()).collect();
         let claims = poly_eval_matrix.iter().zip_eq(points.iter()).map(
@@ -914,7 +918,7 @@ mod test {
 
         let mut prover = SumcheckPolyMapProver::start(
             multiclaim.clone(),
-            polys.clone(),
+            trace,
             &params,
         );
 

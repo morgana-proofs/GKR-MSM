@@ -24,7 +24,7 @@ impl<F: PrimeField> Pullback<F> {
     }
 
     /// Computes pullback's MSM by first aggregating repeated elements, and then doing normal MSM.
-    pub fn bucketed_msm<G: CurveGroup<ScalarField = F>>(&self, bases: &[G::MulBase]) -> G {
+    pub fn bucketed_msm<G: CurveGroup<ScalarField = F>>(&self, bases: &[G::Affine]) -> G {
         let Self{mapping, image} = self;
         
         assert!(mapping.len() == bases.len());

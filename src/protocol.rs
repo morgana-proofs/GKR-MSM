@@ -3,6 +3,7 @@ use std::sync::Arc;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use liblasso::utils::transcript::ProofTranscript;
+use ark_serialize::CanonicalSerialize;
 
 #[derive(Clone)]
 pub struct PolynomialMapping<F: PrimeField> {
@@ -96,6 +97,16 @@ pub trait ProtocolVerifier<F: PrimeField> {
 pub trait TranscriptReceiver<F: PrimeField> {
     fn append_scalar(&mut self, label: &'static [u8], scalar: &F);
     fn append_scalars(&mut self, label: &'static [u8], scalars: &[F]);
+    fn append_message(&mut self, label: &'static [u8], msg: &[u8]);
+}
+
+pub fn append_point_to_transcript<
+    G: CurveGroup,
+    T: TranscriptReceiver<G::ScalarField>
+> (label: &'static [u8], point: G, transcript: &mut T) {
+    let mut buf : Vec<u8> = vec![];
+    point.serialize_compressed(&mut buf).unwrap();
+    transcript.append_message(label, &buf);
 }
 
 pub trait TranscriptSender<F: PrimeField> {
@@ -137,6 +148,9 @@ impl<G: CurveGroup, P: ProofTranscript<G>> TranscriptReceiver<G::ScalarField> fo
     }
     fn append_scalars(&mut self, label: &'static [u8], scalars: &[<G>::ScalarField]) {
         self.transcript.append_scalars(label, scalars)
+    }
+    fn append_message(&mut self, label: &'static [u8], msg: &[u8]) {
+        todo!()
     }
 }
 

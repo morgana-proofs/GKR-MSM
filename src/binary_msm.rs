@@ -14,15 +14,13 @@ use crate::msm_nonaffine::VariableBaseMSM_Nonaffine;
 /// and represents a pullback, i.e. a table
 /// T[i] = image[mapping[i]]
 
-fn u8from(it: impl Iterator<Item=bool>) -> u8 {
+fn into_u8(it: impl Iterator<Item=bool>) -> u8 {
     let mut s = 0;
     it.take(8).map(|b| s = (s << 1) + if b {1} else {0}).last();
     s
 }
 
-pub fn binary_msm<F, G: CurveGroup<ScalarField=F>>(coefs: &[u8], bases: &[Vec<G::MulBase>]) -> G
-where
-    G::MulBase: Send,
+pub fn binary_msm<F, G: CurveGroup<ScalarField=F>>(coefs: &[u8], bases: &[Vec<G::Affine>]) -> G
 {
     assert_eq!(coefs.len(), bases.len());
     bases.par_iter().zip(coefs.par_iter()).filter(|(_, &idx)| idx as usize != 0).map(|(base, idx)| base[(*idx) as usize - 1]).fold(
@@ -35,7 +33,7 @@ where
 }
 
 
-pub fn prepare_chunk<F, G: CurveGroup<ScalarField=F>>(chunk: &[G::MulBase]) -> Vec<G::MulBase> {
+pub fn prepare_chunk<F, G: CurveGroup<ScalarField=F>>(chunk: &[G::Affine]) -> Vec<G::Affine> {
     let proj = (1..(1 << 8)).map(
         |i| {
             (0..8).zip(chunk.iter().rev())
@@ -47,15 +45,15 @@ pub fn prepare_chunk<F, G: CurveGroup<ScalarField=F>>(chunk: &[G::MulBase]) -> V
     G::normalize_batch(&proj)
 
 }
-pub fn prepare_bases<F, G: CurveGroup<ScalarField=F>>(bases: &[G::MulBase]) -> Vec<Vec<G::MulBase>> {
+pub fn prepare_bases<F, G: CurveGroup<ScalarField=F>>(bases: &[G::Affine]) -> Vec<Vec<G::Affine>> {
     let a = bases.par_chunks(8);
-    a.map(|chunk: &[G::MulBase]| {
+    a.map(|chunk: &[G::Affine]| {
         prepare_chunk::<F, G>(chunk)
     }).collect()
 }
 
 pub fn prepare_coefs(coefs: impl Iterator<Item=bool>) -> Vec<u8> {
-    coefs.chunks(8).into_iter().map(|chunk| u8from(chunk)).collect()
+    coefs.chunks(8).into_iter().map(|chunk| into_u8(chunk)).collect()
 }
 
 #[cfg(test)]

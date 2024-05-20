@@ -7,153 +7,8 @@ use itertools::Itertools;
 use liblasso::{poly::{dense_mlpoly::DensePolynomial, eq_poly::{self, EqPolynomial}, unipoly::{CompressedUniPoly, UniPoly}}, subprotocols::sumcheck::SumcheckRichProof, utils::transcript::{AppendToTranscript, ProofTranscript}};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 
-use crate::utils::map_over_poly;
-
-
-#[derive(Clone)]
-pub struct PolynomialMapping<F: PrimeField> {
-    exec: Arc<dyn Fn(&[F]) -> Vec<F> + Send + Sync>,
-    degree: usize,
-    num_i: usize,
-    num_o: usize,
-}
-
-// Claim
-pub struct Claim<F: PrimeField> {
-    point: Vec<F>,
-    value: F,
-}
-pub enum Either<T1, T2>{
-    A(T1),
-    B(T2),
-}
-
-
-pub trait Protocol<F: PrimeField> {
-    
-    type Prover : ProtocolProver<
-        F,
-        ClaimsToReduce = Self::ClaimsToReduce,
-        ClaimsNew = Self::ClaimsNew,
-        Proof = Self::Proof,
-        Params = Self::Params,
-        WitnessInput = Self::WitnessInput,
-    >;
-
-    type Verifier : ProtocolVerifier<
-        F,
-        ClaimsToReduce = Self::ClaimsToReduce,
-        ClaimsNew = Self::ClaimsNew,
-        Proof = Self::Proof,
-        Params = Self::Params,
-    >;
-
-    type ClaimsToReduce;
-    type ClaimsNew;
-
-    type WitnessInput;
-    type WitnessOutput;
-
-    type Proof;
-    type Params;
-
-    fn witness(args: &Self::WitnessInput, params: &Self::Params) -> Self::WitnessOutput;
-
-}
-
-
-pub trait ProtocolProver<F: PrimeField> {
-
-    type ClaimsToReduce;
-    type ClaimsNew;
-    type Proof;
-    type Params;
-    type WitnessInput;
-
-    fn start(
-        claims_to_reduce: Self::ClaimsToReduce,
-        args: Self::WitnessInput,
-        params: &Self::Params,
-    ) -> Self;
-
-
-    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
-        ->
-    Option<(Self::ClaimsNew, Self::Proof)>;
-}
-
-pub trait ProtocolVerifier<F: PrimeField> {
-    type Params;
-    type ClaimsToReduce;
-    type ClaimsNew;
-    type Proof;
-
-    fn start(
-        claims_to_reduce: Self::ClaimsToReduce,
-        proof: Self::Proof,
-        params: &Self::Params,
-    ) -> Self;
-
-
-    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
-        ->
-    Option<Self::ClaimsNew>;
-}
-
-pub trait TranscriptReceiver<F: PrimeField> {
-    fn append_scalar(&mut self, label: &'static [u8], scalar: &F);
-    fn append_scalars(&mut self, label: &'static [u8], scalars: &[F]);
-}
-
-pub trait TranscriptSender<F: PrimeField> {
-    fn challenge_scalar(&mut self, label: &'static [u8]) -> Challenge<F>;
-}
-
-#[derive(Clone, Copy)]
-pub struct Challenge<X> {
-    pub value: X,
-    pub round_id: usize,
-}
-
-/// A very thin wrapper over normal proof transcript from liblasso,
-/// counting amount of challenges. Protocols under parallel composition
-/// should check that their index monotonically increases.
-pub struct IndexedProofTranscript<G : CurveGroup, P: ProofTranscript<G>> {
-    global_round: usize,
-    transcript: P,
-    _marker: PhantomData<G>,
-}
-
-impl<G: CurveGroup, P: ProofTranscript<G>> IndexedProofTranscript<G, P> {
-    pub fn new(transcript: P) -> Self {
-        Self { global_round: 0, transcript, _marker: PhantomData }
-    }
-
-    pub fn release(self) -> P {
-        self.transcript
-    }
-
-    pub fn current_global_round(&self) -> usize {
-        self.global_round
-    }
-}
-
-impl<G: CurveGroup, P: ProofTranscript<G>> TranscriptReceiver<G::ScalarField> for IndexedProofTranscript<G, P> {
-    fn append_scalar(&mut self, label: &'static [u8], scalar: &<G>::ScalarField) {
-        self.transcript.append_scalar(label, scalar)
-    }
-    fn append_scalars(&mut self, label: &'static [u8], scalars: &[<G>::ScalarField]) {
-        self.transcript.append_scalars(label, scalars)
-    }
-}
-
-impl<G: CurveGroup, P: ProofTranscript<G>> TranscriptSender<G::ScalarField> for IndexedProofTranscript<G, P> {
-    fn challenge_scalar(&mut self, label: &'static [u8]) -> Challenge<<G>::ScalarField> {
-        let ret = Challenge {value: self.transcript.challenge_scalar(label), round_id : self.global_round};
-        self.global_round += 1;
-        ret
-    }
-}
+use crate::utils::{map_over_poly, make_gamma_pows};
+use crate::protocol::{Protocol, ProtocolProver, ProtocolVerifier, TranscriptSender, TranscriptReceiver, IndexedProofTranscript, Challenge, PolynomialMapping};
 
 
 // Impls
@@ -181,22 +36,23 @@ impl<F: PrimeField> Protocol<F> for Split<F> {
     type Proof = ();
     type Params = ();
     type WitnessInput = Vec<DensePolynomial<F>>;
+    type Trace = Self::WitnessInput;
     type WitnessOutput = Vec<(DensePolynomial<F>, DensePolynomial<F>)>;
 
-    fn witness(args: &Self::WitnessInput, params: &Self::Params) -> Self::WitnessOutput {
+    fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
         let num_vars = args[0].num_vars;
         assert!(num_vars > 0);
-        for arg in args {
+        for arg in &args {
             assert!(arg.num_vars == num_vars);
         }
 
         let mut ret = vec![];
 
-        for arg in args {
+        for arg in &args {
             ret.push(arg.split(1 << (num_vars - 1)));
         }
 
-        ret
+        (args, ret)
     }
 }
 
@@ -205,11 +61,11 @@ impl<F: PrimeField> ProtocolProver<F> for SplitProver<F> {
     type ClaimsNew = (Vec<F>, Vec<F>);
     type Proof = ();
     type Params = ();
-    type WitnessInput = Vec<DensePolynomial<F>>;
+    type Trace = Vec<DensePolynomial<F>>;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
-        args: Vec<DensePolynomial<F>>,
+        args: Self::Trace,
         params: &Self::Params,
     ) -> Self {
         let num_vars = args[0].num_vars;
@@ -379,14 +235,17 @@ impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
 
     type WitnessInput = Vec<DensePolynomial<F>>;
 
+    type Trace = Self::WitnessInput;
+
     type WitnessOutput = Vec<DensePolynomial<F>>;
 
     type Proof = SumcheckPolyMapProof<F>;
 
     type Params = SumcheckPolyMapParams<F>;
 
-    fn witness(args: &Self::WitnessInput, params: &Self::Params) -> Self::WitnessOutput {
-        map_over_poly(args, |x|(params.f.exec)(x))
+    fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
+        let out = map_over_poly(&args, |x|(params.f.exec)(x));
+        (args, out)
     }
 }
 
@@ -399,11 +258,11 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
     type Params = SumcheckPolyMapParams<F>;
 
-    type WitnessInput = Vec<DensePolynomial<F>>;
+    type Trace = Vec<DensePolynomial<F>>;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
-        mut args: Self::WitnessInput,
+        mut args: Self::Trace,
         params: &Self::Params,
     ) -> Self {
         assert!(args.len() == params.f.num_i);
@@ -723,17 +582,6 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
     }
 }
 
-fn make_gamma_pows<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma: F) -> Vec<F> {
-    let num_claims = claims.evs.iter().fold(0, |acc, upd| acc + upd.len());
-
-    let mut gamma_pows = vec![F::one(), gamma];
-    for i in 2..num_claims {
-        let tmp = gamma_pows[i-1];
-        gamma_pows.push(tmp * gamma);
-    }
-    gamma_pows
-}
-
 fn make_folded_claim<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F]) -> F {
     let mut i = 0; 
     (claims.evs.iter().enumerate()).fold(
@@ -809,7 +657,7 @@ mod test {
             num_vars,
         };
 
-        let image_polys = SumcheckPolyMap::witness(&polys, &params);
+        let (trace, image_polys) = SumcheckPolyMap::witness(polys.clone(), &params);
 
         let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
         let claims : Vec<_> = image_polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
@@ -838,7 +686,7 @@ mod test {
 
         let mut prover = SumcheckPolyMapProver::start(
             multiclaim,
-            polys.clone(),
+            trace,
             &params,
         );
 
@@ -903,7 +751,7 @@ mod test {
         }).collect();
         let point: Vec<Fr> = gen_random_vec(rng, num_vars - 1);
 
-        let split_polys = Split::witness(&polys, &());
+        let (trace, split_polys) = Split::witness(polys.clone(), &());
 
 
         let evals : Vec<_> = split_polys.iter().map(|(p0, p1)| (p0.evaluate(&point), p1.evaluate(&point))).collect();
@@ -917,7 +765,7 @@ mod test {
         expected_point.extend(point.iter());
         let expected_evals : Vec<_> = polys.iter().map(|poly| poly.evaluate(&expected_point)).collect();
 
-        let mut prover = SplitProver::start(claims_to_reduce, polys, &());
+        let mut prover = SplitProver::start(claims_to_reduce, trace, &());
 
 
        let ((p_point, p_evals), _) = (&mut prover).round(c, p_transcript).unwrap();
@@ -958,7 +806,7 @@ mod test {
             num_vars,
         };
 
-        let image_polys = SumcheckPolyMap::witness(&polys, &params);
+        let (trace, image_polys) = SumcheckPolyMap::witness(polys.clone(), &params);
 
         let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
         let claims : Vec<_> = image_polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
@@ -974,7 +822,7 @@ mod test {
 
         let mut prover = SumcheckPolyMapProver::start(
             multiclaim.clone(),
-            polys.clone(),
+            trace,
             &params,
         );
 
@@ -1046,7 +894,7 @@ mod test {
             num_vars,
         };
 
-        let image_polys = SumcheckPolyMap::witness(&polys, &params);
+        let (trace, image_polys) = SumcheckPolyMap::witness(polys.clone(), &params);
 
         let points: Vec<Vec<Fr>> = (0..(num_points as u64)).map(|j| (0..(num_vars as u64)).map(|i| Fr::from(i * i * 13 + i * j + j )).collect()).collect();
         let claims = poly_eval_matrix.iter().zip_eq(points.iter()).map(
@@ -1070,7 +918,7 @@ mod test {
 
         let mut prover = SumcheckPolyMapProver::start(
             multiclaim.clone(),
-            polys.clone(),
+            trace,
             &params,
         );
 

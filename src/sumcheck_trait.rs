@@ -224,6 +224,12 @@ pub struct EvalClaim<F: PrimeField> {
     pub evs: Vec<F>,
 }
 
+pub fn to_multieval<F: PrimeField>(claim: EvalClaim<F>) -> MultiEvalClaim<F> {
+    let points = vec![claim.point];
+    let evs = vec![std::iter::repeat(0).zip(claim.evs.into_iter()).collect()];
+    MultiEvalClaim{points, evs}
+}
+
 impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
     type Prover = SumcheckPolyMapProver<F>;
 

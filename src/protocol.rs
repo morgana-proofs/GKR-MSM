@@ -18,10 +18,6 @@ pub struct Claim<F: PrimeField> {
     point: Vec<F>,
     value: F,
 }
-pub enum Either<T1, T2>{
-    A(T1),
-    B(T2),
-}
 
 
 pub trait Protocol<F: PrimeField> {
@@ -72,8 +68,8 @@ pub trait ProtocolProver<F: PrimeField> {
 
 
     fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
-                                       ->
-                                       Option<(Self::ClaimsNew, Self::Proof)>;
+        ->
+    Option<(Self::ClaimsNew, Self::Proof)>;
 }
 
 pub trait ProtocolVerifier<F: PrimeField> {
@@ -89,9 +85,9 @@ pub trait ProtocolVerifier<F: PrimeField> {
     ) -> Self;
 
 
-    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
-                                       ->
-                                       Option<Self::ClaimsNew>;
+    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T) 
+        -> 
+    Option<Self::ClaimsNew>;
 }
 
 pub trait TranscriptReceiver<F: PrimeField> {

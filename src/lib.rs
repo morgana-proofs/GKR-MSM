@@ -11,3 +11,4 @@ pub mod utils;
 pub mod binary_msm;
 pub mod gkr;
 pub mod protocol;
+pub mod bintree;

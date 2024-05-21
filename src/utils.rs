@@ -5,6 +5,7 @@ use ark_std::iterable::Iterable;
 use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 use std::marker::PhantomData;
+use profi::prof;
 use rayon::{prelude::*};
 use crate::sumcheck_trait::MultiEvalClaim;
 
@@ -43,12 +44,13 @@ pub fn map_over_poly<F: PrimeField>(
     ins: &[DensePolynomial<F>],
     f: impl Fn(&[F]) -> Vec<F> + Send + Sync
 ) -> Vec<DensePolynomial<F>> {
+    prof!("map_over_poly");
     let applications: Vec<Vec<F>> = (0..ins[0].len()).into_par_iter()
         .map(|idx| {
             f(&ins.iter().map(|p| p[idx]).collect_vec())
         }).collect();
 
-    (0..applications.first().unwrap().len()).into_iter()
+    (0..applications.first().unwrap().len()).into_par_iter()
         .map(|idx| {
             DensePolynomial::new(applications.iter().map(|v| v[idx]).collect())
         }).collect::<Vec<DensePolynomial::<F>>>().try_into().unwrap()
@@ -89,4 +91,15 @@ pub fn make_gamma_pows<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma: F) -> V
         gamma_pows.push(tmp * gamma);
     }
     gamma_pows
+}
+
+pub fn split_into_chunks_balanced<T>(arr: &[T], num_threads: usize) -> impl Iterator<Item = &[T]> + '_ {
+    let l = arr.len();
+    let base_size = l / num_threads;
+    let num_large_chunks = l - base_size * num_threads;
+
+    let (m_hi, m_lo) = arr.split_at(num_large_chunks * num_threads);
+    let chunks_hi = m_hi.chunks(base_size + 1);
+    let chunks_lo = m_lo.chunks(base_size);
+    chunks_hi.chain(chunks_lo)
 }

@@ -6,6 +6,7 @@ use std::{fs::File, sync::Arc};
 use std::iter::repeat;
 use ark_serialize::*;
 use itertools::Itertools;
+use profi::{prof, prof_guard};
 
 use crate::{
     binary_msm::{binary_msm, prepare_coefs},
@@ -33,9 +34,9 @@ pub struct ExtendedBases<G: CurveGroup>{
 }
 
 pub struct CommitmentKey<G: CurveGroup> {
-    bases: Option<Vec<G::Affine>>,
-    binary_extended_bases: Option<Vec<Vec<G::Affine>>>,
-    gamma: usize,
+    pub bases: Option<Vec<G::Affine>>,
+    pub binary_extended_bases: Option<Vec<Vec<G::Affine>>>,
+    pub gamma: usize,
 }
 
 impl<G: CurveGroup> CommitmentKey<G> {
@@ -96,6 +97,7 @@ pub fn gkr_msm_prove<
     ck: &CommitmentKey<G>,
     transcript: &mut T,
 ) -> MSMProof<G> {
+    let mut guard = prof_guard!("gkr_msm_prove[bit_prep]");
 
     let num_points = 1 << log_num_points;
     let num_scalar_bits = 1 << log_num_scalar_bits;
@@ -152,7 +154,8 @@ pub fn gkr_msm_prove<
     // points_table_poly
     
     let base_layer = vec![bits_poly, points_table_poly.0, points_table_poly.1];
-
+    
+    drop(guard); guard = prof_guard!("gkr_msm_prove[gkr_wtns]");
     // layer1
     // filtered pts
 
@@ -211,6 +214,7 @@ pub fn gkr_msm_prove<
     );
 
     let (trace, output) = Bintree::witness(base_layer, &params);
+    drop(guard); guard = prof_guard!("gkr_msm_prove[gkr_claims]");
 
     output.iter().map(|p| transcript.append_scalars(b"output", p.vec())).count();
     output.iter().map(|p| assert_eq!(p.get_num_vars(), log_num_scalar_bits)).count();
@@ -224,6 +228,7 @@ pub fn gkr_msm_prove<
         evs: claim_evals,
     });
 
+    drop(guard); guard = prof_guard!("gkr_msm_prove[gkr_prover]");
     let mut prover = BintreeProver::start(
         claim,
         trace,
@@ -248,11 +253,13 @@ pub fn gkr_msm_prove<
 
 #[cfg(test)]
 mod test {
+    use std::path::Path;
     use std::time::Instant;
     use ark_std::{end_timer, start_timer, test_rng, UniformRand, Zero};
     use ark_bls12_381::Fr;
     use ark_bls12_381::{G1Projective, G1Affine};
     use ark_std::rand::Rng;
+    use cpuprofiler::PROFILER;
     use liblasso::utils::test_lib::TestTranscript;
     use merlin::Transcript;
     use crate::binary_msm::prepare_bases;
@@ -302,9 +309,9 @@ mod test {
     #[test]
     fn big() {
         let gamma = 6;
-        let log_num_points = 16;
+        let log_num_points = 12;
         let log_num_scalar_bits = 8;
-        let log_num_bit_columns = 7;
+        let log_num_bit_columns = 6;
 
         let num_points = 1 << log_num_points;
         let num_scalar_bits = 1 << log_num_scalar_bits;
@@ -313,6 +320,7 @@ mod test {
         let num_bit_columns = 1 << log_num_bit_columns;
         let col_size = size >> log_num_bit_columns;
 
+        dbg!(gamma, log_num_points, log_num_scalar_bits, log_num_bit_columns, num_points, num_scalar_bits, num_vars, size, num_bit_columns, col_size);
         let gen = &mut test_rng();
         let bases = (0..col_size).map(|i| G1Affine::rand(gen)).collect_vec();
         let coefs = (0..num_points).map(|_| (0..256).map(|_| gen.gen_bool(0.5)).collect_vec()).collect_vec();
@@ -327,8 +335,14 @@ mod test {
 
         let mut p_transcript = Transcript::new(b"test");
 
-        
-        let start = Instant::now();
+        let f = Path::new("gkr_msm_simple.profile");
+        if f.exists() {
+            std::fs::remove_file(f.clone()).unwrap();
+        }
+        println!("See prof here: {:#?}", f);
+        let mut file = std::fs::File::create(f.clone()).unwrap();
+        file.write(b"").unwrap();
+        drop(file);
         gkr_msm_prove(
             coefs,
             points,
@@ -338,7 +352,7 @@ mod test {
             &comm_key,
             &mut p_transcript,
         );
-        let end = Instant::now();
-        println!("{}ms", (end - start).as_millis());
     }
 }
+
+

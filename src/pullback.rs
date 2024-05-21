@@ -7,6 +7,7 @@ use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
 use crate::msm_nonaffine::VariableBaseMSM_Nonaffine;
+use crate::utils::split_into_chunks_balanced;
 
 /// This structure hosts a counter 'mapping', an array 'image',
 /// and represents a pullback, i.e. a table
@@ -56,18 +57,6 @@ impl<F: PrimeField> Pullback<F> {
         
         G::msm_nonaff(&buckets, &self.image).unwrap()
     }
-}
-
-
-fn split_into_chunks_balanced<T>(arr: &[T], num_threads: usize) -> impl Iterator<Item = &[T]> + '_ {
-    let l = arr.len();
-    let base_size = l / num_threads;
-    let num_large_chunks = l - base_size * num_threads;
-
-    let (m_hi, m_lo) = arr.split_at(num_large_chunks * num_threads);
-    let chunks_hi = m_hi.chunks(base_size + 1);
-    let chunks_lo = m_lo.chunks(base_size);
-    chunks_hi.chain(chunks_lo)
 }
 
 mod tests{

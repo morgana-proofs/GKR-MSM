@@ -5,6 +5,7 @@ use itertools::Either;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 
 use crate::{protocol::{PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck_trait::{to_multieval, EvalClaim, MultiEvalClaim, Split, SplitProver, SplitVerifier, SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier}};
+use crate::utils::{map_over_poly, split_vecs};
 
 #[derive(Clone)]
 pub enum Layer<F: PrimeField> {
@@ -210,8 +211,6 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
     fn round<T: crate::protocol::TranscriptReceiver<F>>(&mut self, challenge: crate::protocol::Challenge<F>, transcript: &mut T)
         ->
     Option<(Self::ClaimsNew, Self::Proof)> {
-
-
         let Self{proofs, trace, params, current_claims, current_prover} = self;
 
         match current_prover {
@@ -284,7 +283,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
         };
 
         if let None = current_prover.as_ref() {
-            if proofs.as_ref().unwrap().len() > 0 {return None};
+            if params.len() > 0 {return None};
             if let Either::Right(claim) = current_claims.take().unwrap() {
                 Some((claim, proofs.take().unwrap()))
             } else {unreachable!("Multi-eval claim found, should never happen.")}
@@ -324,6 +323,8 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
     Option<Self::ClaimsNew> {
         let Self { proofs, params, current_claims, current_verifier } = self;
 
+        println!("{:?}, {:?}, {:?}, {:?}", proofs.len(), params.len(), current_claims.is_some(), current_verifier.is_some());
+
         match current_verifier {
             None => {
                 let current_proof = proofs.pop_front().unwrap();
@@ -331,6 +332,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
                 *current_verifier = Some(
                     match current_params {
                         Layer::Mapping(f) => {
+                            println!("Mapping");
                             let _current_claims = match current_claims.take().unwrap() {
                                 Either::Left(c) => c,
                                 Either::Right(c) => to_multieval(c),
@@ -345,6 +347,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
                             ))
                         },
                         Layer::Split(n) => {
+                            println!("Split");
                             let _current_claims = match current_claims.take().unwrap() {
                                 Either::Right(c) => c,
                                 Either::Left(_) => panic!("Unexpected multi-evaluation claim."),
@@ -355,7 +358,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
                             let _current_claims = (
                                 _point,
                                 itertools::Itertools::zip_eq(
-                                    e0.iter().map(|x|*x), 
+                                    e0.iter().map(|x|*x),
                                     e1.iter().map(|x|*x)
                                 ).collect()
                             );
@@ -404,5 +407,184 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
         } else {
             None
         }
+    }
+}
+
+
+#[cfg(test)]
+mod test {
+    use std::sync::Arc;
+    use ark_bls12_381::{Fr, G1Projective};
+    use ark_std::{test_rng, UniformRand, Zero};
+    use itertools::Itertools;
+    use liblasso::utils::test_lib::TestTranscript;
+    use crate::protocol::{IndexedProofTranscript, TranscriptSender};
+    use super::*;
+
+    fn f62(v: &[Fr]) -> Vec<Fr> {
+        vec![
+            v[0] * v[1] * v[2],
+            v[3] * v[4] * v[5],
+        ]
+    }
+
+    fn f23(v: &[Fr]) -> Vec<Fr> {
+        vec![
+            v[0],
+            v[1],
+            v[0] * v[1],
+        ]
+    }
+
+    fn f61(v: &[Fr]) -> Vec<Fr> {
+        vec![
+            v[0] * v[1] * v[2] * v[3] * v[4] * v[5],
+        ]
+    }
+
+    fn f34(v: &[Fr]) -> Vec<Fr> {
+        vec![
+            v[1] * v[2],
+            v[2] * v[0],
+            v[0] * v[1],
+            v[0] * v[1] * v[2],
+        ]
+    }
+
+    fn f45(v: &[Fr]) -> Vec<Fr> {
+        vec![
+            v[1] * v[2],
+            v[2] * v[3],
+            v[3] * v[0],
+            v[0] * v[1],
+            v[0] * v[1] * v[2] * v[3],
+        ]
+    }
+
+    fn f53(v: &[Fr]) -> Vec<Fr> {
+        vec![
+            v[0] * v[1] * v[2],
+            v[2] * v[3],
+            v[3] * v[4],
+        ]
+    }
+
+    fn f63(v: &[Fr]) -> Vec<Fr> {
+        vec![
+            v[0] * v[3],
+            v[1] * v[4],
+            v[2] * v[5],
+        ]
+    }
+    #[test]
+    fn witness_generation() {
+        let gen = &mut test_rng();
+
+        let input = (0..3).map(|_|
+            DensePolynomial::new((0..32).map(|_| Fr::rand(gen)).collect())
+        ).collect_vec();
+
+        let params = BintreeParams::new(
+            vec![
+                Layer::new_split(3),
+                Layer::new_pmap(Box::new(f63), 10, 6, 3),
+                Layer::new_pmap(Box::new(f34), 10, 3, 4),
+                Layer::new_pmap(Box::new(f45), 10, 4, 5),
+                Layer::new_pmap(Box::new(f53), 10, 5, 3),
+                Layer::new_split(3),
+                Layer::new_pmap(Box::new(f62), 10, 6, 2),
+                Layer::new_pmap(Box::new(f23), 10, 2, 3),
+                Layer::new_split(3),
+                Layer::new_pmap(Box::new(f62), 10, 6, 2),
+                Layer::new_pmap(Box::new(f23), 10, 2, 3),
+                Layer::new_split(3),
+                Layer::new_pmap(Box::new(f61), 10, 6, 1),
+            ],
+            5,
+        );
+
+        let (trace, output) = Bintree::witness(input.clone(), &params);
+        let mut i = 0;
+        trace[i].iter().zip_eq(input.iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last();
+        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f63).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f34).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f45).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f53).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f62).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f23).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f62).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f23).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+        output.iter().zip_eq(map_over_poly(&trace[i], f61).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+    }
+
+    #[test]
+    fn prover_vs_verifier() {
+        let gen = &mut test_rng();
+
+        let input = (0..3).map(|_|
+            DensePolynomial::new((0..32).map(|_| Fr::rand(gen)).collect())
+        ).collect_vec();
+        let point = (0..1).map(|_| Fr::rand(gen)).collect_vec();
+
+        let params = BintreeParams::new(
+            vec![
+                Layer::new_split(3),
+                Layer::new_pmap(Box::new(f63), 2, 6, 3),
+                Layer::new_pmap(Box::new(f34), 3, 3, 4),
+                Layer::new_pmap(Box::new(f45), 4, 4, 5),
+                Layer::new_pmap(Box::new(f53), 3, 5, 3),
+                Layer::new_split(3),
+                Layer::new_pmap(Box::new(f62), 3, 6, 2),
+                Layer::new_pmap(Box::new(f23), 2, 2, 3),
+                Layer::new_split(3),
+                Layer::new_pmap(Box::new(f62), 3, 6, 2),
+                Layer::new_pmap(Box::new(f23), 2, 2, 3),
+                Layer::new_split(3),
+                Layer::new_pmap(Box::new(f61), 6, 6, 1),
+            ],
+            5,
+        );
+
+        let (trace, output) = Bintree::witness(input.clone(), &params);
+
+
+        let claims_to_reduce = to_multieval(EvalClaim {
+            evs: output.iter().map(|p| p.evaluate(&point)).collect(),
+            point,
+        });
+
+        let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
+
+        let mut prover = BintreeProver::start(claims_to_reduce.clone(), trace, &params);
+        let mut res = None;
+        while res.is_none() {
+            let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
+            res = prover.round(challenge, &mut p_transcript);
+        }
+        let (EvalClaim{point: proof_point, evs: proof_evs}, proof) = res.unwrap();
+
+        assert_eq!(proof_evs, input.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+
+        let mut v_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::as_this(&p_transcript.transcript));
+
+        let mut verifier =  BintreeVerifier::start(
+            claims_to_reduce,
+            proof,
+            &params,
+        );
+
+        let mut res = None;
+        while res.is_none() {
+            let challenge = v_transcript.challenge_scalar(b"challenge_nextround");
+            res = verifier.round(challenge, &mut v_transcript);
+        }
+        let EvalClaim{point: verify_point, evs: verify_evs} = res.unwrap();
+
+        assert_eq!(proof_point, verify_point);
+        assert_eq!(proof_evs, verify_evs);
     }
 }

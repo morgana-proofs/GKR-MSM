@@ -94,15 +94,7 @@ pub trait TranscriptReceiver<F: PrimeField> {
     fn append_scalar(&mut self, label: &'static [u8], scalar: &F);
     fn append_scalars(&mut self, label: &'static [u8], scalars: &[F]);
     fn append_message(&mut self, label: &'static [u8], msg: &[u8]);
-}
-
-pub fn append_point_to_transcript<
-    G: CurveGroup,
-    T: TranscriptReceiver<G::ScalarField>
-> (label: &'static [u8], point: G, transcript: &mut T) {
-    let mut buf : Vec<u8> = vec![];
-    point.serialize_compressed(&mut buf).unwrap();
-    transcript.append_message(label, &buf);
+    fn append_point<G: CurveGroup>(&mut self, label: &'static[u8], point: G);
 }
 
 pub trait TranscriptSender<F: PrimeField> {
@@ -112,7 +104,6 @@ pub trait TranscriptSender<F: PrimeField> {
 #[derive(Clone, Copy)]
 pub struct Challenge<X> {
     pub value: X,
-    pub round_id: usize,
 }
 
 /// A very thin wrapper over normal proof transcript from liblasso,
@@ -148,11 +139,14 @@ impl<G: CurveGroup, P: ProofTranscript<G>> TranscriptReceiver<G::ScalarField> fo
     fn append_message(&mut self, label: &'static [u8], msg: &[u8]) {
         todo!()
     }
+    fn append_point<G2: CurveGroup>(&mut self, label: &'static[u8], point: G2) {
+        todo!()
+    }
 }
 
 impl<G: CurveGroup, P: ProofTranscript<G>> TranscriptSender<G::ScalarField> for IndexedProofTranscript<G, P> {
     fn challenge_scalar(&mut self, label: &'static [u8]) -> Challenge<<G>::ScalarField> {
-        let ret = Challenge {value: self.transcript.challenge_scalar(label), round_id : self.global_round};
+        let ret = Challenge {value: self.transcript.challenge_scalar(label)};
         self.global_round += 1;
         ret
     }

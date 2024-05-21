@@ -698,7 +698,7 @@ mod test {
 
         let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
         let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
-        let Challenge { value: gamma, round_id: _ } = gamma_c;
+        let Challenge { value: gamma } = gamma_c;
         let mut res = prover.round(gamma_c, &mut p_transcript);
         while res.is_none() {
             let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
@@ -834,7 +834,7 @@ mod test {
 
         let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
         let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
-        let Challenge { value: gamma, round_id: _ } = gamma_c;
+        let Challenge { value: gamma } = gamma_c;
         let mut res = prover.round(gamma_c, &mut p_transcript);
         while res.is_none() {
             let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
@@ -854,7 +854,7 @@ mod test {
 
         let mut v_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::as_this(&p_transcript.transcript));
         let gamma_c = v_transcript.challenge_scalar(b"challenge_combine_outputs");
-        let Challenge { value: gamma, round_id: _ } = gamma_c;
+        let Challenge { value: gamma } = gamma_c;
         let mut res = verifier.round(gamma_c, &mut v_transcript);
         while res.is_none() {
             let challenge = v_transcript.challenge_scalar(b"challenge_nextround");
@@ -930,7 +930,7 @@ mod test {
 
         let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
         let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
-        let Challenge { value: gamma, round_id: _ } = gamma_c;
+        let Challenge { value: gamma } = gamma_c;
         let mut res = prover.round(gamma_c, &mut p_transcript);
         while res.is_none() {
             let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
@@ -950,7 +950,7 @@ mod test {
 
         let mut v_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::as_this(&p_transcript.transcript));
         let gamma_c = v_transcript.challenge_scalar(b"challenge_combine_outputs");
-        let Challenge { value: gamma, round_id: _ } = gamma_c;
+        let Challenge { value: gamma } = gamma_c;
         let mut res = verifier.round(gamma_c, &mut v_transcript);
         while res.is_none() {
             let challenge = v_transcript.challenge_scalar(b"challenge_nextround");

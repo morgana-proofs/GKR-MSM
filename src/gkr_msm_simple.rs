@@ -5,7 +5,16 @@ use rayon::iter::{repeatn, IntoParallelIterator, IntoParallelRefIterator, Parall
 use std::{fs::File, sync::Arc};
 use ark_serialize::*;
 
-use crate::{binary_msm::{binary_msm, prepare_coefs}, grand_add::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3}, protocol::{append_point_to_transcript, PolynomialMapping, Protocol, TranscriptReceiver, TranscriptSender}, sumcheck_trait::{Split, SumcheckPolyMap, SumcheckPolyMapParams}, utils::TwistedEdwardsConfig};
+use crate::{
+    binary_msm::{binary_msm, prepare_coefs},
+    grand_add::{
+        affine_twisted_edwards_add_l1,
+        affine_twisted_edwards_add_l2,
+        affine_twisted_edwards_add_l3,
+        twisted_edwards_add_l1,
+        twisted_edwards_add_l2,
+        twisted_edwards_add_l3
+    }, protocol::{PolynomialMapping, Protocol, TranscriptReceiver, TranscriptSender}, sumcheck_trait::{Split, SumcheckPolyMap, SumcheckPolyMapParams}, utils::TwistedEdwardsConfig};
 
 pub trait MSMCircuitConfig {
     type F : PrimeField;
@@ -88,7 +97,7 @@ pub fn gkr_msm_prove<
     
     let bit_comms : Vec<G> = (0..num_bit_columns).map(|i| {
         let point = ck.commit_bitvec(bits_flatten[col_size * i .. col_size * (i + 1)].iter().map(|x|*x));
-        append_point_to_transcript::<G, T>(b"bit column", point, transcript);
+        transcript.append_point(b"bit column", point);
         point
     }).collect();
 
@@ -101,7 +110,7 @@ pub fn gkr_msm_prove<
     pts_prep.extend(tmp.into_iter().chain(std::iter::repeat(F::zero())).take(col_size - points.len()*2));
 
     let pts_comm : G = ck.commit_vec(&pts_prep);
-    append_point_to_transcript(b"point column", pts_comm, transcript);
+    transcript.append_point(b"point column", pts_comm);
 
 
     let bits_poly = DensePolynomial::new(

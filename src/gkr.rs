@@ -1,5 +1,4 @@
 use std::marker::PhantomData;
-use std::os::linux::raw::stat;
 use ark_ff::PrimeField;
 use itertools::{Either, Itertools};
 use liblasso::poly::dense_mlpoly::DensePolynomial;

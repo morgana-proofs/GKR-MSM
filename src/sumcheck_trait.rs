@@ -226,7 +226,7 @@ pub struct EvalClaim<F: PrimeField> {
 
 pub fn to_multieval<F: PrimeField>(claim: EvalClaim<F>) -> MultiEvalClaim<F> {
     let points = vec![claim.point];
-    let evs = vec![std::iter::repeat(0).zip(claim.evs.into_iter()).collect()];
+    let evs = vec![(0..).zip(claim.evs.into_iter()).collect()];
     MultiEvalClaim{points, evs}
 }
 

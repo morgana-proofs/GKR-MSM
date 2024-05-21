@@ -144,6 +144,8 @@ pub struct BintreeVerifier<F: PrimeField> {
     current_verifier: Option<Either<SumcheckPolyMapVerifier<F>, SplitVerifier<F>>>,
 }
 
+pub type BintreeProof<F: PrimeField> = VecDeque<LayerProof<F>>;
+
 impl<F: PrimeField> Protocol<F> for Bintree<F> {
     type Prover = BintreeProver<F>;
 
@@ -159,7 +161,7 @@ impl<F: PrimeField> Protocol<F> for Bintree<F> {
 
     type WitnessOutput = Vec<DensePolynomial<F>>;
 
-    type Proof = VecDeque<LayerProof<F>>;
+    type Proof = BintreeProof<F>;
 
     type Params = BintreeParams<F>;
 

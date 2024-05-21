@@ -4,7 +4,7 @@ use ark_ff::PrimeField;
 use itertools::Either;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 
-use crate::{protocol::{PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck_trait::{to_multieval, EvalClaim, MultiEvalClaim, Split, SplitProver, SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver}};
+use crate::{protocol::{PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck_trait::{to_multieval, EvalClaim, MultiEvalClaim, Split, SplitProver, SplitVerifier, SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier}};
 
 #[derive(Clone)]
 pub enum Layer<F: PrimeField> {
@@ -137,7 +137,10 @@ pub struct BintreeProver<F: PrimeField> {
 }
 
 pub struct BintreeVerifier<F: PrimeField> {
-    _marker: PhantomData<F>,
+    proofs: VecDeque<LayerProof<F>>,
+    params: Vec<(Layer<F>, usize)>,
+    current_claims: Option<Either<MultiEvalClaim<F>, EvalClaim<F>>>,
+    current_verifier: Option<Either<SumcheckPolyMapVerifier<F>, SplitVerifier<F>>>,
 }
 
 impl<F: PrimeField> Protocol<F> for Bintree<F> {
@@ -281,6 +284,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
         };
 
         if let None = current_prover.as_ref() {
+            if proofs.as_ref().unwrap().len() > 0 {return None};
             if let Either::Right(claim) = current_claims.take().unwrap() {
                 Some((claim, proofs.take().unwrap()))
             } else {unreachable!("Multi-eval claim found, should never happen.")}
@@ -304,12 +308,101 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
         proof: Self::Proof,
         params: &Self::Params,
     ) -> Self {
-        todo!()
+        Self {
+            proofs: proof,
+            params: params.unroll(),
+            current_claims: Some(Either::Left(claims_to_reduce)),
+            current_verifier: None
+        }
     }
 
-    fn round<T: crate::protocol::TranscriptReceiver<F>>(&mut self, challenge: crate::protocol::Challenge<F>, transcript: &mut T)
-                                       ->
-                                       Option<Self::ClaimsNew> {
-        todo!()
+    fn round<T: crate::protocol::TranscriptReceiver<F>>(
+        &mut self,
+        challenge: crate::protocol::Challenge<F>,
+        transcript: &mut T)
+        ->
+    Option<Self::ClaimsNew> {
+        let Self { proofs, params, current_claims, current_verifier } = self;
+
+        match current_verifier {
+            None => {
+                let current_proof = proofs.pop_front().unwrap();
+                let (current_params, current_num_vars) = params.pop().unwrap();
+                *current_verifier = Some(
+                    match current_params {
+                        Layer::Mapping(f) => {
+                            let _current_claims = match current_claims.take().unwrap() {
+                                Either::Left(c) => c,
+                                Either::Right(c) => to_multieval(c),
+                            };
+
+                            let LayerProof::Mapping(_current_proof) = current_proof else {panic!()};
+
+                            Either::Left(SumcheckPolyMapVerifier::start(
+                                _current_claims,
+                                _current_proof,
+                                &SumcheckPolyMapParams{ f, num_vars: current_num_vars }
+                            ))
+                        },
+                        Layer::Split(n) => {
+                            let _current_claims = match current_claims.take().unwrap() {
+                                Either::Right(c) => c,
+                                Either::Left(_) => panic!("Unexpected multi-evaluation claim."),
+                            };
+
+                            let EvalClaim { point: _point, evs: _evs } = _current_claims;
+                            let (e0, e1) = _evs.split_at(n);
+                            let _current_claims = (
+                                _point,
+                                itertools::Itertools::zip_eq(
+                                    e0.iter().map(|x|*x), 
+                                    e1.iter().map(|x|*x)
+                                ).collect()
+                            );
+
+                            let LayerProof::Split = current_proof else {panic!()};
+
+                            Either::Right(SplitVerifier::start(
+                                _current_claims,
+                                (),
+                                &(),
+                            ))
+
+                        },
+                    }
+                )
+            },
+            Some(_) => (),
+        }
+
+        match current_verifier.as_mut().unwrap() {
+            Either::Right(verifier) => {
+                match verifier.round(challenge, transcript) {
+                    None => (),
+                    Some(claim) => {
+                        *current_claims = Some(Either::Right(EvalClaim { point: claim.0, evs: claim.1 }));
+                        *current_verifier = None;
+                    },
+                }
+            },
+            Either::Left(verifier) => {
+                match verifier.round(challenge, transcript) {
+                    None => (),
+                    Some(claim) => {
+                        *current_claims = Some(Either::Right(claim));
+                        *current_verifier = None;
+                    }
+                }
+            },
+        }
+
+        if let None = current_verifier.as_ref() {
+            if proofs.len() > 0 {return None};
+            if let Either::Right(claim) = current_claims.take().unwrap() {
+                Some(claim)
+            } else {unreachable!("Multi-eval claim found, should never happen.")}
+        } else {
+            None
+        }
     }
 }

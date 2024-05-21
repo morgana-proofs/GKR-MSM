@@ -51,7 +51,11 @@ impl<G: CurveGroup> CommitmentKey<G> {
 
 }
 
-pub struct MSMCircuit {}
+pub struct MSMProof<G> {
+    bit_columns: Vec<G>,
+    point_column: G,
+    
+}
 
 
 

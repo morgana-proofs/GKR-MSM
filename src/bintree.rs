@@ -284,7 +284,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
         };
 
         if let None = current_prover.as_ref() {
-            if proofs.as_ref().unwrap().len() > 0 {return None};
+            if params.len() > 0 {return None};
             if let Either::Right(claim) = current_claims.take().unwrap() {
                 Some((claim, proofs.take().unwrap()))
             } else {unreachable!("Multi-eval claim found, should never happen.")}
@@ -397,7 +397,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
         }
 
         if let None = current_verifier.as_ref() {
-            if proofs.len() > 0 {return None};
+            if params.len() > 0 {return None};
             if let Either::Right(claim) = current_claims.take().unwrap() {
                 Some(claim)
             } else {unreachable!("Multi-eval claim found, should never happen.")}

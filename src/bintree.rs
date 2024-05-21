@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, sync::Arc};
+use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
 
 use ark_ff::PrimeField;
 use itertools::Either;
@@ -129,7 +129,7 @@ pub struct Bintree<F: PrimeField> {
 }
 
 pub struct BintreeProver<F: PrimeField> {
-    proofs: Option<Vec<LayerProof<F>>>,
+    proofs: Option<VecDeque<LayerProof<F>>>,
     trace: Vec<Vec<DensePolynomial<F>>>,
     params: Vec<(Layer<F>, usize)>,
     current_claims: Option<Either<MultiEvalClaim<F>, EvalClaim<F>>>,
@@ -155,7 +155,7 @@ impl<F: PrimeField> Protocol<F> for Bintree<F> {
 
     type WitnessOutput = Vec<DensePolynomial<F>>;
 
-    type Proof = Vec<LayerProof<F>>;
+    type Proof = VecDeque<LayerProof<F>>;
 
     type Params = BintreeParams<F>;
 
@@ -183,7 +183,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
 
     type ClaimsNew = EvalClaim<F>;
 
-    type Proof = Vec<LayerProof<F>>;
+    type Proof = VecDeque<LayerProof<F>>;
 
     type Params = BintreeParams<F>;
 
@@ -196,7 +196,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
     ) -> Self {
 
         Self {
-            proofs: Some(vec![]),
+            proofs: Some(VecDeque::new()),
             trace: args,
             params: params.unroll(),
             current_claims: Some(Either::Left(claims_to_reduce)),
@@ -263,7 +263,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
                     None => (),
                     Some((claim, ())) => {
                         *current_claims = Some(Either::Right(EvalClaim { point: claim.0, evs: claim.1 }));
-                        proofs.as_mut().unwrap().push(LayerProof::Split);
+                        proofs.as_mut().unwrap().push_back(LayerProof::Split);
                         *current_prover = None;
                     },
                 }
@@ -273,7 +273,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
                     None => (),
                     Some((claim, proof)) => {
                         *current_claims = Some(Either::Right(claim));
-                        proofs.as_mut().unwrap().push(LayerProof::Mapping(proof));
+                        proofs.as_mut().unwrap().push_back(LayerProof::Mapping(proof));
                         *current_prover = None;
                     }
                 }
@@ -297,7 +297,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
 
     type ClaimsNew = EvalClaim<F>;
 
-    type Proof = Vec<LayerProof<F>>;
+    type Proof = VecDeque<LayerProof<F>>;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,

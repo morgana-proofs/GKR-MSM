@@ -46,7 +46,7 @@ pub fn map_over_poly<F: PrimeField>(
 ) -> Vec<DensePolynomial<F>> {
     #[cfg(feature = "prof")]
     prof!("map_over_poly");
-    
+
     let applications: Vec<Vec<F>> = (0..ins[0].len()).into_par_iter()
         .map(|idx| {
             f(&ins.iter().map(|p| p[idx]).collect_vec())
@@ -104,4 +104,13 @@ pub fn split_into_chunks_balanced<T>(arr: &[T], num_threads: usize) -> impl Iter
     let chunks_hi = m_hi.chunks(base_size + 1);
     let chunks_lo = m_lo.chunks(base_size);
     chunks_hi.chain(chunks_lo)
+}
+
+#[cfg(feature = "memprof")]
+pub fn memprof(l: &str) {
+    use jemalloc_ctl::{stats, epoch};
+    epoch::advance().unwrap();
+    let allocated = stats::allocated::read().unwrap();
+    let resident = stats::resident::read().unwrap();
+    println!("{}: {:.3}Gb ({} bytes) allocated / {:.3}Gb ({} bytes) resident", l, allocated as f64 / 1024f64 / 1024f64 / 1024f64, allocated, resident as f64 / 1024f64 / 1024f64 / 1024f64, resident);
 }

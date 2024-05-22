@@ -22,6 +22,7 @@ rayon = "1.10.0"
 itertools = "0.12.1"
 merlin = "3.0.0"
 log = "0.4.21"
+paste = "1.0.15"
 # bandersnatch = { git = "https://github.com/zhenfeizhang/bandersnatch.git", version = "0.1.1", features = ["asm", "std"] }
 # ark-ed-on-bls12-381-bandersnatch = { git = "https://github.com/arkworks-rs/algebra.git", rev = "bf96a5b"}
 
@@ -33,11 +34,15 @@ default = [
     "multicore",
 ]
 prof = ["profi/enable", "profi/attributes", "profi/rayon", "profi/deep-hierarchy"]
+memprof = []
 
 [dev-dependencies]
 criterion = "0.3.6"
 cpuprofiler = "0.0.4"
 profi = { version = "*", default-features = true }
+identconv = "0.2.0"
+jemalloc-ctl = "0.5.4"
+jemallocator = "0.5.4"
 
 [[bench]]
 name = "gkr_msm_simple"

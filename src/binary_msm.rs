@@ -33,10 +33,10 @@ pub fn binary_msm<F, G: CurveGroup<ScalarField=F>>(coefs: &[u8], bases: &[Vec<G:
 }
 
 
-pub fn prepare_chunk<F, G: CurveGroup<ScalarField=F>>(chunk: &[G::Affine]) -> Vec<G::Affine> {
-    let proj = (1..(1 << 8)).map(
+pub fn prepare_chunk<F, G: CurveGroup<ScalarField=F>>(chunk: &[G::Affine], gamma: usize) -> Vec<G::Affine> {
+    let proj = (1..(1 << gamma)).map(
         |i| {
-            (0..8).zip(chunk.iter().rev())
+            (0..gamma).zip(chunk.iter().rev())
                 .filter(|(idx, _)| (1 << idx) & i != 0)
                 .map(|(_, b): (_, &G::Affine)| *b)
                 .fold(G::zero(), |acc, new| acc + new)
@@ -48,7 +48,7 @@ pub fn prepare_chunk<F, G: CurveGroup<ScalarField=F>>(chunk: &[G::Affine]) -> Ve
 pub fn prepare_bases<F, G: CurveGroup<ScalarField=F>>(bases: &[G::Affine], gamma: usize) -> Vec<Vec<G::Affine>> {
     let a = bases.par_chunks(gamma);
     a.map(|chunk: &[G::Affine]| {
-        prepare_chunk::<F, G>(chunk)
+        prepare_chunk::<F, G>(chunk, gamma)
     }).collect()
 }
 

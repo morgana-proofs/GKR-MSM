@@ -8,6 +8,7 @@ use std::io::Write;
 use std::path::Path;
 use GKR_MSM::binary_msm::prepare_bases;
 use GKR_MSM::gkr_msm_simple::{gkr_msm_prove, CommitmentKey};
+use identconv::camel;
 
 extern crate cpuprofiler;
 use cpuprofiler::PROFILER;
@@ -48,7 +49,7 @@ fn prepare_data(
         .map(|p| (p.x, p.y))
         .collect_vec();
     let binary_extended_bases = prepare_bases::<_, G1Projective>(&bases, gamma);
-
+    
     let comm_key = CommitmentKey::<G1Projective> {
         bases: Some(bases),
         binary_extended_bases: Some(binary_extended_bases),
@@ -92,14 +93,14 @@ pub fn _simple_bench<
             || f(),
             // prepare_data,
             |(
-                coefs,
-                points,
-                log_num_points,
-                log_num_scalar_bits,
-                log_num_bit_columns,
-                comm_key,
-                mut p_transcript,
-            )| {
+                 coefs,
+                 points,
+                 log_num_points,
+                 log_num_scalar_bits,
+                 log_num_bit_columns,
+                 comm_key,
+                 mut p_transcript,
+             )| {
                 gkr_msm_prove(
                     coefs,
                     points,
@@ -116,6 +117,8 @@ pub fn _simple_bench<
     grp.finish();
 }
 
+
+
 pub fn bench_3_16(c: &mut Criterion) {
     _simple_bench(c, || prepare_data(3, 16));
 }
@@ -128,20 +131,20 @@ pub fn bench_5_16(c: &mut Criterion) {
 pub fn bench_6_16(c: &mut Criterion) {
     _simple_bench(c, || prepare_data(6, 16));
 }
-pub fn bench_6_20(c: &mut Criterion) {
-    _simple_bench(c, || prepare_data(6, 20));
+pub fn bench_1_20(c: &mut Criterion) {
+    _simple_bench(c, || prepare_data(1, 20));
 }
 
 criterion_group!(gkr_msm_simple_bench_gamma_3_logpoints_16, bench_3_16);
 criterion_group!(gkr_msm_simple_bench_gamma_4_logpoints_16, bench_4_16);
 criterion_group!(gkr_msm_simple_bench_gamma_5_logpoints_16, bench_5_16);
 criterion_group!(gkr_msm_simple_bench_gamma_6_logpoints_16, bench_6_16);
-criterion_group!(gkr_msm_simple_bench_gamma_6_logpoints_20, bench_6_20);
+criterion_group!(gkr_msm_simple_bench_gamma_6_logpoints_20, bench_1_20);
 
 criterion_main!(
-    gkr_msm_simple_bench_gamma_3_logpoints_16,
-    gkr_msm_simple_bench_gamma_4_logpoints_16,
-    gkr_msm_simple_bench_gamma_5_logpoints_16,
-    gkr_msm_simple_bench_gamma_6_logpoints_16,
+    // gkr_msm_simple_bench_gamma_3_logpoints_16,
+    // gkr_msm_simple_bench_gamma_4_logpoints_16,
+    // gkr_msm_simple_bench_gamma_5_logpoints_16,
+    // gkr_msm_simple_bench_gamma_6_logpoints_16,
     gkr_msm_simple_bench_gamma_6_logpoints_20,
 );

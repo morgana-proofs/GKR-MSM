@@ -45,15 +45,15 @@ pub fn prepare_chunk<F, G: CurveGroup<ScalarField=F>>(chunk: &[G::Affine]) -> Ve
     G::normalize_batch(&proj)
 
 }
-pub fn prepare_bases<F, G: CurveGroup<ScalarField=F>>(bases: &[G::Affine]) -> Vec<Vec<G::Affine>> {
-    let a = bases.par_chunks(8);
+pub fn prepare_bases<F, G: CurveGroup<ScalarField=F>>(bases: &[G::Affine], gamma: usize) -> Vec<Vec<G::Affine>> {
+    let a = bases.par_chunks(gamma);
     a.map(|chunk: &[G::Affine]| {
         prepare_chunk::<F, G>(chunk)
     }).collect()
 }
 
-pub fn prepare_coefs(coefs: impl Iterator<Item=bool>) -> Vec<u8> {
-    coefs.chunks(8).into_iter().map(|chunk| into_u8(chunk)).collect()
+pub fn prepare_coefs(coefs: impl Iterator<Item=bool>, gamma: usize) -> Vec<u8> {
+    coefs.chunks(gamma).into_iter().map(|chunk| into_u8(chunk)).collect()
 }
 
 #[cfg(test)]
@@ -69,9 +69,27 @@ mod test {
         let num = 100;
         let gen = &mut test_rng();
         let coefs = (0..num).map(|_| gen.gen_bool(0.5)).collect_vec();
-        let pcoefs: Vec<u8> = prepare_coefs(coefs.clone().into_iter());
+        let pcoefs: Vec<u8> = prepare_coefs(coefs.clone().into_iter(), 8);
         let bases = (0..num).map(|i| G1Affine::rand(gen)).collect_vec();
-        let pbases = prepare_bases::<_, G1Projective>(&bases);
+        let pbases = prepare_bases::<_, G1Projective>(&bases, 8);
+
+        println!("{:?}", coefs);
+        println!("{:?}", pcoefs);
+
+        let res = binary_msm::<_, G1Projective>(&pcoefs, &pbases);
+        let expected = coefs.iter().zip_eq(bases.iter()).filter(|(&c, b)| c).map(|(c, b)| b).fold(G1Projective::zero(), |acc, new| acc + new);
+        assert_eq!(res.into_affine(), expected.into_affine());
+    }
+
+
+    #[test]
+    fn bin_msm_gamma_3() {
+        let num = 100;
+        let gen = &mut test_rng();
+        let coefs = (0..num).map(|_| gen.gen_bool(0.5)).collect_vec();
+        let pcoefs: Vec<u8> = prepare_coefs(coefs.clone().into_iter(), 3);
+        let bases = (0..num).map(|i| G1Affine::rand(gen)).collect_vec();
+        let pbases = prepare_bases::<_, G1Projective>(&bases, 3);
 
         println!("{:?}", coefs);
         println!("{:?}", pcoefs);

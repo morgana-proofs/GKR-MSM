@@ -11,6 +11,7 @@ ark-serialize = { version = "0.4.2", default-features = false, features = [
     "derive",
 ] }
 ark-bls12-381 = { version = "^0.4.0", default-features = false, features = [ "curve" ] }
+profi = { version = "*", default-features = true}
 
 
 liblasso = { git = "https://github.com/rebenkoy/liblasso.git", branch = "master", features = ["default", "multicore"]}
@@ -25,10 +26,24 @@ log = "0.4.21"
 # ark-ed-on-bls12-381-bandersnatch = { git = "https://github.com/arkworks-rs/algebra.git", rev = "bf96a5b"}
 
 [features]
-
 parallel = []
 multicore = []
 default = [
     "parallel",
     "multicore",
 ]
+prof = ["profi/enable", "profi/attributes", "profi/rayon", "profi/deep-hierarchy"]
+
+[dev-dependencies]
+criterion = "0.3.6"
+cpuprofiler = "0.0.4"
+profi = { version = "*", default-features = true }
+
+[[bench]]
+name = "gkr_msm_simple"
+harness = false
+debug = false
+
+[[bench]]
+name = "gkr_msm_simple_prof"
+harness = false

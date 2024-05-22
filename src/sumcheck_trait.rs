@@ -5,6 +5,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use itertools::Itertools;
 use liblasso::{poly::{dense_mlpoly::DensePolynomial, eq_poly::{self, EqPolynomial}, unipoly::{CompressedUniPoly, UniPoly}}, subprotocols::sumcheck::SumcheckRichProof, utils::transcript::{AppendToTranscript, ProofTranscript}};
+use profi::{prof, prof_guard};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 
 use crate::utils::{map_over_poly, make_gamma_pows};
@@ -80,6 +81,9 @@ impl<F: PrimeField> ProtocolProver<F> for SplitProver<F> {
     fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
         ->
     Option<(Self::ClaimsNew, Self::Proof)> {
+        #[cfg(feature = "prof")]
+        prof!("SplitProver::round");
+
         let Self{ claims_to_reduce, done } = self;
         assert!(!*done);
         *done = true;
@@ -299,7 +303,9 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
     fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
         ->
     Option<(Self::ClaimsNew, Self::Proof)> {
-
+        #[cfg(feature = "prof")]
+        prof!("SumcheckPolyMapProver::round");
+        
         let Self {
             claims,
             polys,
@@ -369,44 +375,50 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
         let accum: Vec<Vec<F>> = iterator
             .map(|poly_term_i| {
-            let diffs: Vec<F> = polys.iter().map(|p| p[mle_half + poly_term_i] - p[poly_term_i]).collect();
-            let mut accum = vec![F::zero(); combined_degree + 1];
-            // Evaluate P({0, ..., |g(r)|})
-    
-            // TODO(#28): Optimize
-            // Tricks can be used here for low order bits {0,1} but general premise is a running sum for each
-            // of the m terms in the Dense multilinear polynomials. Formula is:
-            // half = | D_{n-1} | / 2
-            // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
-    
-            // eval 0: bound_func is A(low)
-            // eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
-            let eval_at_zero: Vec<F> = polys.iter().map(|p| p[poly_term_i]).collect();
-            accum[0] += comb_func(&eval_at_zero);
-    
-            // TODO(#28): Can be computed from prev_round_claim - eval_point_0
-            let eval_at_one: Vec<F> = polys.iter().map(|p| p[mle_half + poly_term_i]).collect();
-            accum[1] += comb_func(&eval_at_one);
-    
-            // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
-            // D_n(index, 0) = D_{n-1} +
-            // D_n(index, 1) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-            // D_n(index, 2) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-            // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
-            // ...
-    
-            let mut existing_term = eval_at_one;
-            for acc in accum.iter_mut().skip(2) {
-                for poly_i in 0..polys.len() {
-                existing_term[poly_i] += diffs[poly_i];
+                #[cfg(feature = "prof")]
+                prof!("SumcheckPolyMapProver::accum_aggr");
+                
+                let diffs: Vec<F> = polys.iter().map(|p| p[mle_half + poly_term_i] - p[poly_term_i]).collect();
+                let mut accum = vec![F::zero(); combined_degree + 1];
+                // Evaluate P({0, ..., |g(r)|})
+
+                // TODO(#28): Optimize
+                // Tricks can be used here for low order bits {0,1} but general premise is a running sum for each
+                // of the m terms in the Dense multilinear polynomials. Formula is:
+                // half = | D_{n-1} | / 2
+                // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
+
+                // eval 0: bound_func is A(low)
+                // eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
+                let eval_at_zero: Vec<F> = polys.iter().map(|p| p[poly_term_i]).collect();
+                accum[0] += comb_func(&eval_at_zero);
+
+                // TODO(#28): Can be computed from prev_round_claim - eval_point_0
+                let eval_at_one: Vec<F> = polys.iter().map(|p| p[mle_half + poly_term_i]).collect();
+                accum[1] += comb_func(&eval_at_one);
+
+                // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
+                // D_n(index, 0) = D_{n-1} +
+                // D_n(index, 1) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+                // D_n(index, 2) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+                // D_n(index, 3) = D_{n-1} + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW]) + (D_{n-1}[HIGH] - D_{n-1}[LOW])
+                // ...
+
+                let mut existing_term = eval_at_one;
+                for acc in accum.iter_mut().skip(2) {
+                    for poly_i in 0..polys.len() {
+                    existing_term[poly_i] += diffs[poly_i];
+                    }
+
+                    *acc += comb_func(&existing_term)
                 }
-    
-                *acc += comb_func(&existing_term)
-            }
-            accum
+                accum
             })
             .collect();
-    
+
+        #[cfg(feature = "prof")]
+        let guard = prof_guard!("SumcheckPolyMapProver::eval_points_collection");
+        
         #[cfg(feature = "multicore")]
         eval_points
             .par_iter_mut()
@@ -426,6 +438,9 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
             }
         }
         
+        #[cfg(feature = "prof")]
+        drop(guard);
+
         let round_uni_poly = UniPoly::from_evals(&eval_points);
     
         // append the prover's message to the transcript
@@ -611,19 +626,21 @@ fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f:
     let PolynomialMapping{exec, degree: _, num_i, num_o: _} = f.clone();
     Box::new(
         move |args: &[F]| {
-        let (args, eqpolys) = args.split_at(num_i);
-        let out = exec(args);
-        let mut i = 0;
-        (claims.evs.iter().enumerate()).fold(
-            F::zero(),
-            |acc, (j, evs)| {
-                let mut _acc = F::zero();
-                for ev in evs {
-                    _acc += out[ev.0] * gamma_pows[i];
-                    i += 1;
-                }
-                acc + _acc * eqpolys[j]
-
+            #[cfg(feature = "prof")]
+            prof!("SumcheckPolyMapProver::folded_f");
+            
+            let (args, eqpolys) = args.split_at(num_i);
+            let out = exec(args);
+            let mut i = 0;
+            claims.evs.iter().enumerate().fold(
+                F::zero(),
+                |acc, (j, evs)| {
+                    let mut _acc = F::zero();
+                    for ev in evs {
+                        _acc += out[ev.0] * gamma_pows[i];
+                        i += 1;
+                    }
+                    acc + _acc * eqpolys[j]
                 }
             )
         }

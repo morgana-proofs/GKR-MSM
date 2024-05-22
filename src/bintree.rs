@@ -3,6 +3,7 @@ use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
 use ark_ff::PrimeField;
 use itertools::Either;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
+use profi::prof;
 
 use crate::{protocol::{PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck_trait::{to_multieval, EvalClaim, MultiEvalClaim, Split, SplitProver, SplitVerifier, SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier}};
 use crate::utils::{map_over_poly, split_vecs};
@@ -144,6 +145,8 @@ pub struct BintreeVerifier<F: PrimeField> {
     current_verifier: Option<Either<SumcheckPolyMapVerifier<F>, SplitVerifier<F>>>,
 }
 
+pub type BintreeProof<F: PrimeField> = VecDeque<LayerProof<F>>;
+
 impl<F: PrimeField> Protocol<F> for Bintree<F> {
     type Prover = BintreeProver<F>;
 
@@ -159,7 +162,7 @@ impl<F: PrimeField> Protocol<F> for Bintree<F> {
 
     type WitnessOutput = Vec<DensePolynomial<F>>;
 
-    type Proof = VecDeque<LayerProof<F>>;
+    type Proof = BintreeProof<F>;
 
     type Params = BintreeParams<F>;
 
@@ -211,6 +214,9 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
     fn round<T: crate::protocol::TranscriptReceiver<F>>(&mut self, challenge: crate::protocol::Challenge<F>, transcript: &mut T)
         ->
     Option<(Self::ClaimsNew, Self::Proof)> {
+        #[cfg(feature = "prof")]
+        prof!("BintreeProver::round");
+        
         let Self{proofs, trace, params, current_claims, current_prover} = self;
 
         match current_prover {

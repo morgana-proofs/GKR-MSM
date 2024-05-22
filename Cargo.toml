@@ -32,18 +32,17 @@ default = [
     "parallel",
     "multicore",
 ]
+prof = ["profi/enable", "profi/attributes", "profi/rayon", "profi/deep-hierarchy"]
 
 [dev-dependencies]
 criterion = "0.3.6"
 cpuprofiler = "0.0.4"
-profi = { version = "*", default-features = false, features = ["enable", "attributes", "rayon", "deep-hierarchy"] }
-
-[profile.release]
-debug = true
+profi = { version = "*", default-features = true }
 
 [[bench]]
 name = "gkr_msm_simple"
 harness = false
+debug = false
 
 [[bench]]
 name = "gkr_msm_simple_prof"

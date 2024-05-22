@@ -214,7 +214,9 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
     fn round<T: crate::protocol::TranscriptReceiver<F>>(&mut self, challenge: crate::protocol::Challenge<F>, transcript: &mut T)
         ->
     Option<(Self::ClaimsNew, Self::Proof)> {
+        #[cfg(feature = "prof")]
         prof!("BintreeProver::round");
+        
         let Self{proofs, trace, params, current_claims, current_prover} = self;
 
         match current_prover {

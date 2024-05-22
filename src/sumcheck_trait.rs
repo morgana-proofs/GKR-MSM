@@ -81,7 +81,9 @@ impl<F: PrimeField> ProtocolProver<F> for SplitProver<F> {
     fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
         ->
     Option<(Self::ClaimsNew, Self::Proof)> {
+        #[cfg(feature = "prof")]
         prof!("SplitProver::round");
+
         let Self{ claims_to_reduce, done } = self;
         assert!(!*done);
         *done = true;
@@ -301,7 +303,9 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
     fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
         ->
     Option<(Self::ClaimsNew, Self::Proof)> {
+        #[cfg(feature = "prof")]
         prof!("SumcheckPolyMapProver::round");
+        
         let Self {
             claims,
             polys,
@@ -371,7 +375,9 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
         let accum: Vec<Vec<F>> = iterator
             .map(|poly_term_i| {
+                #[cfg(feature = "prof")]
                 prof!("SumcheckPolyMapProver::accum_aggr");
+                
                 let diffs: Vec<F> = polys.iter().map(|p| p[mle_half + poly_term_i] - p[poly_term_i]).collect();
                 let mut accum = vec![F::zero(); combined_degree + 1];
                 // Evaluate P({0, ..., |g(r)|})
@@ -410,7 +416,9 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
             })
             .collect();
 
+        #[cfg(feature = "prof")]
         let guard = prof_guard!("SumcheckPolyMapProver::eval_points_collection");
+        
         #[cfg(feature = "multicore")]
         eval_points
             .par_iter_mut()
@@ -429,6 +437,8 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
             *eval_point += mle[poly_i];
             }
         }
+        
+        #[cfg(feature = "prof")]
         drop(guard);
 
         let round_uni_poly = UniPoly::from_evals(&eval_points);
@@ -616,7 +626,9 @@ fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f:
     let PolynomialMapping{exec, degree: _, num_i, num_o: _} = f.clone();
     Box::new(
         move |args: &[F]| {
+            #[cfg(feature = "prof")]
             prof!("SumcheckPolyMapProver::folded_f");
+            
             let (args, eqpolys) = args.split_at(num_i);
             let out = exec(args);
             let mut i = 0;

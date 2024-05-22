@@ -44,7 +44,9 @@ pub fn map_over_poly<F: PrimeField>(
     ins: &[DensePolynomial<F>],
     f: impl Fn(&[F]) -> Vec<F> + Send + Sync
 ) -> Vec<DensePolynomial<F>> {
+    #[cfg(feature = "prof")]
     prof!("map_over_poly");
+    
     let applications: Vec<Vec<F>> = (0..ins[0].len()).into_par_iter()
         .map(|idx| {
             f(&ins.iter().map(|p| p[idx]).collect_vec())

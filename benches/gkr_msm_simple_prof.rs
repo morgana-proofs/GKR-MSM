@@ -1,11 +1,11 @@
-use std::io::Write;
-use std::path::Path;
 use ark_bls12_381::{Fr, G1Affine, G1Projective};
 use ark_std::rand::Rng;
 use ark_std::{test_rng, UniformRand};
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, };
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use itertools::Itertools;
 use merlin::Transcript;
+use std::io::Write;
+use std::path::Path;
 use GKR_MSM::binary_msm::prepare_bases;
 use GKR_MSM::gkr_msm_simple::{gkr_msm_prove, CommitmentKey};
 
@@ -14,14 +14,15 @@ use cpuprofiler::PROFILER;
 use criterion::profiler::Profiler;
 use profi::{print_on_exit, prof, prof_guard};
 
-struct MyCustomProfiler {
+struct MyCustomProfiler {}
 
-}
-
-impl Profiler for MyCustomProfiler{
+impl Profiler for MyCustomProfiler {
     fn start_profiling(&mut self, benchmark_id: &str, benchmark_dir: &Path) {
         std::fs::create_dir_all(benchmark_dir).unwrap();
-        let f = benchmark_dir.join(Path::new(&format!("my-prof.{}.profile", benchmark_id.replace("/", "_"))));
+        let f = benchmark_dir.join(Path::new(&format!(
+            "my-prof.{}.profile",
+            benchmark_id.replace("/", "_")
+        )));
         if f.exists() {
             std::fs::remove_file(f.clone()).unwrap();
         }
@@ -29,7 +30,11 @@ impl Profiler for MyCustomProfiler{
         let mut file = std::fs::File::create(f.clone()).unwrap();
         file.write(b"").unwrap();
         drop(file);
-        PROFILER.lock().unwrap().start(f.as_os_str().as_encoded_bytes()).unwrap();
+        PROFILER
+            .lock()
+            .unwrap()
+            .start(f.as_os_str().as_encoded_bytes())
+            .unwrap();
     }
 
     fn stop_profiling(&mut self, benchmark_id: &str, benchmark_dir: &Path) {
@@ -37,7 +42,7 @@ impl Profiler for MyCustomProfiler{
     }
 }
 fn profiled() -> Criterion {
-    Criterion::default().with_profiler(MyCustomProfiler{})
+    Criterion::default().with_profiler(MyCustomProfiler {})
 }
 fn prepare_data() -> (
     Vec<Vec<bool>>,
@@ -48,9 +53,11 @@ fn prepare_data() -> (
     CommitmentKey<G1Projective>,
     Transcript,
 ) {
+    #[cfg(feature = "prof")]
     prof!("test-case-gen");
+    
     let gamma = 6;
-    let log_num_points = 16;
+    let log_num_points = 10;
     let log_num_scalar_bits = 8;
     let log_num_bit_columns = 7;
 
@@ -101,7 +108,10 @@ pub fn simple_bench() {
         comm_key,
         mut p_transcript,
     ) = prepare_data();
+    
+    #[cfg(feature = "prof")]
     prof!("test-case");
+    
     gkr_msm_prove(
         black_box(coefs),
         black_box(points),

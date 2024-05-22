@@ -1,11 +1,11 @@
-use std::io::Write;
-use std::path::Path;
 use ark_bls12_381::{Fr, G1Affine, G1Projective};
 use ark_std::rand::Rng;
 use ark_std::{test_rng, UniformRand};
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, };
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use itertools::Itertools;
 use merlin::Transcript;
+use std::io::Write;
+use std::path::Path;
 use GKR_MSM::binary_msm::prepare_bases;
 use GKR_MSM::gkr_msm_simple::{gkr_msm_prove, CommitmentKey};
 
@@ -14,32 +14,10 @@ use cpuprofiler::PROFILER;
 use criterion::profiler::Profiler;
 use profi::{print_on_exit, prof};
 
-struct MyCustomProfiler {
-
-}
-
-impl Profiler for MyCustomProfiler{
-    fn start_profiling(&mut self, benchmark_id: &str, benchmark_dir: &Path) {
-        std::fs::create_dir_all(benchmark_dir).unwrap();
-        let f = benchmark_dir.join(Path::new(&format!("my-prof.{}.profile", benchmark_id.replace("/", "_"))));
-        if f.exists() {
-            std::fs::remove_file(f.clone()).unwrap();
-        }
-        println!("{:#?}", f);
-        let mut file = std::fs::File::create(f.clone()).unwrap();
-        file.write(b"").unwrap();
-        drop(file);
-        PROFILER.lock().unwrap().start(f.as_os_str().as_encoded_bytes()).unwrap();
-    }
-
-    fn stop_profiling(&mut self, benchmark_id: &str, benchmark_dir: &Path) {
-        PROFILER.lock().unwrap().stop().unwrap()
-    }
-}
-fn profiled() -> Criterion {
-    Criterion::default().with_profiler(MyCustomProfiler{})
-}
-fn prepare_data() -> (
+fn prepare_data(
+   gamma: usize,
+   log_num_points: usize,
+) -> (
     Vec<Vec<bool>>,
     Vec<(Fr, Fr)>,
     usize,
@@ -48,8 +26,8 @@ fn prepare_data() -> (
     CommitmentKey<G1Projective>,
     Transcript,
 ) {
-    let gamma = 5;
-    let log_num_points = 16;
+    // let gamma = 6;
+    // let log_num_points = 16;
     let log_num_scalar_bits = 8;
     let log_num_bit_columns = 7;
 
@@ -77,7 +55,7 @@ fn prepare_data() -> (
         gamma,
     };
 
-    let mut p_transcript = Transcript::new(b"test");
+    let p_transcript = Transcript::new(b"test");
 
     (
         coefs,
@@ -90,13 +68,29 @@ fn prepare_data() -> (
     )
 }
 
-pub fn simple_bench(c: &mut Criterion) {
+pub fn _simple_bench<
+    F: Fn() -> (
+        Vec<Vec<bool>>,
+        Vec<(Fr, Fr)>,
+        usize,
+        usize,
+        usize,
+        CommitmentKey<G1Projective>,
+        Transcript,
+    ),
+>(
+    c: &mut Criterion,
+    f: F,
+) {
+// }
+// pub fn simple_bench(c: &mut Criterion) {
     let mut grp = c.benchmark_group("group");
     grp.sample_size(20);
 
     grp.bench_function("gkr_msm_simple", |b| {
         b.iter_batched(
-            prepare_data,
+            || f(),
+            // prepare_data,
             |(
                 coefs,
                 points,
@@ -107,8 +101,8 @@ pub fn simple_bench(c: &mut Criterion) {
                 mut p_transcript,
             )| {
                 gkr_msm_prove(
-                    black_box(coefs),
-                    black_box(points),
+                    coefs,
+                    points,
                     log_num_points,
                     log_num_scalar_bits,
                     log_num_bit_columns,
@@ -116,11 +110,38 @@ pub fn simple_bench(c: &mut Criterion) {
                     &mut p_transcript,
                 )
             },
-            BatchSize::LargeInput,
+            BatchSize::NumIterations(1),
         )
     });
     grp.finish();
 }
 
-criterion_group!(gkr_msm_simple, simple_bench);
-criterion_main!(gkr_msm_simple);
+pub fn bench_3_16(c: &mut Criterion) {
+    _simple_bench(c, || prepare_data(3, 16));
+}
+pub fn bench_4_16(c: &mut Criterion) {
+    _simple_bench(c, || prepare_data(4, 16));
+}
+pub fn bench_5_16(c: &mut Criterion) {
+    _simple_bench(c, || prepare_data(5, 16));
+}
+pub fn bench_6_16(c: &mut Criterion) {
+    _simple_bench(c, || prepare_data(6, 16));
+}
+pub fn bench_6_20(c: &mut Criterion) {
+    _simple_bench(c, || prepare_data(6, 20));
+}
+
+criterion_group!(gkr_msm_simple_bench_gamma_3_logpoints_16, bench_3_16);
+criterion_group!(gkr_msm_simple_bench_gamma_4_logpoints_16, bench_4_16);
+criterion_group!(gkr_msm_simple_bench_gamma_5_logpoints_16, bench_5_16);
+criterion_group!(gkr_msm_simple_bench_gamma_6_logpoints_16, bench_6_16);
+criterion_group!(gkr_msm_simple_bench_gamma_6_logpoints_20, bench_6_20);
+
+criterion_main!(
+    gkr_msm_simple_bench_gamma_3_logpoints_16,
+    gkr_msm_simple_bench_gamma_4_logpoints_16,
+    gkr_msm_simple_bench_gamma_5_logpoints_16,
+    gkr_msm_simple_bench_gamma_6_logpoints_16,
+    gkr_msm_simple_bench_gamma_6_logpoints_20,
+);

@@ -54,10 +54,7 @@ impl<G: CurveGroup> CommitmentKey<G> {
 pub struct MSMProof<G> {
     bit_columns: Vec<G>,
     point_column: G,
-    
 }
-
-
 
 // This function takes a bit and a point, parsed as b, p.x, p.y, and returns b ? p : zero_point
 

@@ -22,6 +22,7 @@ use crate::{
     sumcheck_trait::{Split, SumcheckPolyMap, SumcheckPolyMapParams},
     utils::TwistedEdwardsConfig,
 };
+#[cfg(feature = "memprof")]
 use crate::utils::memprof;
 
 pub trait MSMCircuitConfig {
@@ -411,7 +412,7 @@ mod test {
     #[test]
     fn big() {
         let gamma = 8;
-        let log_num_points = 16;
+        let log_num_points = 17;
         let log_num_scalar_bits = 8;
         let log_num_bit_columns = 6;
 

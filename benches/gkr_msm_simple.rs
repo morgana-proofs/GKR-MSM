@@ -2,13 +2,15 @@ use ark_bls12_381::{Fr, G1Affine, G1Projective};
 use ark_std::rand::Rng;
 use ark_std::{test_rng, UniformRand};
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
+use identconv::camel;
 use itertools::Itertools;
 use merlin::Transcript;
+use std::fmt::{Debug, Display};
 use std::io::Write;
+use std::ops::Range;
 use std::path::Path;
 use GKR_MSM::binary_msm::prepare_bases;
 use GKR_MSM::gkr_msm_simple::{gkr_msm_prove, CommitmentKey};
-use identconv::camel;
 
 extern crate cpuprofiler;
 use cpuprofiler::PROFILER;
@@ -16,8 +18,7 @@ use criterion::profiler::Profiler;
 use profi::{print_on_exit, prof};
 
 fn prepare_data(
-   gamma: usize,
-   log_num_points: usize,
+    (gamma, log_num_points): (usize, usize),
 ) -> (
     Vec<Vec<bool>>,
     Vec<(Fr, Fr)>,
@@ -27,16 +28,12 @@ fn prepare_data(
     CommitmentKey<G1Projective>,
     Transcript,
 ) {
-    // let gamma = 6;
-    // let log_num_points = 16;
     let log_num_scalar_bits = 8;
     let log_num_bit_columns = 7;
 
     let num_points = 1 << log_num_points;
-    let num_scalar_bits = 1 << log_num_scalar_bits;
     let num_vars = log_num_points + log_num_scalar_bits;
     let size = 1 << num_vars;
-    let num_bit_columns = 1 << log_num_bit_columns;
     let col_size = size >> log_num_bit_columns;
 
     let gen = &mut test_rng();
@@ -49,7 +46,7 @@ fn prepare_data(
         .map(|p| (p.x, p.y))
         .collect_vec();
     let binary_extended_bases = prepare_bases::<_, G1Projective>(&bases, gamma);
-    
+
     let comm_key = CommitmentKey::<G1Projective> {
         bases: Some(bases),
         binary_extended_bases: Some(binary_extended_bases),
@@ -69,82 +66,50 @@ fn prepare_data(
     )
 }
 
-pub fn _simple_bench<
-    F: Fn() -> (
-        Vec<Vec<bool>>,
-        Vec<(Fr, Fr)>,
-        usize,
-        usize,
-        usize,
-        CommitmentKey<G1Projective>,
-        Transcript,
-    ),
->(
-    c: &mut Criterion,
-    f: F,
-) {
-// }
-// pub fn simple_bench(c: &mut Criterion) {
-    let mut grp = c.benchmark_group("group");
-    grp.sample_size(20);
-
-    grp.bench_function("gkr_msm_simple", |b| {
-        b.iter_batched(
-            || f(),
-            // prepare_data,
-            |(
-                 coefs,
-                 points,
-                 log_num_points,
-                 log_num_scalar_bits,
-                 log_num_bit_columns,
-                 comm_key,
-                 mut p_transcript,
-             )| {
-                gkr_msm_prove(
-                    coefs,
-                    points,
-                    log_num_points,
-                    log_num_scalar_bits,
-                    log_num_bit_columns,
-                    &comm_key,
-                    &mut p_transcript,
+pub fn _simple_bench(c: &mut Criterion, gammas: Range<usize>, log_num_points_s: Range<usize>) {
+    let mut grp = c.benchmark_group("gkr_msm_simple");
+    gammas
+        .map(|i| log_num_points_s.clone().map(|j| (i, j)).collect_vec())
+        .flatten()
+        .map(|params| {
+            grp.bench_function(&format!("case::{:?}", params), |b| {
+                b.iter_batched(
+                    || prepare_data(params.clone()),
+                    |(
+                        coefs,
+                        points,
+                        log_num_points,
+                        log_num_scalar_bits,
+                        log_num_bit_columns,
+                        comm_key,
+                        mut p_transcript,
+                    )| {
+                        gkr_msm_prove(
+                            coefs,
+                            points,
+                            log_num_points,
+                            log_num_scalar_bits,
+                            log_num_bit_columns,
+                            &comm_key,
+                            &mut p_transcript,
+                        )
+                    },
+                    BatchSize::LargeInput,
                 )
-            },
-            BatchSize::NumIterations(1),
-        )
-    });
-    grp.finish();
+            });
+        })
+        .count();
 }
 
-
-
-pub fn bench_3_16(c: &mut Criterion) {
-    _simple_bench(c, || prepare_data(3, 16));
-}
-pub fn bench_4_16(c: &mut Criterion) {
-    _simple_bench(c, || prepare_data(4, 16));
-}
-pub fn bench_5_16(c: &mut Criterion) {
-    _simple_bench(c, || prepare_data(5, 16));
-}
-pub fn bench_6_16(c: &mut Criterion) {
-    _simple_bench(c, || prepare_data(6, 16));
-}
-pub fn bench_1_20(c: &mut Criterion) {
-    _simple_bench(c, || prepare_data(1, 20));
+pub fn bench(c: &mut Criterion) {
+    _simple_bench(c, (4..9), (10..18));
 }
 
-criterion_group!(gkr_msm_simple_bench_gamma_3_logpoints_16, bench_3_16);
-criterion_group!(gkr_msm_simple_bench_gamma_4_logpoints_16, bench_4_16);
-criterion_group!(gkr_msm_simple_bench_gamma_5_logpoints_16, bench_5_16);
-criterion_group!(gkr_msm_simple_bench_gamma_6_logpoints_16, bench_6_16);
-criterion_group!(gkr_msm_simple_bench_gamma_6_logpoints_20, bench_1_20);
-
-criterion_main!(
-    // gkr_msm_simple_bench_gamma_3_logpoints_16,
-    // gkr_msm_simple_bench_gamma_4_logpoints_16,
-    // gkr_msm_simple_bench_gamma_5_logpoints_16,
-    // gkr_msm_simple_bench_gamma_6_logpoints_16,
-    gkr_msm_simple_bench_gamma_6_logpoints_20,
+criterion_group!(
+    name = gkr_msm_simple;
+    config = Criterion::default().sample_size(30).configure_from_args();
+    targets =
+        bench,
 );
+criterion_main!(gkr_msm_simple,);
+

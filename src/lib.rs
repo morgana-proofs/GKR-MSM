@@ -14,3 +14,5 @@ pub mod protocol;
 pub mod bintree;
 pub mod transcript;
 mod split;
+
+pub mod commitments;

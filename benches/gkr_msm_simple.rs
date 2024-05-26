@@ -12,8 +12,8 @@ use std::path::Path;
 use GKR_MSM::binary_msm::prepare_bases;
 use GKR_MSM::gkr_msm_simple::{gkr_msm_prove, CommitmentKey};
 
-extern crate cpuprofiler;
-use cpuprofiler::PROFILER;
+//extern crate cpuprofiler;
+//use cpuprofiler::PROFILER;
 use criterion::profiler::Profiler;
 use profi::{print_on_exit, prof};
 

@@ -332,10 +332,10 @@ pub fn gkr_msm_prove<
 
 #[cfg(test)]
 mod test {
-    use jemalloc_ctl::{stats, epoch};
+    // use jemalloc_ctl::{stats, epoch};
 
-    #[global_allocator]
-    static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+    // #[global_allocator]
+    // static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
     use crate::binary_msm::prepare_bases;
     use crate::protocol::IndexedProofTranscript;
@@ -343,7 +343,7 @@ mod test {
     use ark_bls12_381::{G1Affine, G1Projective};
     use ark_std::rand::Rng;
     use ark_std::{end_timer, start_timer, test_rng, UniformRand, Zero};
-    use cpuprofiler::PROFILER;
+//    use cpuprofiler::PROFILER;
     use liblasso::utils::test_lib::TestTranscript;
     use merlin::Transcript;
     use std::path::Path;

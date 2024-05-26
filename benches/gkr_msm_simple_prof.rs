@@ -9,8 +9,8 @@ use std::path::Path;
 use GKR_MSM::binary_msm::prepare_bases;
 use GKR_MSM::gkr_msm_simple::{gkr_msm_prove, CommitmentKey};
 
-extern crate cpuprofiler;
-use cpuprofiler::PROFILER;
+//extern crate cpuprofiler;
+//use cpuprofiler::PROFILER;
 use criterion::profiler::Profiler;
 use profi::{print_on_exit, prof, prof_guard};
 
@@ -30,15 +30,15 @@ impl Profiler for MyCustomProfiler {
         let mut file = std::fs::File::create(f.clone()).unwrap();
         file.write(b"").unwrap();
         drop(file);
-        PROFILER
-            .lock()
-            .unwrap()
-            .start(f.as_os_str().as_encoded_bytes())
-            .unwrap();
+        // PROFILER
+        //     .lock()
+        //     .unwrap()
+        //     .start(f.as_os_str().as_encoded_bytes())
+        //     .unwrap();
     }
 
     fn stop_profiling(&mut self, benchmark_id: &str, benchmark_dir: &Path) {
-        PROFILER.lock().unwrap().stop().unwrap()
+        // PROFILER.lock().unwrap().stop().unwrap()
     }
 }
 fn profiled() -> Criterion {

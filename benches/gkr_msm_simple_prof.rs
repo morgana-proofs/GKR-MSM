@@ -57,7 +57,7 @@ fn prepare_data() -> (
     prof!("test-case-gen");
     
     let gamma = 6;
-    let log_num_points = 10;
+    let log_num_points = 16;
     let log_num_scalar_bits = 8;
     let log_num_bit_columns = 7;
 

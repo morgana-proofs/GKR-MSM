@@ -3,6 +3,7 @@ use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
 use ark_ff::PrimeField;
 use itertools::Either;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
+#[cfg(feature = "prof")]
 use profi::prof;
 
 use crate::{protocol::{PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck_trait::{to_multieval, EvalClaim, MultiEvalClaim, Split, SplitProver, SplitVerifier, SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier}};
@@ -419,7 +420,6 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
     use ark_bls12_381::{Fr, G1Projective};
     use ark_std::{test_rng, UniformRand, Zero};
     use itertools::Itertools;

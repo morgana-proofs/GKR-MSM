@@ -5,6 +5,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use itertools::Itertools;
 use liblasso::{poly::{dense_mlpoly::DensePolynomial, eq_poly::{self, EqPolynomial}, unipoly::{CompressedUniPoly, UniPoly}}, subprotocols::sumcheck::SumcheckRichProof, utils::transcript::{AppendToTranscript, ProofTranscript}};
+#[cfg(feature = "prof")]
 use profi::{prof, prof_guard};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 

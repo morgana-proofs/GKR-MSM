@@ -5,6 +5,7 @@ use ark_std::iterable::Iterable;
 use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 use std::marker::PhantomData;
+#[cfg(feature = "prof")]
 use profi::prof;
 use rayon::{prelude::*};
 use crate::sumcheck_trait::MultiEvalClaim;

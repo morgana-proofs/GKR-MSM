@@ -11,8 +11,6 @@ ark-serialize = { version = "0.4.2", default-features = false, features = [
     "derive",
 ] }
 ark-bls12-381 = { version = "^0.4.0", default-features = false, features = [ "curve" ] }
-profi = { version = "*", default-features = true}
-
 
 liblasso = { git = "https://github.com/rebenkoy/liblasso.git", branch = "master", features = ["default", "multicore"]}
 #liblasso = { path = "./../liblasso", features = ["default", "multicore"]}
@@ -39,6 +37,8 @@ memprof = []
 [dev-dependencies]
 criterion = "0.3.6"
 profi = { version = "*", default-features = true }
+
+[target.'cfg(feature = "memprof")'.dev-dependencies]
 jemalloc-ctl = "0.5.4"
 jemallocator = "0.5.4"
 

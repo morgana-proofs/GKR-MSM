@@ -3,6 +3,7 @@ use ark_ff::PrimeField;
 use ark_serialize::*;
 use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
+#[cfg(feature = "prof")]
 use profi::{prof, prof_guard};
 use rayon::iter::{repeatn, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::iter::repeat;

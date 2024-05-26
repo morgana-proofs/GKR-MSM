@@ -2,7 +2,6 @@ use ark_bls12_381::{Fr, G1Affine, G1Projective};
 use ark_std::rand::Rng;
 use ark_std::{test_rng, UniformRand};
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
-use identconv::camel;
 use itertools::Itertools;
 use merlin::Transcript;
 use std::fmt::{Debug, Display};

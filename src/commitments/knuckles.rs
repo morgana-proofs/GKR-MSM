@@ -108,13 +108,11 @@ impl<Ctx: Pairing> KnucklesProvingKey<Ctx> {
 
         let mut curr_size = N; // This will hold the size of our data 
         for i in 0..self.num_vars {
-            //t_scaled[0..curr_size].par_iter_mut().enumerate().map(|(idx, x)| *x = t[idx] * pt_rev[i]).count();
-            t_scaled.par_iter_mut().enumerate().map(|(idx, x)| *x = t[idx] * pt_rev[i]).count();
+            t_scaled[0..curr_size].par_iter_mut().enumerate().map(|(idx, x)| *x = t[idx] * pt_rev[i]).count();
             
             let offset = 1 << i;
             curr_size += offset;
-            //t[0..curr_size].par_iter_mut().enumerate().map(|(idx, x)| {
-            t.par_iter_mut().enumerate().map(|(idx, x)| {
+            t[0..curr_size].par_iter_mut().enumerate().map(|(idx, x)| {
                 if idx < offset {
                     *x -= t_scaled[idx]; // x -= x*pt_rev[i], which is x -= (1-pt[i])x, which is x = pt[i] x 
                 } else {

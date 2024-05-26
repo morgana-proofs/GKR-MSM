@@ -419,7 +419,6 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
     use ark_bls12_381::{Fr, G1Projective};
     use ark_std::{test_rng, UniformRand, Zero};
     use itertools::Itertools;

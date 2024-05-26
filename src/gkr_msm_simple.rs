@@ -331,22 +331,18 @@ pub fn gkr_msm_prove<
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
+    #[cfg(feature = "memprof")]
     use jemalloc_ctl::{stats, epoch};
-
+    #[cfg(feature = "memprof")]
     #[global_allocator]
     static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
     use crate::binary_msm::prepare_bases;
-    use crate::protocol::IndexedProofTranscript;
-    use ark_bls12_381::Fr;
     use ark_bls12_381::{G1Affine, G1Projective};
     use ark_std::rand::Rng;
-    use ark_std::{end_timer, start_timer, test_rng, UniformRand, Zero};
-    use cpuprofiler::PROFILER;
-    use liblasso::utils::test_lib::TestTranscript;
+    use ark_std::{test_rng, UniformRand};
     use merlin::Transcript;
-    use std::path::Path;
     use std::time::Instant;
 
     #[cfg(feature = "memprof")]
@@ -407,84 +403,5 @@ mod test {
             &comm_key,
             &mut p_transcript,
         );
-    }
-
-    #[test]
-    fn big() {
-        let gamma = 8;
-        let log_num_points = 17;
-        let log_num_scalar_bits = 8;
-        let log_num_bit_columns = 6;
-
-        let num_points = 1 << log_num_points;
-        let num_scalar_bits = 1 << log_num_scalar_bits;
-        let num_vars = log_num_points + log_num_scalar_bits;
-        let size = 1 << num_vars;
-        let num_bit_columns = 1 << log_num_bit_columns;
-        let col_size = size >> log_num_bit_columns;
-
-
-        #[cfg(feature = "memprof")]
-        memprof(&"test start");
-
-        let gen = &mut test_rng();
-        let bases: Vec<G1Affine> = (0..col_size).into_par_iter().map(|i| G1Affine::rand(&mut test_rng())).collect();
-        let coefs = (0..num_points).into_par_iter()
-            .map(|_| {
-                let mut gen = test_rng();
-                (0..256).map(|_| gen.gen_bool(0.5)).collect_vec()
-            })
-            .collect();
-        let points = (0..num_points).into_par_iter()
-            .map(|i| ark_ed_on_bls12_381_bandersnatch::EdwardsAffine::rand(&mut test_rng()))
-            .map(|p| (p.x, p.y))
-            .collect();
-        let binary_extended_bases = prepare_bases::<_, G1Projective>(&bases, gamma);
-
-        let x = binary_extended_bases.len();
-        let y = binary_extended_bases[12].len();
-
-        let comm_key = CommitmentKey::<G1Projective> {
-            bases: Some(bases),
-            binary_extended_bases: Some(binary_extended_bases),
-            gamma,
-        };
-
-        let mut p_transcript = Transcript::new(b"test");
-
-        dbg!(
-            gamma,
-            log_num_points,
-            log_num_scalar_bits,
-            log_num_bit_columns,
-            num_points,
-            num_scalar_bits,
-            num_vars,
-            size,
-            num_bit_columns,
-            col_size,
-            x,
-            y,
-        );
-
-        #[cfg(feature = "memprof")]
-        memprof(&"data generated");
-
-        let start = Instant::now();
-        gkr_msm_prove(
-            coefs,
-            points,
-            log_num_points,
-            log_num_scalar_bits,
-            log_num_bit_columns,
-            &comm_key,
-            &mut p_transcript,
-        );
-        let end = Instant::now();
-        println!("Prove time {}ms", (end - start).as_millis());
-
-
-        #[cfg(feature = "memprof")]
-        memprof(&"test end");
     }
 }

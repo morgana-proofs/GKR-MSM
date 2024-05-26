@@ -38,16 +38,17 @@ memprof = []
 
 [dev-dependencies]
 criterion = "0.3.6"
-cpuprofiler = "0.0.4"
 profi = { version = "*", default-features = true }
-identconv = "0.2.0"
 jemalloc-ctl = "0.5.4"
 jemallocator = "0.5.4"
 
 [[bench]]
 name = "gkr_msm_simple"
 harness = false
-debug = false
+
+[[bench]]
+name = "bintree"
+harness = false
 
 [[bench]]
 name = "gkr_msm_simple_prof"

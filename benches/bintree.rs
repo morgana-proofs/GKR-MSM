@@ -17,7 +17,7 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use GKR_MSM::protocol::bintree::{Bintree, BintreeParams, BintreeProver, Layer};
 use GKR_MSM::grand_add::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
 use GKR_MSM::protocol::protocol::{PolynomialMapping, Protocol, ProtocolProver};
-use GKR_MSM::protocol::sumcheck_trait::{EvalClaim, MultiEvalClaim, to_multieval};
+use GKR_MSM::protocol::sumcheck::{EvalClaim, MultiEvalClaim, to_multieval};
 use GKR_MSM::transcript::{TranscriptSender};
 
 fn prepare_params(

@@ -31,6 +31,7 @@
 // Shplonk tricks are sadly almost useless here, because there are only 2 points to open.
 
 use std::fs::File;
+use std::marker::PhantomData;
 
 use ark_ec::pairing::Pairing;
 use ark_ff::batch_inversion;
@@ -38,6 +39,7 @@ use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::IndexedParallelIterator;
+
 use super::kzg::{KzgProvingKey, KzgVerifyingKey};
 use ark_std::{Zero, One};
 use ark_std::iter::repeat;
@@ -136,6 +138,40 @@ pub struct KnucklesVerifyingKey<Ctx: Pairing> {
     num_vars: usize,
     k: Ctx::ScalarField, 
 }
+
+
+/// This is an implementor of the protocol trait. Technically, Knuckles reduces opening to KZG-multiopen
+pub struct Knukcles<Ctx: Pairing> {
+    _marker: PhantomData<Ctx>,
+}
+
+// impl<Ctx: Pairing> Protocol<Ctx::ScalarField> for Knuckles<Ctx> {
+//     type Prover ;
+
+//     type Verifier ;
+
+//     type ClaimsToReduce;
+
+//     type ClaimsNew;
+
+//     type WitnessInput;
+
+//     type Trace;
+
+//     type WitnessOutput;
+
+//     type Proof;
+
+//     type Params;
+
+//     fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
+//         todo!()
+//     }
+// }
+
+
+
+
 
 
 #[cfg(test)]

@@ -8,8 +8,8 @@ use std::marker::PhantomData;
 #[cfg(feature = "prof")]
 use profi::prof;
 use rayon::{prelude::*};
-use crate::sumcheck_trait::MultiEvalClaim;
 
+use crate::protocol::sumcheck_trait::MultiEvalClaim;
 
 pub trait TwistedEdwardsConfig {
 

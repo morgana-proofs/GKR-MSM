@@ -14,10 +14,11 @@ use criterion::BatchSize::PerIteration;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 use liblasso::utils::test_lib::TestTranscript;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator, repeatn};
-use GKR_MSM::bintree::{Bintree, BintreeParams, BintreeProver, Layer};
+use GKR_MSM::protocol::bintree::{Bintree, BintreeParams, BintreeProver, Layer};
 use GKR_MSM::grand_add::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
-use GKR_MSM::protocol::{IndexedProofTranscript, PolynomialMapping, Protocol, ProtocolProver, TranscriptSender};
-use GKR_MSM::sumcheck_trait::{EvalClaim, MultiEvalClaim, to_multieval};
+use GKR_MSM::protocol::protocol::{PolynomialMapping, Protocol, ProtocolProver};
+use GKR_MSM::protocol::sumcheck_trait::{EvalClaim, MultiEvalClaim, to_multieval};
+use GKR_MSM::transcript::{TranscriptSender};
 
 fn prepare_params(
     log_num_points: usize,

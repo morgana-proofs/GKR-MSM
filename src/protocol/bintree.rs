@@ -6,7 +6,7 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]
 use profi::prof;
 
-use crate::{protocol::{PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck_trait::{to_multieval, EvalClaim, MultiEvalClaim, Split, SplitProver, SplitVerifier, SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier}};
+use crate::{protocol::{protocol::{PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck_trait::{to_multieval, EvalClaim, MultiEvalClaim, Split, SplitProver, SplitVerifier, SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier}}, transcript::{Challenge, TranscriptReceiver}};
 use crate::utils::{map_over_poly, split_vecs};
 
 #[derive(Clone)]
@@ -212,7 +212,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
         }
     }
 
-    fn round<T: crate::protocol::TranscriptReceiver<F>>(&mut self, challenge: crate::protocol::Challenge<F>, transcript: &mut T)
+    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
         ->
     Option<(Self::ClaimsNew, Self::Proof)> {
         #[cfg(feature = "prof")]
@@ -322,9 +322,9 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
         }
     }
 
-    fn round<T: crate::protocol::TranscriptReceiver<F>>(
+    fn round<T: TranscriptReceiver<F>>(
         &mut self,
-        challenge: crate::protocol::Challenge<F>,
+        challenge: Challenge<F>,
         transcript: &mut T)
         ->
     Option<Self::ClaimsNew> {
@@ -424,7 +424,7 @@ mod test {
     use ark_std::{test_rng, UniformRand, Zero};
     use itertools::Itertools;
     use liblasso::utils::test_lib::TestTranscript;
-    use crate::protocol::{IndexedProofTranscript, TranscriptSender};
+    use crate::transcript::{IndexedProofTranscript, TranscriptSender};
     use super::*;
 
     fn f62(v: &[Fr]) -> Vec<Fr> {

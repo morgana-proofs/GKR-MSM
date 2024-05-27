@@ -9,8 +9,9 @@ use liblasso::{poly::{dense_mlpoly::DensePolynomial, eq_poly::{self, EqPolynomia
 use profi::{prof, prof_guard};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 
-use crate::utils::{map_over_poly, make_gamma_pows};
-use crate::protocol::{Protocol, ProtocolProver, ProtocolVerifier, TranscriptSender, TranscriptReceiver, IndexedProofTranscript, Challenge, PolynomialMapping};
+use crate::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows, map_over_poly}};
+
+use super::protocol::{PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier};
 
 
 // Impls
@@ -658,7 +659,7 @@ mod test {
     use ark_ff::Field;
     use ark_std::{rand::Rng, UniformRand};
     use liblasso::{benches::bench::gen_random_point, utils::test_lib::TestTranscript};
-    use crate::utils::scale;
+    use crate::{transcript::{IndexedProofTranscript, TranscriptSender}, utils::scale};
 
     use super::*;
 

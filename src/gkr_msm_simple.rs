@@ -9,9 +9,9 @@ use rayon::iter::{repeatn, IntoParallelIterator, IntoParallelRefIterator, Parall
 use std::iter::repeat;
 use std::{fs::File, sync::Arc};
 
-use crate::bintree::{Bintree, BintreeParams, BintreeProof, BintreeProver, Layer};
-use crate::protocol::ProtocolProver;
-use crate::sumcheck_trait::{to_multieval, EvalClaim};
+use crate::protocol::bintree::{Bintree, BintreeParams, BintreeProof, BintreeProver, Layer};
+use crate::protocol::protocol::ProtocolProver;
+use crate::protocol::sumcheck_trait::{to_multieval, EvalClaim};
 use crate::{
     binary_msm::{binary_msm, prepare_coefs},
     grand_add::{
@@ -19,8 +19,9 @@ use crate::{
         affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2,
         twisted_edwards_add_l3,
     },
-    protocol::{PolynomialMapping, Protocol, TranscriptReceiver, TranscriptSender},
-    sumcheck_trait::{Split, SumcheckPolyMap, SumcheckPolyMapParams},
+    protocol::protocol::{PolynomialMapping, Protocol},
+    protocol::sumcheck_trait::{Split, SumcheckPolyMap, SumcheckPolyMapParams},
+    transcript::{TranscriptReceiver, TranscriptSender},
     utils::TwistedEdwardsConfig,
 };
 #[cfg(feature = "memprof")]

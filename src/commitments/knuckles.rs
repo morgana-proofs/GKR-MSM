@@ -36,9 +36,14 @@ use std::marker::PhantomData;
 use ark_ec::pairing::Pairing;
 use ark_ff::batch_inversion;
 use rayon::iter::IntoParallelRefMutIterator;
+//use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::IndexedParallelIterator;
+
+use crate::commitments::kzg::ev;
+use crate::transcript::TranscriptReceiver;
+use crate::transcript::TranscriptSender;
 
 use super::kzg::{KzgProvingKey, KzgVerifyingKey};
 use ark_std::{Zero, One};
@@ -110,7 +115,10 @@ impl<Ctx: Pairing> KnucklesProvingKey<Ctx> {
 
         let mut curr_size = N; // This will hold the size of our data 
         for i in 0..self.num_vars {
-            t_scaled[0..curr_size].par_iter_mut().enumerate().map(|(idx, x)| *x = t[idx] * pt_rev[i]).count();
+            t_scaled[0..curr_size]
+                .par_iter_mut()
+                .enumerate()
+                .map(|(idx, x)| *x = t[idx] * pt_rev[i]).count();
             
             let offset = 1 << i;
             curr_size += offset;
@@ -126,10 +134,37 @@ impl<Ctx: Pairing> KnucklesProvingKey<Ctx> {
 
         let opening = t[N-1];
         t[N-1] = Ctx::ScalarField::zero();
-        t.par_iter_mut().enumerate().map(|(idx, x)| *x *= self.inverses[idx]).count();
+
+        t.par_iter_mut()
+            .enumerate()
+            .map(|(idx, x)| *x *= self.inverses[idx]).count();
         (t, opening)
     }
 
+    /// Creates Knuckles proof. Takes as an input a polynomial, a point to open, and an opening.
+    /// All three must be already committed to the transcript, or derived deterministically from other
+    /// prover messages. (we do not add them to transcript manually to accomodate for possibility
+    /// of the commitment being derived as linear combination of other commitments).
+    /// This is somewhat similar to our protocol API, with commitment having a role of a "claim",
+    /// though we do not implement it for now.
+    pub fn prove<
+        T: TranscriptReceiver<Ctx::ScalarField>
+          + TranscriptSender<Ctx::ScalarField>>(
+            &self,
+            poly: &[Ctx::ScalarField],
+            point: &[Ctx::ScalarField],
+            claimed_opening: Ctx::ScalarField,
+            transcript: &mut T,
+          ) {
+            let (t, opening) = self.compute_t(poly, point);
+            assert!(opening == claimed_opening, "Incorrect opening claim.");
+            let t_comm = self.kzg_pk.commit(&t);
+            transcript.append_point::<Ctx::G1>(b"T commitment", t_comm.into());
+            let x = transcript.challenge_scalar(b"x opening point").value;
+            let kx = x * self.k;
+            let t_x = ev(&t, x);
+            let t_kx = ev(&t, kx);
+        }
 }
 
 #[derive(Clone)]
@@ -138,37 +173,6 @@ pub struct KnucklesVerifyingKey<Ctx: Pairing> {
     num_vars: usize,
     k: Ctx::ScalarField, 
 }
-
-
-/// This is an implementor of the protocol trait. Technically, Knuckles reduces opening to KZG-multiopen
-pub struct Knukcles<Ctx: Pairing> {
-    _marker: PhantomData<Ctx>,
-}
-
-// impl<Ctx: Pairing> Protocol<Ctx::ScalarField> for Knuckles<Ctx> {
-//     type Prover ;
-
-//     type Verifier ;
-
-//     type ClaimsToReduce;
-
-//     type ClaimsNew;
-
-//     type WitnessInput;
-
-//     type Trace;
-
-//     type WitnessOutput;
-
-//     type Proof;
-
-//     type Params;
-
-//     fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
-//         todo!()
-//     }
-// }
-
 
 
 

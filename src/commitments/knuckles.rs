@@ -36,7 +36,7 @@ use std::marker::PhantomData;
 use ark_ec::pairing::Pairing;
 use ark_ff::batch_inversion;
 use rayon::iter::IntoParallelRefMutIterator;
-//use rayon::iter::IntoParallelRefMutIterator;
+use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::IndexedParallelIterator;
@@ -164,6 +164,22 @@ impl<Ctx: Pairing> KnucklesProvingKey<Ctx> {
             let kx = x * self.k;
             let t_x = ev(&t, x);
             let t_kx = ev(&t, kx);
+            let p_x = ev(&poly, x);
+
+            transcript.append_scalar(b"T(x) claim", &t_x);
+            transcript.append_scalar(b"T(kx) claim", &t_kx);
+            transcript.append_scalar(b"P(x) claim", &p_x);
+
+            let lambda = transcript.challenge_scalar(b"Lambda challenge").value;
+
+            let poly_iter_padded = poly.par_iter().map(|x|*x).chain(rayon::iter::repeat(Ctx::ScalarField::zero()).take(t.len()-poly.len()));
+
+            let p_lt : Vec<_> = poly_iter_padded
+                            .zip(t.par_iter())
+                            .map(|(a, b)| lambda * b + a)
+                            .collect();
+            
+
         }
 }
 

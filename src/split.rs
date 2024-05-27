@@ -31,11 +31,11 @@ impl<F: PrimeField> Protocol<F> for Split<F> {
     type Trace = Vec<Vec<DensePolynomial<F>>>;
     type WitnessOutput = Self::WitnessInput;
 
-    fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
+    fn witness(args: Self::WitnessInput, _params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
         let num_vars = args[0].num_vars;
         assert!(num_vars > 0);
         for arg in &args {
-            assert!(arg.num_vars == num_vars);
+            assert_eq!(arg.num_vars, num_vars);
         }
 
         let (mut l, r): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = args.iter().map(|p| p.split(1 << (num_vars - 1))).unzip();
@@ -54,13 +54,13 @@ impl<F: PrimeField> ProtocolProver<F> for SplitProver<F> {
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
-        args: Self::Trace,
-        params: &Self::Params,
+        _args: Self::Trace,
+        _params: &Self::Params,
     ) -> Self {
         Self { claims_to_reduce, done: false}
     }
 
-    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
+    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, _transcript: &mut T)
                                        ->
                                        Option<(Self::ClaimsNew, Self::Proof)> {
         let Self{ claims_to_reduce, done } = self;
@@ -85,13 +85,13 @@ impl<F: PrimeField> ProtocolVerifier<F> for SplitVerifier<F> {
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
-        proof: Self::Proof,
-        params: &Self::Params,
+        _proof: Self::Proof,
+        _params: &Self::Params,
     ) -> Self {
         Self { claims_to_reduce, done: false }
     }
 
-    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
+    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, _transcript: &mut T)
                                        ->
                                        Option<Self::ClaimsNew> {
         let Self{ claims_to_reduce, done } = self;
@@ -138,7 +138,7 @@ mod tests {
 
         let (trace, out) = Split::witness(polys.clone(), &());
 
-        let mut evals : Vec<_> = out.iter().map(|p| p.evaluate(&point)).collect();
+        let evals : Vec<_> = out.iter().map(|p| p.evaluate(&point)).collect();
 
         let p_transcript: &mut IndexedProofTranscript<G1Projective, _> = &mut IndexedProofTranscript::new(TestTranscript::new());
 
@@ -154,8 +154,8 @@ mod tests {
 
         let (evs, _) = (&mut prover).round(c, p_transcript).unwrap();
 
-        assert!(evs.point == expected_point);
-        assert!(evs.evs == expected_evals);
+        assert_eq!(evs.point, expected_point);
+        assert_eq!(evs.evs, expected_evals);
 
         let v_transcript : &mut IndexedProofTranscript<G1Projective, _> = &mut IndexedProofTranscript::new(TestTranscript::as_this(&p_transcript.transcript));
 
@@ -164,8 +164,8 @@ mod tests {
         let mut verifier = SplitVerifier::start(claims_to_reduce, (), &());
         let EvalClaim{point: v_point, evs: v_evals} = verifier.round(c, v_transcript).unwrap();
 
-        assert!(v_point == evs.point);
-        assert!(v_evals == evs.evs);
+        assert_eq!(v_point, evs.point);
+        assert_eq!(v_evals, evs.evs);
         (*v_transcript).transcript.assert_end();
 
 

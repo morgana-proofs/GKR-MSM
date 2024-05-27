@@ -1,10 +1,7 @@
-use std::{borrow::Borrow, marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData};
 
-use ark_bls12_381::Fr;
-use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use itertools::Itertools;
-use liblasso::{poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, unipoly::{CompressedUniPoly, UniPoly}}, subprotocols::sumcheck::SumcheckRichProof, utils::transcript::{AppendToTranscript, ProofTranscript}};
+use liblasso::{poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, unipoly::{CompressedUniPoly, UniPoly}}};
 #[cfg(feature = "prof")]
 use profi::{prof, prof_guard};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
@@ -153,7 +150,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
         mut args: Self::Trace,
         params: &Self::Params,
     ) -> Self {
-        assert!(args[0].len() == params.f.num_i);
+        assert_eq!(args[0].len(), params.f.num_i);
         
         
         let eqs_iter = claims_to_reduce
@@ -326,16 +323,6 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
         // and to proof
         round_polys.push(round_uni_poly.compress());
 
-
-        // let r_j = challenge.value;
-        // rs.push(r_j);
-    
-        // // bound all tables to the verifier's challenege
-        // for poly in polys {
-        //     poly.bound_poly_var_top(&r_j);
-        // }
-        // round_polys.push(round_uni_poly.compress());
-
         None
 
     }
@@ -365,20 +352,15 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
         
         // Validate that claims are well-formed.
         
-        assert!(
-            claims_to_reduce.evs.len() == num_points,
-            "Verifier failure. Claim ill-formed: number of points {} != number of evaluation groups {}",
-            num_points,
-            claims_to_reduce.evs.len(),
+        assert_eq!(
+            claims_to_reduce.evs.len(), num_points,
+            "Verifier failure. Claim ill-formed: number of points {} != number of evaluation groups {}", num_points, claims_to_reduce.evs.len()
         );
 
         for (i, point) in claims_to_reduce.points.iter().enumerate() {
-            assert!(
-                point.len() == num_vars,
-                "Verifier failure. Claim ill-formed: point {} has num variables {}, but declared num variables is {}",
-                i,
-                point.len(),
-                num_vars
+            assert_eq!(
+                point.len(), num_vars,
+                "Verifier failure. Claim ill-formed: point {} has num variables {}, but declared num variables is {}", i, point.len(), num_vars
             );
         }
 
@@ -399,8 +381,8 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
         // round function.
         // TODO: Vandalize liblasso once again to expose this method ;)
 
-        assert!(proof.round_polys.len() == num_vars);
-        assert!(proof.final_evaluations.len() == num_ins);
+        assert_eq!(proof.round_polys.len(), num_vars);
+        assert_eq!(proof.final_evaluations.len(), num_ins);
         
         Self {
             proof,
@@ -444,11 +426,9 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
 
             // This unwrap never fails, because rounds after 0th always have the poly (which is last prover's message).
             let current_poly = current_poly.as_ref().unwrap();
-            assert!(
-                current_poly.degree() == f.degree + 1,
-                "Verifier failure: polynomial degree {} at round {} incorrect",
-                current_poly.degree(),
-                sumcheck_round_idx
+            assert_eq!(
+                current_poly.degree(), f.degree + 1,
+                "Verifier failure: polynomial degree {} at round {} incorrect", current_poly.degree(), sumcheck_round_idx
             );
 
             *current_sum = current_poly.evaluate(&r_j);
@@ -530,9 +510,14 @@ fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f:
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
     use ark_bls12_381::G1Projective;
-    use ark_std::UniformRand;
+    use ark_bls12_381::Fr;
+    use itertools::Itertools;
+    use liblasso::subprotocols::sumcheck::SumcheckRichProof;
+
     use liblasso::utils::test_lib::TestTranscript;
+    use liblasso::utils::transcript::ProofTranscript;
 
     use crate::{transcript::{IndexedProofTranscript, TranscriptSender}, utils::scale};
 
@@ -541,7 +526,7 @@ mod test {
     #[test]
     fn our_prover_against_liblasso_verifier() {
         let num_vars: usize = 5;
-        let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|i| DensePolynomial::new((0..32).map(|i| Fr::from(i)).collect())).collect();
+        let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|_| DensePolynomial::new((0..32).map(|i| Fr::from(i)).collect())).collect();
         
         fn combfunc(i: &[Fr]) -> Vec<Fr> {
             vec![i[0], i[1], i[2] * i[2] * i[0], i[2] * i[2] * i[0]]
@@ -639,7 +624,7 @@ mod test {
     #[test]
     fn test_sumcheck_lite() {
         let num_vars: usize = 5;
-        let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|i| DensePolynomial::new((0..32).map(|i| Fr::from(i)).collect())).collect();
+        let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|_| DensePolynomial::new((0..32).map(|i| Fr::from(i)).collect())).collect();
 
         fn combfunc(i: &[Fr]) -> Vec<Fr> {
             vec![i[0], i[1], i[2] * i[2] * i[0], i[2] * i[2] * i[0]]
@@ -659,7 +644,6 @@ mod test {
 
         let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
         let claims : Vec<_> = image_polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
-//        let known_poly = EqPolynomial::new(point.clone());
 
         let _point = point.clone();
 
@@ -677,7 +661,6 @@ mod test {
 
         let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
         let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
-        let Challenge { value: gamma } = gamma_c;
         let mut res = prover.round(gamma_c, &mut p_transcript);
         while res.is_none() {
             let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
@@ -697,7 +680,6 @@ mod test {
 
         let mut v_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::as_this(&p_transcript.transcript));
         let gamma_c = v_transcript.challenge_scalar(b"challenge_combine_outputs");
-        let Challenge { value: gamma } = gamma_c;
         let mut res = verifier.round(gamma_c, &mut v_transcript);
         while res.is_none() {
             let challenge = v_transcript.challenge_scalar(b"challenge_nextround");
@@ -756,10 +738,6 @@ mod test {
             }
         ).collect();
 
-        let known_polys: Vec<EqPolynomial<Fr>> = points.iter().map(|p| EqPolynomial::new(p.clone())).collect();
-
-
-
         let multiclaim = MultiEvalClaim {
             points,
             evs: claims,
@@ -773,7 +751,6 @@ mod test {
 
         let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
         let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
-        let Challenge { value: gamma } = gamma_c;
         let mut res = prover.round(gamma_c, &mut p_transcript);
         while res.is_none() {
             let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
@@ -793,7 +770,6 @@ mod test {
 
         let mut v_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::as_this(&p_transcript.transcript));
         let gamma_c = v_transcript.challenge_scalar(b"challenge_combine_outputs");
-        let Challenge { value: gamma } = gamma_c;
         let mut res = verifier.round(gamma_c, &mut v_transcript);
         while res.is_none() {
             let challenge = v_transcript.challenge_scalar(b"challenge_nextround");

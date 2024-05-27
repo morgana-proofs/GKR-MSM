@@ -1,9 +1,8 @@
 use std::{fs::File, sync::Arc};
 use std::iter::repeat;
 
-use ark_ec::{CurveGroup, ScalarMul};
+use ark_ec::{CurveGroup};
 use ark_ff::PrimeField;
-use ark_serialize::*;
 use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]
@@ -18,7 +17,6 @@ use crate::{
         twisted_edwards_add_l3,
     },
     protocol::protocol::{PolynomialMapping, Protocol},
-    protocol::sumcheck::SumcheckPolyMapParams,
     transcript::{TranscriptReceiver, TranscriptSender},
     utils::TwistedEdwardsConfig,
 };
@@ -32,11 +30,6 @@ pub trait MSMCircuitConfig {
     type F: PrimeField;
     type Comm: CurveGroup<ScalarField = Self::F>;
     type G: CurveGroup<Config: TwistedEdwardsConfig>;
-}
-
-pub struct ExtendedBases<G: CurveGroup> {
-    packing_factor: usize,
-    values: Vec<Vec<G::Affine>>,
 }
 
 pub struct CommitmentKey<G: CurveGroup> {
@@ -89,13 +82,6 @@ fn pt_bit_choice<F: PrimeField>(args: &[F]) -> Vec<F> {
     vec![args[0] * args[1], args[0] * (args[2] - F::one()) + F::one()]
 }
 
-fn param_from_f<F: PrimeField>(
-    f: PolynomialMapping<F>,
-    num_vars: usize,
-) -> SumcheckPolyMapParams<F> {
-    SumcheckPolyMapParams { f, num_vars }
-}
-
 pub fn gkr_msm_prove<
     F: PrimeField + TwistedEdwardsConfig,
     T: TranscriptReceiver<F> + TranscriptSender<F>,
@@ -108,7 +94,7 @@ pub fn gkr_msm_prove<
     log_num_bit_columns: usize, // Logamount of columns that host the bitvector. Normally ~5-6 should be reasonable.
     ck: &CommitmentKey<G>,
     transcript: &mut T,
-) -> MSMProof<G> {
+) -> (EvalClaim<F>, MSMProof<G>) {
     #[cfg(feature = "prof")]
     let mut guard = prof_guard!("gkr_msm_prove[bit_prep]");
 
@@ -321,16 +307,19 @@ pub fn gkr_msm_prove<
     #[cfg(feature = "memprof")]
     crate::utils::memprof(&"gkr_msm_prove after proof");
 
-    MSMProof {
-        bit_columns: bit_comms,
-        point_column: pts_comm,
-        gkr_proof,
-        output: output
-            .into_iter()
-            .map(|p| p.vec().iter().map(|x| *x).collect_vec())
-            .flatten()
-            .collect_vec(),
-    }
+    (
+        gkr_evals,
+        MSMProof {
+            bit_columns: bit_comms,
+            point_column: pts_comm,
+            gkr_proof,
+            output: output
+                .into_iter()
+                .map(|p| p.vec().iter().map(|x| *x).collect_vec())
+                .flatten()
+                .collect_vec(),
+        }
+    )
 }
 
 #[cfg(test)]
@@ -380,12 +369,12 @@ mod tests {
             col_size
         );
         let gen = &mut test_rng();
-        let bases = (0..col_size).map(|i| G1Affine::rand(gen)).collect_vec();
+        let bases = (0..col_size).map(|_| G1Affine::rand(gen)).collect_vec();
         let coefs = (0..num_points)
             .map(|_| (0..256).map(|_| gen.gen_bool(0.5)).collect_vec())
             .collect_vec();
         let points = (0..num_points)
-            .map(|i| ark_ed_on_bls12_381_bandersnatch::EdwardsAffine::rand(gen))
+            .map(|_| ark_ed_on_bls12_381_bandersnatch::EdwardsAffine::rand(gen))
             .map(|p| (p.x, p.y))
             .collect_vec();
         let binary_extended_bases = prepare_bases::<_, G1Projective>(&bases, gamma);

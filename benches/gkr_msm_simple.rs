@@ -1,4 +1,3 @@
-use std::fmt::{Debug, Display};
 use std::ops::Range;
 
 use ark_bls12_381::{Fr, G1Affine, G1Projective};
@@ -31,12 +30,12 @@ fn prepare_data(
     let col_size = size >> log_num_bit_columns;
 
     let gen = &mut test_rng();
-    let bases = (0..col_size).map(|i| G1Affine::rand(gen)).collect_vec();
+    let bases = (0..col_size).map(|_| G1Affine::rand(gen)).collect_vec();
     let coefs = (0..num_points)
         .map(|_| (0..256).map(|_| gen.gen_bool(0.5)).collect_vec())
         .collect_vec();
     let points = (0..num_points)
-        .map(|i| ark_ed_on_bls12_381_bandersnatch::EdwardsAffine::rand(gen))
+        .map(|_| ark_ed_on_bls12_381_bandersnatch::EdwardsAffine::rand(gen))
         .map(|p| (p.x, p.y))
         .collect_vec();
     let binary_extended_bases = prepare_bases::<_, G1Projective>(&bases, gamma);
@@ -96,7 +95,7 @@ pub fn _simple_bench(c: &mut Criterion, gammas: Range<usize>, log_num_points_s: 
 }
 
 pub fn bench(c: &mut Criterion) {
-    _simple_bench(c, (4..9), (10..18));
+    _simple_bench(c, 4..9, 10..18);
 }
 
 criterion_group!(

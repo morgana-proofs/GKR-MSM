@@ -8,7 +8,6 @@ use profi::prof;
 
 use crate::{protocol::{protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck::{SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier, to_multieval}}, transcript::{Challenge, TranscriptReceiver}};
 use crate::split::{Split, SplitProver, SplitVerifier};
-use crate::utils::{map_over_poly, split_vecs};
 
 #[derive(Clone)]
 pub enum Layer<F: PrimeField> {
@@ -144,7 +143,7 @@ pub struct BintreeVerifier<F: PrimeField> {
     current_verifier: Option<Either<SumcheckPolyMapVerifier<F>, SplitVerifier<F>>>,
 }
 
-pub type BintreeProof<F: PrimeField> = VecDeque<LayerProof<F>>;
+pub type BintreeProof<F> = VecDeque<LayerProof<F>>;
 
 impl<F: PrimeField> Protocol<F> for Bintree<F> {
     type Prover = BintreeProver<F>;
@@ -236,7 +235,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
                                 &SumcheckPolyMapParams{f, num_vars: current_num_vars}
                             ))
                         },
-                        Layer::Split(n) => {
+                        Layer::Split(_) => {
                             let _current_claims = match current_claims.take().unwrap() {
                                 Either::Right(c) => c,
                                 Either::Left(_) => panic!("Unexpected multi-evaluation claim."),
@@ -342,7 +341,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
                                 &SumcheckPolyMapParams{ f, num_vars: current_num_vars }
                             ))
                         },
-                        Layer::Split(n) => {
+                        Layer::Split(_) => {
                             println!("Split");
                             let _current_claims = match current_claims.take().unwrap() {
                                 Either::Right(c) => c,
@@ -405,6 +404,7 @@ mod test {
     use liblasso::utils::test_lib::TestTranscript;
 
     use crate::transcript::{IndexedProofTranscript, TranscriptSender};
+    use crate::utils::{map_over_poly, split_vecs};
 
     use super::*;
 
@@ -506,6 +506,7 @@ mod test {
         trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f23).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
         trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
         output.iter().zip_eq(map_over_poly(&trace[i], f61).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+        assert_eq!(i, trace.len());
     }
 
     #[test]

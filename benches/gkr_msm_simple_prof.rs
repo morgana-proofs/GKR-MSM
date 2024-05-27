@@ -1,50 +1,15 @@
-use std::io::Write;
-use std::path::Path;
 
 use ark_bls12_381::{Fr, G1Affine, G1Projective};
 use ark_std::{test_rng, UniformRand};
 use ark_std::rand::Rng;
-use criterion::{BatchSize, black_box, Criterion, criterion_group, criterion_main};
-//extern crate cpuprofiler;
-//use cpuprofiler::PROFILER;
-use criterion::profiler::Profiler;
+use criterion::{black_box};
 use itertools::Itertools;
 use merlin::Transcript;
-use profi::{print_on_exit, prof, prof_guard};
+use profi::{print_on_exit};
 
 use GKR_MSM::binary_msm::prepare_bases;
 use GKR_MSM::gkr_msm_simple::{CommitmentKey, gkr_msm_prove};
 
-struct MyCustomProfiler {}
-
-impl Profiler for MyCustomProfiler {
-    fn start_profiling(&mut self, benchmark_id: &str, benchmark_dir: &Path) {
-        std::fs::create_dir_all(benchmark_dir).unwrap();
-        let f = benchmark_dir.join(Path::new(&format!(
-            "my-prof.{}.profile",
-            benchmark_id.replace("/", "_")
-        )));
-        if f.exists() {
-            std::fs::remove_file(f.clone()).unwrap();
-        }
-        println!("{:#?}", f);
-        let mut file = std::fs::File::create(f.clone()).unwrap();
-        file.write(b"").unwrap();
-        drop(file);
-        // PROFILER
-        //     .lock()
-        //     .unwrap()
-        //     .start(f.as_os_str().as_encoded_bytes())
-        //     .unwrap();
-    }
-
-    fn stop_profiling(&mut self, benchmark_id: &str, benchmark_dir: &Path) {
-        // PROFILER.lock().unwrap().stop().unwrap()
-    }
-}
-fn profiled() -> Criterion {
-    Criterion::default().with_profiler(MyCustomProfiler {})
-}
 fn prepare_data() -> (
     Vec<Vec<bool>>,
     Vec<(Fr, Fr)>,
@@ -63,19 +28,17 @@ fn prepare_data() -> (
     let log_num_bit_columns = 7;
 
     let num_points = 1 << log_num_points;
-    let num_scalar_bits = 1 << log_num_scalar_bits;
     let num_vars = log_num_points + log_num_scalar_bits;
     let size = 1 << num_vars;
-    let num_bit_columns = 1 << log_num_bit_columns;
     let col_size = size >> log_num_bit_columns;
 
     let gen = &mut test_rng();
-    let bases = (0..col_size).map(|i| G1Affine::rand(gen)).collect_vec();
+    let bases = (0..col_size).map(|_| G1Affine::rand(gen)).collect_vec();
     let coefs = (0..num_points)
         .map(|_| (0..256).map(|_| gen.gen_bool(0.5)).collect_vec())
         .collect_vec();
     let points = (0..num_points)
-        .map(|i| ark_ed_on_bls12_381_bandersnatch::EdwardsAffine::rand(gen))
+        .map(|_| ark_ed_on_bls12_381_bandersnatch::EdwardsAffine::rand(gen))
         .map(|p| (p.x, p.y))
         .collect_vec();
     let binary_extended_bases = prepare_bases::<_, G1Projective>(&bases, gamma);
@@ -86,7 +49,7 @@ fn prepare_data() -> (
         gamma,
     };
 
-    let mut p_transcript = Transcript::new(b"test");
+    let p_transcript = Transcript::new(b"test");
 
     (
         coefs,

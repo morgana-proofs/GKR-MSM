@@ -1,9 +1,7 @@
 use std::marker::PhantomData;
 
 use ark_bls12_381::Fr;
-use ark_ec::pairing::Pairing;
 use ark_ff::{BigInt, Field, PrimeField};
-use ark_std::iterable::Iterable;
 use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]

@@ -1,14 +1,10 @@
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
 use itertools::Itertools;
 use rayon::iter::IndexedParallelIterator;
-use rayon::iter::IntoParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
-use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::*;
 
-use crate::msm_nonaffine::VariableBaseMSM_Nonaffine;
 
 /// This structure hosts a counter 'mapping', an array 'image',
 /// and represents a pullback, i.e. a table
@@ -70,14 +66,14 @@ mod test {
         let gen = &mut test_rng();
         let coefs = (0..num).map(|_| gen.gen_bool(0.5)).collect_vec();
         let pcoefs: Vec<u8> = prepare_coefs(coefs.clone().into_iter(), 8);
-        let bases = (0..num).map(|i| G1Affine::rand(gen)).collect_vec();
+        let bases = (0..num).map(|_| G1Affine::rand(gen)).collect_vec();
         let pbases = prepare_bases::<_, G1Projective>(&bases, 8);
 
         println!("{:?}", coefs);
         println!("{:?}", pcoefs);
 
         let res = binary_msm::<_, G1Projective>(&pcoefs, &pbases);
-        let expected = coefs.iter().zip_eq(bases.iter()).filter(|(&c, b)| c).map(|(c, b)| b).fold(G1Projective::zero(), |acc, new| acc + new);
+        let expected = coefs.iter().zip_eq(bases.iter()).filter(|(&c, _)| c).map(|(_, b)| b).fold(G1Projective::zero(), |acc, new| acc + new);
         assert_eq!(res.into_affine(), expected.into_affine());
     }
 
@@ -88,14 +84,14 @@ mod test {
         let gen = &mut test_rng();
         let coefs = (0..num).map(|_| gen.gen_bool(0.5)).collect_vec();
         let pcoefs: Vec<u8> = prepare_coefs(coefs.clone().into_iter(), 3);
-        let bases = (0..num).map(|i| G1Affine::rand(gen)).collect_vec();
+        let bases = (0..num).map(|_| G1Affine::rand(gen)).collect_vec();
         let pbases = prepare_bases::<_, G1Projective>(&bases, 3);
 
         println!("{:?}", coefs);
         println!("{:?}", pcoefs);
 
         let res = binary_msm::<_, G1Projective>(&pcoefs, &pbases);
-        let expected = coefs.iter().zip_eq(bases.iter()).filter(|(&c, b)| c).map(|(c, b)| b).fold(G1Projective::zero(), |acc, new| acc + new);
+        let expected = coefs.iter().zip_eq(bases.iter()).filter(|(&c, _)| c).map(|(_, b)| b).fold(G1Projective::zero(), |acc, new| acc + new);
         assert_eq!(res.into_affine(), expected.into_affine());
     }
 }

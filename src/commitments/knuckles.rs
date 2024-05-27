@@ -37,7 +37,6 @@ use ark_ff::batch_inversion;
 use ark_std::{One, Zero};
 use ark_std::iter::repeat;
 use rayon::iter::IndexedParallelIterator;
-use rayon::iter::IntoParallelIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
@@ -58,18 +57,18 @@ pub struct KnucklesProvingKey<Ctx: Pairing> {
 
 impl<Ctx: Pairing> KnucklesProvingKey<Ctx> {
     pub fn new(kzg_pk: KzgProvingKey<Ctx>, num_vars: usize, k: Ctx::ScalarField) -> Self {
-        let N = (1 << num_vars);
-        assert!(kzg_pk.ptau_1().len() >= 2*N - 1, "SRS is too short.");
-        let mut k_pows = Vec::with_capacity(2*N - 1);
+        let n = 1 << num_vars;
+        assert!(kzg_pk.ptau_1().len() >= 2 * n - 1, "SRS is too short.");
+        let mut k_pows = Vec::with_capacity(2 * n - 1);
         let mut power = Ctx::ScalarField::one();
-        for _ in 0..2*N - 1 {
+        for _ in 0..2 * n - 1 {
             k_pows.push(power);
             power *= k;
         };
-        let k_n = k_pows[N-1];
+        let k_n = k_pows[n -1];
 
         (&mut k_pows).par_iter_mut().map(|x| *x -= k_n ).count();
-        k_pows[N-1] += Ctx::ScalarField::one(); // so inversion doesn't fail
+        k_pows[n - 1] += Ctx::ScalarField::one(); // so inversion doesn't fail
         batch_inversion(&mut k_pows);
 
         Self { kzg_pk, num_vars, k, inverses: k_pows }
@@ -89,30 +88,30 @@ impl<Ctx: Pairing> KnucklesProvingKey<Ctx> {
     }
 
     pub fn commit(&self, poly: &[Ctx::ScalarField]) -> Ctx::G1Affine {
-        assert!(poly.len() == 1 << self.num_vars);
+        assert_eq!(poly.len(), 1 << self.num_vars);
         self.kzg_pk.commit(poly)
     }
 
     /// Returns polynomial T and an opening c, such that T(kx) - k^{N-1}T(x) + c = P(x)E_r(x)
     /// This equation then can be checked by normal KZG means.
     pub fn compute_t(&self, poly: &[Ctx::ScalarField], point: &[Ctx::ScalarField]) -> (Vec<Ctx::ScalarField>, Ctx::ScalarField) {
-        assert!(point.len() == self.num_vars);
+        assert_eq!(point.len(), self.num_vars);
         
         let mut pt = point.to_vec();
         pt.reverse(); // To keep on parity with liblasso's ordering.
         
-        let N = 1 << self.num_vars;
-        assert!(poly.len() == N);
-        let mut t = Vec::<Ctx::ScalarField>::with_capacity(2*N - 1);
-        let mut t_scaled = vec![Ctx::ScalarField::zero(); 2*N - 1];
+        let n = 1 << self.num_vars;
+        assert_eq!(poly.len(), n);
+        let mut t = Vec::<Ctx::ScalarField>::with_capacity(2 * n - 1);
+        let mut t_scaled = vec![Ctx::ScalarField::zero(); 2 * n - 1];
 
         let pt_rev : Vec<_> = pt.iter().map(|x| Ctx::ScalarField::one() - *x).collect();
         // It is more convenient to multiply by 1-pt.
 
         t.extend(poly);
-        t.extend(repeat(Ctx::ScalarField::zero()).take(N-1));
+        t.extend(repeat(Ctx::ScalarField::zero()).take(n - 1));
 
-        let mut curr_size = N; // This will hold the size of our data 
+        let mut curr_size = n; // This will hold the size of our data
         for i in 0..self.num_vars {
             t_scaled[0..curr_size]
                 .par_iter_mut()
@@ -131,8 +130,8 @@ impl<Ctx: Pairing> KnucklesProvingKey<Ctx> {
             }).count();
         }
 
-        let opening = t[N-1];
-        t[N-1] = Ctx::ScalarField::zero();
+        let opening = t[n - 1];
+        t[n - 1] = Ctx::ScalarField::zero();
 
         t.par_iter_mut()
             .enumerate()

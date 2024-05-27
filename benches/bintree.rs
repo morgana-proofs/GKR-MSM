@@ -1,4 +1,3 @@
-use std::fmt::{Debug, Display};
 use std::iter::repeat;
 use std::ops::Range;
 use std::sync::Arc;
@@ -12,8 +11,8 @@ use merlin::Transcript;
 
 use GKR_MSM::grand_add::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
 use GKR_MSM::protocol::bintree::{Bintree, BintreeParams, BintreeProver, Layer};
-use GKR_MSM::protocol::protocol::{PolynomialMapping, Protocol, ProtocolProver};
-use GKR_MSM::protocol::sumcheck::{EvalClaim, MultiEvalClaim, to_multieval};
+use GKR_MSM::protocol::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver};
+use GKR_MSM::protocol::sumcheck::to_multieval;
 use GKR_MSM::transcript::TranscriptSender;
 
 fn prepare_params(
@@ -26,7 +25,7 @@ fn prepare_params(
     let gen = &mut test_rng();
 
     let points = (0..(1 << log_num_points))
-        .map(|i| ark_ed_on_bls12_381_bandersnatch::EdwardsAffine::rand(gen))
+        .map(|_| ark_ed_on_bls12_381_bandersnatch::EdwardsAffine::rand(gen))
         .map(|p| (p.x, p.y))
         .unzip();
 

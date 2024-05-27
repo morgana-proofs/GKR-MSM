@@ -13,9 +13,23 @@ pub struct PolynomialMapping<F: PrimeField> {
 }
 
 // Claim
+#[derive(Clone)]
+#[allow(dead_code)]
 pub struct Claim<F: PrimeField> {
     point: Vec<F>,
     value: F,
+}
+
+#[derive(Clone)]
+pub struct MultiEvalClaim<F: PrimeField> {
+    pub points: Vec<Vec<F>>,
+    pub evs: Vec<Vec<(usize, F)>>,
+}
+
+#[derive(Clone)]
+pub struct EvalClaim<F: PrimeField> {
+    pub point: Vec<F>,
+    pub evs: Vec<F>,
 }
 
 
@@ -87,16 +101,4 @@ pub trait ProtocolVerifier<F: PrimeField> {
     fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T) 
         -> 
     Option<Self::ClaimsNew>;
-}
-
-#[derive(Clone)]
-pub struct MultiEvalClaim<F: PrimeField> {
-    pub points: Vec<Vec<F>>,
-    pub evs: Vec<Vec<(usize, F)>>,
-}
-
-#[derive(Clone)]
-pub struct EvalClaim<F: PrimeField> {
-    pub point: Vec<F>,
-    pub evs: Vec<F>,
 }

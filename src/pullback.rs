@@ -6,7 +6,7 @@ use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
 
-use crate::msm_nonaffine::VariableBaseMSM_Nonaffine;
+use crate::msm_nonaffine::VariableBaseMsmNonaffine;
 use crate::utils::split_into_chunks_balanced;
 
 /// This structure hosts a counter 'mapping', an array 'image',
@@ -60,17 +60,26 @@ impl<F: PrimeField> Pullback<F> {
 }
 
 mod tests{
-    use std::{iter::repeat_with, time::Instant};
+    #[allow(unused_imports)]
+    use std::iter::repeat_with;
+    #[allow(unused_imports)]
+    use std::time::Instant;
 
     use ark_bls12_381::Fr;
-    use ark_ec::{bls12::Bls12, CurveGroup, pairing::Pairing};
-    use ark_ff::UniformRand;
+    #[allow(unused_imports)]
+    use ark_ec::{CurveGroup, VariableBaseMSM};
+    use ark_ec::{bls12::Bls12, pairing::Pairing};
+    #[allow(unused_imports)]
+    use ark_std::UniformRand;
+    #[allow(unused_imports)]
     use ark_std::rand::RngCore;
-    use liblasso::msm::VariableBaseMSM;
 
-    use super::*;
+    #[allow(unused_imports)]
+    use super::Pullback;
 
+    #[allow(dead_code)]
     type G = <Bls12<ark_bls12_381::Config> as Pairing>::G1;
+    #[allow(dead_code)]
     type F = Fr;
 
     #[test]
@@ -93,7 +102,7 @@ mod tests{
         println!("Non-bucketed msm of size 1024 took {}ms", (t2-t1).as_millis());
         println!("Same msm with 64 different values bucketed took {}ms.", (t3-t2).as_millis());
 
-        assert!(lhs.unwrap() == rhs);
+        assert_eq!(lhs.unwrap(), rhs);
     }
 
 }

@@ -8,7 +8,7 @@ use std::fs::File;
 use ark_ec::CurveGroup;
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
-use ark_std::{One, UniformRand, Zero};
+use ark_std::{One, UniformRand};
 use ark_std::rand::Rng;
 use liblasso::msm::VariableBaseMSM;
 use rayon::iter::IntoParallelIterator;
@@ -38,9 +38,8 @@ impl<Ctx: Pairing> KzgVerifyingKey<Ctx> {
         opening_at: Ctx::ScalarField,
         opening: Ctx::ScalarField,
     ) {
-        assert!(
-            Ctx::pairing(Into::<Ctx::G1>::into(poly_commitment) - self.g0 * opening, self.h0)
-                ==
+        assert_eq!(
+            Ctx::pairing(Into::<Ctx::G1>::into(poly_commitment) - self.g0 * opening, self.h0), 
             Ctx::pairing(quotient_commitment, Into::<Ctx::G2>::into(self.h1) - self.h0 * opening_at)
         )
     }
@@ -62,7 +61,10 @@ impl<Ctx: Pairing> KzgVerifyingKey<Ctx> {
 
     /// Verifies <pair.0, h0> == <pair.1, h1>
     pub fn verify_pair(&self, pair: (Ctx::G1Affine, Ctx::G1Affine)) {
-        assert!(Ctx::pairing(pair.0, self.h0) == Ctx::pairing(pair.1, self.h1));
+        assert_eq!(
+            Ctx::pairing(pair.0, self.h0),
+            Ctx::pairing(pair.1, self.h1)
+        );
     }
 
 }

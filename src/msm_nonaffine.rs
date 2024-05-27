@@ -7,9 +7,9 @@ use ark_ff::{prelude::*, PrimeField};
 use ark_std::{borrow::Borrow, iterable::Iterable, vec::Vec};
 use rayon::prelude::*;
 
-impl<G: CurveGroup> VariableBaseMSM_Nonaffine for G {}
+impl<G: CurveGroup> VariableBaseMsmNonaffine for G {}
 
-pub trait VariableBaseMSM_Nonaffine: ScalarMul {
+pub trait VariableBaseMsmNonaffine: ScalarMul {
   /// Computes an inner product between the [`PrimeField`] elements in `scalars`
   /// and the corresponding group elements in `bases`.
   ///
@@ -86,7 +86,7 @@ pub trait VariableBaseMSM_Nonaffine: ScalarMul {
 }
 
 // Compute msm using windowed non-adjacent form
-fn msm_bigint_wnaf_nonaff<V: VariableBaseMSM_Nonaffine>(
+fn msm_bigint_wnaf_nonaff<V: VariableBaseMsmNonaffine>(
   bases: &[V],
   bigints: &[<V::ScalarField as PrimeField>::BigInt],
 ) -> V {
@@ -162,7 +162,7 @@ fn msm_bigint_wnaf_nonaff<V: VariableBaseMSM_Nonaffine>(
 }
 
 /// Optimized implementation of multi-scalar multiplication.
-fn msm_bigint_nonaff<V: VariableBaseMSM_Nonaffine>(
+fn msm_bigint_nonaff<V: VariableBaseMsmNonaffine>(
   bases: &[V],
   bigints: &[<V::ScalarField as PrimeField>::BigInt],
 ) -> V {

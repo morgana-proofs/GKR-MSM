@@ -7,6 +7,7 @@ use profi::{prof, prof_guard};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 
 use crate::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows, map_over_poly}};
+use crate::utils::{fix_var_bot, fix_var_top};
 
 use super::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier};
 
@@ -206,11 +207,17 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
         } else {
             let r_j = challenge.value;
-            rs.push(r_j);
-        
+            #[cfg(not(feature = "sumcheck_bot_to_top"))]
+            fix_var_top(rs, r_j);
+            #[cfg(feature = "sumcheck_bot_to_top")]
+            fix_var_bot(rs, r_j);
+
             // bound all tables to the verifier's challenege
             for poly in polys.iter_mut() {
+                #[cfg(not(feature = "sumcheck_bot_to_top"))]
                 poly.bound_poly_var_top(&r_j);
+                #[cfg(feature = "sumcheck_bot_to_top")]
+                poly.bound_poly_var_bot(&r_j)
             }
 
             if rs.len() == *num_vars {
@@ -229,9 +236,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
                     }
                 ))
             }
-
         }
-
 
         let combined_degree = f.degree + 1;
 
@@ -252,8 +257,17 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
             .map(|poly_term_i| {
                 #[cfg(feature = "prof")]
                 prof!("SumcheckPolyMapProver::accum_aggr");
-                
-                let diffs: Vec<F> = polys.iter().map(|p| p[mle_half + poly_term_i] - p[poly_term_i]).collect();
+
+                #[cfg(not(feature = "sumcheck_bot_to_top"))]
+                let idx_zero = poly_term_i;
+                #[cfg(feature = "sumcheck_bot_to_top")]
+                let idx_zero = 2 * poly_term_i;
+                #[cfg(not(feature = "sumcheck_bot_to_top"))]
+                let idx_one = mle_half + poly_term_i;
+                #[cfg(feature = "sumcheck_bot_to_top")]
+                let idx_one = 1 + 2 * poly_term_i;
+
+                let diffs: Vec<F> = polys.iter().map(|p| p[idx_one] - p[idx_zero]).collect();
                 let mut accum = vec![F::zero(); combined_degree + 1];
                 // Evaluate P({0, ..., |g(r)|})
 
@@ -265,11 +279,11 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
                 // eval 0: bound_func is A(low)
                 // eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
-                let eval_at_zero: Vec<F> = polys.iter().map(|p| p[poly_term_i]).collect();
+                let eval_at_zero: Vec<F> = polys.iter().map(|p| p[idx_zero]).collect();
                 accum[0] += comb_func(&eval_at_zero);
 
                 // TODO(#28): Can be computed from prev_round_claim - eval_point_0
-                let eval_at_one: Vec<F> = polys.iter().map(|p| p[mle_half + poly_term_i]).collect();
+                let eval_at_one: Vec<F> = polys.iter().map(|p| p[idx_one]).collect();
                 accum[1] += comb_func(&eval_at_one);
 
                 // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
@@ -282,7 +296,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
                 let mut existing_term = eval_at_one;
                 for acc in accum.iter_mut().skip(2) {
                     for poly_i in 0..polys.len() {
-                    existing_term[poly_i] += diffs[poly_i];
+                        existing_term[poly_i] += diffs[poly_i];
                     }
 
                     *acc += comb_func(&existing_term)
@@ -301,7 +315,6 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
             .for_each(|(poly_i, eval_point)| {
             *eval_point = accum
                 .par_iter()
-                .take(mle_half)
                 .map(|mle| mle[poly_i])
                 .sum::<F>();
             });
@@ -418,10 +431,13 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
             sumcheck_round_idx = 0;
         } else {
 
-            let r_j = challenge.value;
             let current_sum = current_sum.as_mut().unwrap();
-            rs.push(r_j);
-            
+            let r_j = challenge.value;
+            #[cfg(not(feature = "sumcheck_bot_to_top"))]
+            fix_var_top(rs, r_j);
+            #[cfg(feature = "sumcheck_bot_to_top")]
+            fix_var_bot(rs, r_j);
+
             sumcheck_round_idx = rs.len();
 
             // This unwrap never fails, because rounds after 0th always have the poly (which is last prover's message).
@@ -523,6 +539,7 @@ mod test {
 
     use super::*;
 
+    #[cfg(not(feature = "sumcheck_bot_to_top"))]
     #[test]
     fn our_prover_against_liblasso_verifier() {
         let num_vars: usize = 5;

@@ -75,13 +75,16 @@ pub fn fold_with_coef<F: Field>(evals: &[F], layer_coef: F) -> Vec<F> {
 }
 
 pub fn split_vecs<F: PrimeField>(ins: &[DensePolynomial<F>]) -> Vec<DensePolynomial<F>> {
-    let mut res = Vec::<DensePolynomial::<F>>::with_capacity(ins.len() * 2);
-    for _i in 0..(ins.len() * 2) {
-        res.push(DensePolynomial::new(vec![F::zero()]))
-    }
+    #[cfg(feature = "split_bot_to_top")]
+        let (mut l, r): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = ins.iter().map(|p| p.split(p.len() / 2)).unzip();
+    #[cfg(not(feature = "split_bot_to_top"))]
+        let (mut l, r): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = ins.iter().map(|p| (
+        DensePolynomial::new(p.vec().iter().step_by(2).map(|x| *x).collect_vec()),
+        DensePolynomial::new(p.vec().iter().skip(1).step_by(2).map(|x| *x).collect_vec())
+    )).unzip();
 
-    ins.iter().enumerate().map(|(idx, poly)| (res[idx], res[ins.len() + idx]) = poly.split(poly.len() / 2)).count();
-    res
+    l.extend(r);
+    l
 }
 
 pub fn make_gamma_pows<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma: F) -> Vec<F> {
@@ -104,6 +107,14 @@ pub fn split_into_chunks_balanced<T>(arr: &[T], num_threads: usize) -> impl Iter
     let chunks_hi = m_hi.chunks(base_size + 1);
     let chunks_lo = m_lo.chunks(base_size);
     chunks_hi.chain(chunks_lo)
+}
+
+pub fn fix_var_top<F>(vec: &mut Vec<F>, v: F) {
+    vec.push(v);
+}
+
+pub fn fix_var_bot<F>(vec: &mut Vec<F>, v: F) {
+    vec.insert(0, v);
 }
 
 #[cfg(feature = "memprof")]

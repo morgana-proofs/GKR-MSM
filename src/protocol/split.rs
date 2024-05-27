@@ -1,10 +1,12 @@
 use std::marker::PhantomData;
 
 use ark_ff::PrimeField;
+use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 
 use crate::protocol::protocol::{EvalClaim, Protocol, ProtocolProver, ProtocolVerifier};
 use crate::transcript::{Challenge, TranscriptReceiver};
+use crate::utils::{fix_var_bot, fix_var_top};
 
 pub struct Split<F: PrimeField> {
     _marker: PhantomData<F>,
@@ -38,7 +40,14 @@ impl<F: PrimeField> Protocol<F> for Split<F> {
             assert_eq!(arg.num_vars, num_vars);
         }
 
+        #[cfg(feature = "split_bot_to_top")]
         let (mut l, r): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = args.iter().map(|p| p.split(1 << (num_vars - 1))).unzip();
+        #[cfg(not(feature = "split_bot_to_top"))]
+        let (mut l, r): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = args.iter().map(|p| (
+            DensePolynomial::new(p.vec().iter().step_by(2).map(|x| *x).collect_vec()),
+            DensePolynomial::new(p.vec().iter().skip(1).step_by(2).map(|x| *x).collect_vec())
+        )).unzip();
+
         l.extend(r);
 
         (vec![args], l)
@@ -69,11 +78,16 @@ impl<F: PrimeField> ProtocolProver<F> for SplitProver<F> {
         let r = challenge.value;
         let EvalClaim { point, evs } = claims_to_reduce;
         let (evs_l, evs_r) = evs.split_at(evs.len() / 2);
+        let (evs_l, evs_r) = (evs_l.iter(), evs_r.iter());
 
-        let evs_new = evs_l.iter().zip(evs_r.iter()).map(|(x, y)| *x + r * (*y - x)).collect();
-        let mut r = vec![r];
-        r.extend(point.iter());
-        Some((EvalClaim{point: r, evs: evs_new}, ()))
+        let evs_new = evs_l.zip(evs_r).map(|(x, y)| *x + r * (*y - x)).collect();
+
+        #[cfg(feature = "split_bot_to_top")]
+        fix_var_bot(point, r);
+        #[cfg(not(feature = "split_bot_to_top"))]
+        fix_var_top(point, r);
+
+        Some((EvalClaim{point: point.clone(), evs: evs_new}, ()))
     }
 }
 
@@ -100,11 +114,15 @@ impl<F: PrimeField> ProtocolVerifier<F> for SplitVerifier<F> {
         let r = challenge.value;
         let EvalClaim { point, evs } = claims_to_reduce;
         let (evs_l, evs_r) = evs.split_at(evs.len() / 2);
+        let (evs_l, evs_r) = (evs_l.iter(), evs_r.iter());
 
-        let evs_new = evs_l.iter().zip(evs_r.iter()).map(|(x, y)| *x + r * (*y - x)).collect();
-        let mut r = vec![r];
-        r.extend(point.iter());
-        Some(EvalClaim{point: r, evs: evs_new})
+        let evs_new = evs_l.zip(evs_r).map(|(x, y)| *x + r * (*y - x)).collect();
+        #[cfg(feature = "split_bot_to_top")]
+        fix_var_bot(point, r);
+        #[cfg(not(feature = "split_bot_to_top"))]
+        fix_var_top(point, r);
+
+        Some(EvalClaim{point: point.clone(), evs: evs_new})
     }
 }
 
@@ -120,6 +138,7 @@ mod tests {
     use liblasso::utils::test_lib::TestTranscript;
 
     use crate::transcript::{IndexedProofTranscript, TranscriptSender};
+    use crate::utils::{fix_var_bot, fix_var_top};
 
     use super::*;
 
@@ -145,9 +164,18 @@ mod tests {
         let claims_to_reduce = EvalClaim{point: point.clone(), evs: evals.clone()};
 
         let c = p_transcript.challenge_scalar(b"split");
-        let mut expected_point = vec![c.value];
-        expected_point.extend(&point);
+
+        let mut expected_point = point.clone();
+        #[cfg(feature = "split_bot_to_top")]
+        fix_var_bot(&mut expected_point, c.value);
+        #[cfg(not(feature = "split_bot_to_top"))]
+        fix_var_top(&mut expected_point, c.value);
+
+        let mut unexpected_point = point.clone();
+        fix_var_bot(&mut unexpected_point, c.value);
+
         let expected_evals : Vec<_> = polys.iter().map(|poly| poly.evaluate(&expected_point)).collect();
+        let unexpected_evals : Vec<_> = polys.iter().map(|poly| poly.evaluate(&unexpected_point)).collect();
 
         let mut prover = SplitProver::start(claims_to_reduce, trace, &());
 

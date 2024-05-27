@@ -30,9 +30,12 @@ multicore = []
 default = [
     "parallel",
     "multicore",
+    "sumcheck_bot_to_top",
 ]
 prof = ["profi/enable", "profi/attributes", "profi/rayon", "profi/deep-hierarchy"]
 memprof = []
+sumcheck_bot_to_top = []
+split_bot_to_top = []
 
 [dev-dependencies]
 criterion = "0.3.6"

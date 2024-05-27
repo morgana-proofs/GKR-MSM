@@ -16,117 +16,6 @@ use super::protocol::{PolynomialMapping, Protocol, ProtocolProver, ProtocolVerif
 
 // Impls
 
-
-pub struct Split<F: PrimeField> {
-    _marker: PhantomData<F>,
-}
-
-pub struct SplitProver<F: PrimeField> {
-    claims_to_reduce: (Vec<F>, Vec<(F, F)>),
-    done: bool,
-}
-
-pub struct SplitVerifier<F: PrimeField> {
-    claims_to_reduce: (Vec<F>, Vec<(F, F)>),
-    done: bool,
-}
-
-impl<F: PrimeField> Protocol<F> for Split<F> {
-    type Prover = SplitProver<F>;
-    type Verifier = SplitVerifier<F>;
-    type ClaimsToReduce = (Vec<F>, Vec<(F, F)>);
-    type ClaimsNew = (Vec<F>, Vec<F>);
-    type Proof = ();
-    type Params = ();
-    type WitnessInput = Vec<DensePolynomial<F>>;
-    type Trace = Self::WitnessInput;
-    type WitnessOutput = Vec<(DensePolynomial<F>, DensePolynomial<F>)>;
-
-    fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
-        let num_vars = args[0].num_vars;
-        assert!(num_vars > 0);
-        for arg in &args {
-            assert!(arg.num_vars == num_vars);
-        }
-
-        let mut ret = vec![];
-
-        for arg in &args {
-            ret.push(arg.split(1 << (num_vars - 1)));
-        }
-
-        (args, ret)
-    }
-}
-
-impl<F: PrimeField> ProtocolProver<F> for SplitProver<F> {
-    type ClaimsToReduce = (Vec<F>, Vec<(F, F)>);
-    type ClaimsNew = (Vec<F>, Vec<F>);
-    type Proof = ();
-    type Params = ();
-    type Trace = Vec<DensePolynomial<F>>;
-
-    fn start(
-        claims_to_reduce: Self::ClaimsToReduce,
-        args: Self::Trace,
-        params: &Self::Params,
-    ) -> Self {
-        let num_vars = args[0].num_vars;
-        assert!(num_vars > 0);
-        for arg in args {
-            assert!(arg.num_vars == num_vars);
-        }
-        
-        Self { claims_to_reduce, done: false}
-    }
-
-    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
-        ->
-    Option<(Self::ClaimsNew, Self::Proof)> {
-        #[cfg(feature = "prof")]
-        prof!("SplitProver::round");
-
-        let Self{ claims_to_reduce, done } = self;
-        assert!(!*done);
-        *done = true;
-        let r = challenge.value;
-        let (pt, evs) = claims_to_reduce;
-        let evs_new = evs.iter().map(|(x, y)| *x + r * (*y - x)).collect();
-        let mut r = vec![r];
-        r.extend(pt.iter());
-        Some(((r, evs_new), ()))
-    }
-}
-
-impl<F: PrimeField> ProtocolVerifier<F> for SplitVerifier<F> {
-    type ClaimsToReduce = (Vec<F>, Vec<(F, F)>);
-    type ClaimsNew = (Vec<F>, Vec<F>);
-    type Proof = ();
-    type Params = ();
-    
-    fn start(
-        claims_to_reduce: Self::ClaimsToReduce,
-        proof: Self::Proof,
-        params: &Self::Params,
-    ) -> Self {
-        Self { claims_to_reduce, done: false }
-    }
-    
-    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
-        ->
-    Option<Self::ClaimsNew> {
-        let Self{ claims_to_reduce, done } = self;
-        assert!(!*done);
-        *done = true;
-        let r = challenge.value;
-        let (pt, evs) = claims_to_reduce;
-        let evs_new = evs.iter().map(|(x, y)| *x + r * (*y - x)).collect();
-        let mut r = vec![r];
-        r.extend(pt.iter());
-        Some((r, evs_new))
-    }
-}
-
 pub struct ExtProd<F: PrimeField> {
     _marker: PhantomData<F>,
 }
@@ -247,7 +136,7 @@ impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
 
     type WitnessInput = Vec<DensePolynomial<F>>;
 
-    type Trace = Self::WitnessInput;
+    type Trace = Vec<Vec<DensePolynomial<F>>>;
 
     type WitnessOutput = Vec<DensePolynomial<F>>;
 
@@ -257,7 +146,7 @@ impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
 
     fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
         let out = map_over_poly(&args, |x|(params.f.exec)(x));
-        (args, out)
+        (vec![args], out)
     }
 }
 
@@ -270,14 +159,14 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
     type Params = SumcheckPolyMapParams<F>;
 
-    type Trace = Vec<DensePolynomial<F>>;
+    type Trace = Vec<Vec<DensePolynomial<F>>>;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
         mut args: Self::Trace,
         params: &Self::Params,
     ) -> Self {
-        assert!(args.len() == params.f.num_i);
+        assert!(args[0].len() == params.f.num_i);
         
         
         let eqs_iter = claims_to_reduce
@@ -287,11 +176,11 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
                 DensePolynomial::new(EqPolynomial::new(r.clone()).evals())
             );
 
-        args.extend(eqs_iter);
+        args[0].extend(eqs_iter);
 
 
         Self {
-            polys: args,
+            polys: args.pop().unwrap(),
             round_polys: Some(vec![]),
             rs: vec![],
             f: params.f.clone(),
@@ -759,57 +648,6 @@ mod test {
         ).unwrap();
 
         v_transcript.assert_end()
-    }
-
-
-    fn gen_random_vec<F: PrimeField>(rng: &mut impl Rng,size: usize) -> Vec<F> {
-        repeat_with(|| F::rand(rng)).take(size).collect()
-    }
-
-    #[test]
-    fn split_protocol() -> () {
-        let num_vars: usize = 5;
-        let rng = &mut ark_std::test_rng();
-
-        let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|_| {
-            DensePolynomial::new(gen_random_vec(rng, 1 << num_vars))
-        }).collect();
-        let point: Vec<Fr> = gen_random_vec(rng, num_vars - 1);
-
-        let (trace, split_polys) = Split::witness(polys.clone(), &());
-
-
-        let evals : Vec<_> = split_polys.iter().map(|(p0, p1)| (p0.evaluate(&point), p1.evaluate(&point))).collect();
-
-        let p_transcript: &mut IndexedProofTranscript<G1Projective, _> = &mut IndexedProofTranscript::new(TestTranscript::new());
-
-        let claims_to_reduce = (point.clone(), evals.clone());
-
-        let c = p_transcript.challenge_scalar(b"split");
-        let mut expected_point = vec![c.value];
-        expected_point.extend(point.iter());
-        let expected_evals : Vec<_> = polys.iter().map(|poly| poly.evaluate(&expected_point)).collect();
-
-        let mut prover = SplitProver::start(claims_to_reduce, trace, &());
-
-
-       let ((p_point, p_evals), _) = (&mut prover).round(c, p_transcript).unwrap();
-
-       assert!(p_point == expected_point);
-       assert!(p_evals == expected_evals);
-
-       let v_transcript : &mut IndexedProofTranscript<G1Projective, _> = &mut IndexedProofTranscript::new(TestTranscript::as_this(&p_transcript.transcript));
-
-       let claims_to_reduce = (point.clone(), evals.clone());
-       let c : Challenge<Fr> = v_transcript.challenge_scalar(b"split");
-       let mut verifier = SplitVerifier::start(claims_to_reduce, (), &());
-       let (v_point, v_evals) = verifier.round(c, v_transcript).unwrap();
-
-       assert!(v_point == p_point);
-       assert!(v_evals == p_evals);
-       (*v_transcript).transcript.assert_end();
-
-
     }
 
     #[test]

@@ -6,7 +6,8 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]
 use profi::prof;
 
-use crate::{protocol::{protocol::{PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck::{to_multieval, EvalClaim, MultiEvalClaim, Split, SplitProver, SplitVerifier, SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier}}, transcript::{Challenge, TranscriptReceiver}};
+use crate::{protocol::{protocol::{PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck::{to_multieval, EvalClaim, MultiEvalClaim, SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier}}, transcript::{Challenge, TranscriptReceiver}};
+use crate::split::{Split, SplitProver, SplitVerifier};
 use crate::utils::{map_over_poly, split_vecs};
 
 #[derive(Clone)]
@@ -45,19 +46,16 @@ impl<F: PrimeField> Layer<F> {
         }
     }
 
-    pub fn layer_wtns(&self, num_vars: usize, input: Vec<DensePolynomial<F>>) -> (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) {
+    pub fn layer_wtns(&self, num_vars: usize, input: Vec<DensePolynomial<F>>) -> (Vec<Vec<DensePolynomial<F>>>, Vec<DensePolynomial<F>>) {
         match self {
             Self::Mapping(f) => {
                 SumcheckPolyMap::witness(
-                    input, 
+                    input.clone(),
                     &SumcheckPolyMapParams{num_vars, f: f.clone()}
                 )
             },
             Self::Split(_) => {
-                let (a, tmp) = Split::witness(input, &());
-                let (mut b, tmp) : (Vec<_>, Vec<_>) = tmp.into_iter().unzip();
-                b.extend(tmp.into_iter());
-                (a, b)
+                Split::witness(input, &())
             }
         }
     }
@@ -179,7 +177,7 @@ impl<F: PrimeField> Protocol<F> for Bintree<F> {
 
         for (layer, curr_num_vars) in layers {
             (layer_trace, output) = layer.layer_wtns(curr_num_vars, output);
-            trace.push(layer_trace)
+            trace.extend(layer_trace)
         }
 
         (trace, output)
@@ -234,7 +232,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
 
                             Either::Left(SumcheckPolyMapProver::start(
                                 _current_claims.clone(), 
-                                current_trace,
+                                vec![current_trace],
                                 &SumcheckPolyMapParams{f, num_vars: current_num_vars}
                             ))
                         },
@@ -244,19 +242,10 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
                                 Either::Left(_) => panic!("Unexpected multi-evaluation claim."),
                             };
 
-                            let EvalClaim { point: _point, evs: _evs } = _current_claims;
-                            let (e0, e1) = _evs.split_at(n);
-                            let _current_claims = (
-                                _point,
-                                itertools::Itertools::zip_eq(
-                                    e0.iter().map(|x|*x), 
-                                    e1.iter().map(|x|*x)
-                                ).collect()
-                            );
 
                             Either::Right(SplitProver::start(
                                 _current_claims,
-                                current_trace,
+                                vec![current_trace],
                                 &()
                             ))
                         }
@@ -271,7 +260,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
                 match prover.round(challenge, transcript) {
                     None => (),
                     Some((claim, ())) => {
-                        *current_claims = Some(Either::Right(EvalClaim { point: claim.0, evs: claim.1 }));
+                        *current_claims = Some(Either::Right(claim));
                         proofs.as_mut().unwrap().push_back(LayerProof::Split);
                         *current_prover = None;
                     },
@@ -360,16 +349,6 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
                                 Either::Left(_) => panic!("Unexpected multi-evaluation claim."),
                             };
 
-                            let EvalClaim { point: _point, evs: _evs } = _current_claims;
-                            let (e0, e1) = _evs.split_at(n);
-                            let _current_claims = (
-                                _point,
-                                itertools::Itertools::zip_eq(
-                                    e0.iter().map(|x|*x),
-                                    e1.iter().map(|x|*x)
-                                ).collect()
-                            );
-
                             let LayerProof::Split = current_proof else {panic!()};
 
                             Either::Right(SplitVerifier::start(
@@ -390,7 +369,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
                 match verifier.round(challenge, transcript) {
                     None => (),
                     Some(claim) => {
-                        *current_claims = Some(Either::Right(EvalClaim { point: claim.0, evs: claim.1 }));
+                        *current_claims = Some(Either::Right(claim));
                         *current_verifier = None;
                     },
                 }

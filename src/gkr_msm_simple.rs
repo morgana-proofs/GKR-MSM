@@ -127,7 +127,7 @@ pub fn gkr_msm_prove<
                     .iter()
                     .map(|x| *x),
             );
-            transcript.append_point(b"bit column", point);
+            transcript.append_point::<G>(b"bit column", point);
             point
         })
         .collect();
@@ -144,7 +144,7 @@ pub fn gkr_msm_prove<
     );
 
     let pts_comm: G = ck.commit_vec(&pts_prep);
-    transcript.append_point(b"point column", pts_comm);
+    transcript.append_point::<G>(b"point column", pts_comm);
 
     let bits_poly = DensePolynomial::new(
         bits_flatten

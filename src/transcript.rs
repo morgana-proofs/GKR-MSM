@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use ark_serialize::CanonicalSerialize;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
@@ -8,7 +9,7 @@ pub trait TranscriptReceiver<F: PrimeField> {
     fn append_scalar(&mut self, label: &'static [u8], scalar: &F);
     fn append_scalars(&mut self, label: &'static [u8], scalars: &[F]);
     fn append_message(&mut self, label: &'static [u8], msg: &[u8]);
-    fn append_point<G: CurveGroup>(&mut self, label: &'static[u8], point: G);
+    fn append_point<G: CurveGroup>(&mut self, label: &'static[u8], point: impl Into<G::Affine>);
 }
 
 pub trait TranscriptSender<F: PrimeField> {
@@ -53,7 +54,7 @@ impl<G: CurveGroup, P: liblasso::utils::transcript::ProofTranscript<G>> Transcri
     fn append_message(&mut self, label: &'static [u8], msg: &[u8]) {
         todo!()
     }
-    fn append_point<G2: CurveGroup>(&mut self, label: &'static[u8], point: G2) {
+    fn append_point<G2: CurveGroup>(&mut self, label: &'static[u8], point: impl Into<G2::Affine>) {
         todo!()
     }
 }
@@ -85,9 +86,9 @@ impl<F: PrimeField> TranscriptReceiver<F> for Transcript {
         self.append_message(b"", msg)
     }
 
-    fn append_point<G: CurveGroup>(&mut self, label: &'static[u8], point: G) {
+    fn append_point<G: CurveGroup>(&mut self, label: &'static[u8], point: impl Into<G::Affine>) {
         let mut buf : Vec<u8> = vec![];
-        point.serialize_compressed(&mut buf).unwrap();
+        point.into().serialize_compressed(&mut buf).unwrap();
         self.append_message(label, &buf);
     }
 }

@@ -46,17 +46,17 @@ impl<Ctx: Pairing> KzgVerifyingKey<Ctx> {
 
     /// Transforms proof into pair with verifiying equation <pair.0, h0> == <pair.1, h1>.
     /// Useful in batching, because such pairs can be randomly combined.
-    pub fn prepare_pair(
+    pub fn verify_reduce_to_pair(
         &self,
-        poly_commitment: Ctx::G1Affine,
-        quotient_commitment: Ctx::G1Affine,
+        poly_commitment: impl Into<Ctx::G1>,
+        quotient_commitment: impl Into<Ctx::G1>,
         opening_at: Ctx::ScalarField,
         opening: Ctx::ScalarField,
     ) -> (Ctx::G1Affine, Ctx::G1Affine) {
         // e<[P] - b * G0, H0> == e<[Q], H1 - a H0>
         // e<[P] + a * [Q] - b * G0, H0> = e<[Q], H1>
-
-        ((quotient_commitment * opening_at - self.g0 * opening + poly_commitment).into(), quotient_commitment)
+        let quotient_commitment = quotient_commitment.into();
+        ((quotient_commitment * opening_at - self.g0 * opening + poly_commitment.into()).into(), quotient_commitment.into())
     }
 
     /// Verifies <pair.0, h0> == <pair.1, h1>
@@ -185,7 +185,7 @@ mod tests {
         let (quotient_commitment, opening) = opening_proof;
 
         vkey.verify_directly(poly_commitment, quotient_commitment, opening_at, opening);
-        vkey.verify_pair(vkey.prepare_pair(poly_commitment, quotient_commitment, opening_at, opening));
+        vkey.verify_pair(vkey.verify_reduce_to_pair(poly_commitment, quotient_commitment, opening_at, opening));
     }
 
 }

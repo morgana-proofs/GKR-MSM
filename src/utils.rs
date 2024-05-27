@@ -9,7 +9,7 @@ use std::marker::PhantomData;
 use profi::prof;
 use rayon::{prelude::*};
 
-use crate::protocol::sumcheck_trait::MultiEvalClaim;
+use crate::protocol::sumcheck::MultiEvalClaim;
 
 pub trait TwistedEdwardsConfig {
 

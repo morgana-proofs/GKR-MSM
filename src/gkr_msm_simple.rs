@@ -11,7 +11,7 @@ use std::{fs::File, sync::Arc};
 
 use crate::protocol::bintree::{Bintree, BintreeParams, BintreeProof, BintreeProver, Layer};
 use crate::protocol::protocol::ProtocolProver;
-use crate::protocol::sumcheck_trait::{to_multieval, EvalClaim};
+use crate::protocol::sumcheck::{to_multieval, EvalClaim};
 use crate::{
     binary_msm::{binary_msm, prepare_coefs},
     grand_add::{
@@ -20,7 +20,7 @@ use crate::{
         twisted_edwards_add_l3,
     },
     protocol::protocol::{PolynomialMapping, Protocol},
-    protocol::sumcheck_trait::{Split, SumcheckPolyMap, SumcheckPolyMapParams},
+    protocol::sumcheck::{Split, SumcheckPolyMap, SumcheckPolyMapParams},
     transcript::{TranscriptReceiver, TranscriptSender},
     utils::TwistedEdwardsConfig,
 };

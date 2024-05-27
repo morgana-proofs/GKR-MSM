@@ -1,8 +1,10 @@
 use std::marker::PhantomData;
+
 use ark_ff::PrimeField;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
-use crate::protocol::{Challenge, Protocol, ProtocolProver, ProtocolVerifier, TranscriptReceiver};
-use crate::sumcheck_trait::{EvalClaim, MultiEvalClaim};
+
+use crate::protocol::protocol::{EvalClaim, Protocol, ProtocolProver, ProtocolVerifier};
+use crate::transcript::{Challenge, TranscriptReceiver};
 
 pub struct Split<F: PrimeField> {
     _marker: PhantomData<F>,
@@ -110,12 +112,14 @@ impl<F: PrimeField> ProtocolVerifier<F> for SplitVerifier<F> {
 #[cfg(test)]
 mod tests {
     use std::iter::repeat_with;
+
     use ark_bls12_381::{Fr, G1Projective};
     use ark_ff::PrimeField;
     use ark_std::rand::Rng;
     use liblasso::poly::dense_mlpoly::DensePolynomial;
     use liblasso::utils::test_lib::TestTranscript;
-    use crate::protocol::{Challenge, IndexedProofTranscript, TranscriptSender};
+
+    use crate::transcript::{IndexedProofTranscript, TranscriptSender};
 
     use super::*;
 

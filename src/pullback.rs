@@ -1,11 +1,11 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use liblasso::poly::dense_mlpoly::DensePolynomial;
-use rayon::iter::IntoParallelIterator;
 use rayon::iter::IndexedParallelIterator;
+use rayon::iter::IntoParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
+
 use crate::msm_nonaffine::VariableBaseMSM_Nonaffine;
 use crate::utils::split_into_chunks_balanced;
 
@@ -60,14 +60,15 @@ impl<F: PrimeField> Pullback<F> {
 }
 
 mod tests{
-    use std::{iter::repeat_with, time::{Duration, Instant}};
+    use std::{iter::repeat_with, time::Instant};
 
-    use super::*;
     use ark_bls12_381::Fr;
-    use ark_ec::{bls12::{self, Bls12}, pairing::Pairing, short_weierstrass::Affine, CurveGroup};
+    use ark_ec::{bls12::Bls12, CurveGroup, pairing::Pairing};
     use ark_ff::UniformRand;
     use ark_std::rand::RngCore;
     use liblasso::msm::VariableBaseMSM;
+
+    use super::*;
 
     type G = <Bls12<ark_bls12_381::Config> as Pairing>::G1;
     type F = Fr;

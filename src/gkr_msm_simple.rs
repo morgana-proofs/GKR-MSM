@@ -1,3 +1,6 @@
+use std::{fs::File, sync::Arc};
+use std::iter::repeat;
+
 use ark_ec::{CurveGroup, ScalarMul};
 use ark_ff::PrimeField;
 use ark_serialize::*;
@@ -5,13 +8,8 @@ use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]
 use profi::{prof, prof_guard};
-use rayon::iter::{repeatn, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use std::iter::repeat;
-use std::{fs::File, sync::Arc};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator, repeatn};
 
-use crate::protocol::bintree::{Bintree, BintreeParams, BintreeProof, BintreeProver, Layer};
-use crate::protocol::protocol::ProtocolProver;
-use crate::protocol::sumcheck::{to_multieval, EvalClaim};
 use crate::{
     binary_msm::{binary_msm, prepare_coefs},
     grand_add::{
@@ -19,14 +17,14 @@ use crate::{
         affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2,
         twisted_edwards_add_l3,
     },
-    protocol::{PolynomialMapping, Protocol, TranscriptReceiver, TranscriptSender},
-    sumcheck_trait::{SumcheckPolyMap, SumcheckPolyMapParams},
-    split::Split,
     protocol::protocol::{PolynomialMapping, Protocol},
-    protocol::sumcheck::{Split, SumcheckPolyMap, SumcheckPolyMapParams},
+    protocol::sumcheck::SumcheckPolyMapParams,
     transcript::{TranscriptReceiver, TranscriptSender},
     utils::TwistedEdwardsConfig,
 };
+use crate::protocol::bintree::{Bintree, BintreeParams, BintreeProof, BintreeProver, Layer};
+use crate::protocol::protocol::{EvalClaim, ProtocolProver};
+use crate::protocol::sumcheck::to_multieval;
 #[cfg(feature = "memprof")]
 use crate::utils::memprof;
 
@@ -337,23 +335,24 @@ pub fn gkr_msm_prove<
 
 #[cfg(test)]
 mod tests {
+    use ark_bls12_381::{G1Affine, G1Projective};
+    use ark_std::{test_rng, UniformRand};
+    use ark_std::rand::Rng;
+    use merlin::Transcript;
+
     #[cfg(feature = "memprof")]
-    use jemalloc_ctl::{stats, epoch};
-    #[cfg(feature = "memprof")]
-    #[global_allocator]
-    static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+        use jemalloc_ctl::{epoch, stats};
 
     use crate::binary_msm::prepare_bases;
-    use ark_bls12_381::{G1Affine, G1Projective};
-    use ark_std::rand::Rng;
-    use ark_std::{test_rng, UniformRand};
-    use merlin::Transcript;
-    use std::time::Instant;
-
     #[cfg(feature = "memprof")]
     use crate::utils::memprof;
 
     use super::*;
+
+    #[cfg(feature = "memprof")]
+    #[global_allocator]
+    static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
     #[test]
     fn small() {
         let gamma = 5;

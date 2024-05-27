@@ -1,18 +1,17 @@
-use std::{borrow::Borrow, marker::PhantomData, sync::{atomic::{AtomicU64, Ordering}, Arc}};
+use std::{borrow::Borrow, marker::PhantomData, sync::Arc};
 
 use ark_bls12_381::Fr;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use itertools::Itertools;
-use liblasso::{poly::{dense_mlpoly::DensePolynomial, eq_poly::{self, EqPolynomial}, unipoly::{CompressedUniPoly, UniPoly}}, subprotocols::sumcheck::SumcheckRichProof, utils::transcript::{AppendToTranscript, ProofTranscript}};
+use liblasso::{poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, unipoly::{CompressedUniPoly, UniPoly}}, subprotocols::sumcheck::SumcheckRichProof, utils::transcript::{AppendToTranscript, ProofTranscript}};
 #[cfg(feature = "prof")]
 use profi::{prof, prof_guard};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 
 use crate::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows, map_over_poly}};
 
-use super::protocol::{PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier};
-
+use super::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier};
 
 // Impls
 
@@ -105,18 +104,6 @@ pub struct SumcheckPolyMapProof<F: PrimeField> {
 pub struct SumcheckPolyMapParams<F: PrimeField> {
     pub f: PolynomialMapping<F>,
     pub num_vars: usize,
-}
-
-#[derive(Clone)]
-pub struct MultiEvalClaim<F: PrimeField> {
-    pub points: Vec<Vec<F>>,
-    pub evs: Vec<Vec<(usize, F)>>,
-}
-
-#[derive(Clone)]
-pub struct EvalClaim<F: PrimeField> {
-    pub point: Vec<F>,
-    pub evs: Vec<F>,
 }
 
 pub fn to_multieval<F: PrimeField>(claim: EvalClaim<F>) -> MultiEvalClaim<F> {
@@ -543,11 +530,10 @@ fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f:
 
 #[cfg(test)]
 mod test {
-    use std::iter::repeat_with;
     use ark_bls12_381::G1Projective;
-    use ark_ff::Field;
-    use ark_std::{rand::Rng, UniformRand};
-    use liblasso::{benches::bench::gen_random_point, utils::test_lib::TestTranscript};
+    use ark_std::UniformRand;
+    use liblasso::utils::test_lib::TestTranscript;
+
     use crate::{transcript::{IndexedProofTranscript, TranscriptSender}, utils::scale};
 
     use super::*;

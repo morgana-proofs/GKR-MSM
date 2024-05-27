@@ -1,9 +1,6 @@
-use std::marker::PhantomData;
 use std::sync::Arc;
-use ark_ec::CurveGroup;
+
 use ark_ff::PrimeField;
-use liblasso::utils::transcript::ProofTranscript;
-use ark_serialize::CanonicalSerialize;
 
 use crate::transcript::{Challenge, TranscriptReceiver};
 
@@ -90,4 +87,16 @@ pub trait ProtocolVerifier<F: PrimeField> {
     fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T) 
         -> 
     Option<Self::ClaimsNew>;
+}
+
+#[derive(Clone)]
+pub struct MultiEvalClaim<F: PrimeField> {
+    pub points: Vec<Vec<F>>,
+    pub evs: Vec<Vec<(usize, F)>>,
+}
+
+#[derive(Clone)]
+pub struct EvalClaim<F: PrimeField> {
+    pub point: Vec<F>,
+    pub evs: Vec<F>,
 }

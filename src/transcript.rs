@@ -4,7 +4,6 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use merlin::Transcript;
 
-
 pub trait TranscriptReceiver<F: PrimeField> {
     fn append_scalar(&mut self, label: &'static [u8], scalar: &F);
     fn append_scalars(&mut self, label: &'static [u8], scalars: &[F]);

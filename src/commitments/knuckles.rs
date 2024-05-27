@@ -31,23 +31,22 @@
 // Shplonk tricks are sadly almost useless here, because there are only 2 points to open.
 
 use std::fs::File;
-use std::marker::PhantomData;
 
 use ark_ec::pairing::Pairing;
 use ark_ff::batch_inversion;
+use ark_std::{One, Zero};
+use ark_std::iter::repeat;
+use rayon::iter::IndexedParallelIterator;
+use rayon::iter::IntoParallelIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use rayon::iter::IntoParallelIterator;
-use rayon::iter::IndexedParallelIterator;
 
 use crate::commitments::kzg::ev;
 use crate::transcript::TranscriptReceiver;
 use crate::transcript::TranscriptSender;
 
 use super::kzg::{KzgProvingKey, KzgVerifyingKey};
-use ark_std::{Zero, One};
-use ark_std::iter::repeat;
 
 #[derive(Clone)]
 pub struct KnucklesProvingKey<Ctx: Pairing> {
@@ -198,13 +197,13 @@ pub struct KnucklesVerifyingKey<Ctx: Pairing> {
 mod tests {
     use std::iter::repeat_with;
 
-    use ark_ff::{Field};
     use ark_bls12_381::Bls12_381 as Ctx;
     use ark_bls12_381::Fr;
+    use ark_ff::Field;
     use ark_std::{test_rng, UniformRand};
     use liblasso::poly::dense_mlpoly::DensePolynomial;
 
-    use crate::commitments::kzg::{random_kzg_pk, ev};
+    use crate::commitments::kzg::{ev, random_kzg_pk};
     use crate::commitments::kzg::KzgProvingKey;
 
     use super::*;

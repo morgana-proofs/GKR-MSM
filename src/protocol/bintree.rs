@@ -6,7 +6,7 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]
 use profi::prof;
 
-use crate::{protocol::{protocol::{PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck::{to_multieval, EvalClaim, MultiEvalClaim, SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier}}, transcript::{Challenge, TranscriptReceiver}};
+use crate::{protocol::{protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck::{SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier, to_multieval}}, transcript::{Challenge, TranscriptReceiver}};
 use crate::split::{Split, SplitProver, SplitVerifier};
 use crate::utils::{map_over_poly, split_vecs};
 
@@ -400,10 +400,12 @@ impl<F: PrimeField> ProtocolVerifier<F> for BintreeVerifier<F> {
 #[cfg(test)]
 mod test {
     use ark_bls12_381::{Fr, G1Projective};
-    use ark_std::{test_rng, UniformRand, Zero};
+    use ark_std::{test_rng, UniformRand};
     use itertools::Itertools;
     use liblasso::utils::test_lib::TestTranscript;
+
     use crate::transcript::{IndexedProofTranscript, TranscriptSender};
+
     use super::*;
 
     fn f62(v: &[Fr]) -> Vec<Fr> {

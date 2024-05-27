@@ -1,18 +1,19 @@
-use ark_bls12_381::{Fr, G1Affine, G1Projective};
-use ark_std::rand::Rng;
-use ark_std::{test_rng, UniformRand};
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
-use itertools::Itertools;
-use merlin::Transcript;
 use std::io::Write;
 use std::path::Path;
-use GKR_MSM::binary_msm::prepare_bases;
-use GKR_MSM::gkr_msm_simple::{gkr_msm_prove, CommitmentKey};
 
+use ark_bls12_381::{Fr, G1Affine, G1Projective};
+use ark_std::{test_rng, UniformRand};
+use ark_std::rand::Rng;
+use criterion::{BatchSize, black_box, Criterion, criterion_group, criterion_main};
 //extern crate cpuprofiler;
 //use cpuprofiler::PROFILER;
 use criterion::profiler::Profiler;
+use itertools::Itertools;
+use merlin::Transcript;
 use profi::{print_on_exit, prof, prof_guard};
+
+use GKR_MSM::binary_msm::prepare_bases;
+use GKR_MSM::gkr_msm_simple::{CommitmentKey, gkr_msm_prove};
 
 struct MyCustomProfiler {}
 

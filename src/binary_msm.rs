@@ -1,13 +1,13 @@
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use itertools::Itertools;
-use liblasso::poly::dense_mlpoly::DensePolynomial;
-use rayon::iter::IntoParallelIterator;
 use rayon::iter::IndexedParallelIterator;
+use rayon::iter::IntoParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::*;
+
 use crate::msm_nonaffine::VariableBaseMSM_Nonaffine;
 
 /// This structure hosts a counter 'mapping', an array 'image',
@@ -58,11 +58,11 @@ pub fn prepare_coefs(coefs: impl Iterator<Item=bool>, gamma: usize) -> Vec<u8> {
 
 #[cfg(test)]
 mod test {
-    use ark_bls12_381::Fr;
-    use ark_bls12_381::{G1Projective, G1Affine};
-    use ark_std::rand::Rng;
-    use super::*;
+    use ark_bls12_381::{G1Affine, G1Projective};
     use ark_std::{test_rng, UniformRand, Zero};
+    use ark_std::rand::Rng;
+
+    use super::*;
 
     #[test]
     fn bin_msm() {

@@ -1,21 +1,20 @@
-use ark_bls12_381::{Fr, G1Affine, G1Projective};
-use ark_std::rand::Rng;
-use ark_std::{test_rng, UniformRand};
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, BenchmarkId};
-use itertools::Itertools;
-use merlin::Transcript;
 use std::fmt::{Debug, Display};
 use std::iter::repeat;
 use std::ops::Range;
 use std::sync::Arc;
+
+use ark_bls12_381::Fr;
+use ark_std::{test_rng, UniformRand};
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
+use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
-use liblasso::utils::test_lib::TestTranscript;
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator, repeatn};
-use GKR_MSM::protocol::bintree::{Bintree, BintreeParams, BintreeProver, Layer};
+use merlin::Transcript;
+
 use GKR_MSM::grand_add::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
+use GKR_MSM::protocol::bintree::{Bintree, BintreeParams, BintreeProver, Layer};
 use GKR_MSM::protocol::protocol::{PolynomialMapping, Protocol, ProtocolProver};
 use GKR_MSM::protocol::sumcheck::{EvalClaim, MultiEvalClaim, to_multieval};
-use GKR_MSM::transcript::{TranscriptSender};
+use GKR_MSM::transcript::TranscriptSender;
 
 fn prepare_params(
     log_num_points: usize,

@@ -1,14 +1,13 @@
 use ark_bls12_381::Fr;
-use ark_ec::{pairing::Pairing, CurveGroup};
+use ark_ec::{CurveGroup, pairing::Pairing};
 use ark_ff::{Field, PrimeField};
 use ark_std::iterable::Iterable;
 use itertools::Itertools;
 use liblasso::{poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial}, subprotocols::sumcheck::VecSumcheckInstanceProof, utils::{errors::ProofVerifyError, transcript::ProofTranscript}};
 use liblasso::utils::math::Math;
-use rayon::{prelude::*};
+use rayon::prelude::*;
 
-use crate::utils::{TwistedEdwardsConfig, map_over_poly, scale, fold_with_coef, split_vecs};
-
+use crate::utils::{fold_with_coef, map_over_poly, scale, split_vecs, TwistedEdwardsConfig};
 
 pub fn affine_twisted_edwards_add_l1<F: Field + TwistedEdwardsConfig>(pts: &[F]) -> Vec<F>  {
     assert_eq!(pts.len(), 4);
@@ -365,13 +364,13 @@ impl<F: PrimeField + TwistedEdwardsConfig> GrandAddArgument<F> {
 
 #[cfg(test)]
 mod tests {
-    use ark_bls12_381::G1Projective;
-    use ark_ff::UniformRand;
     use std::{assert_eq, str::FromStr};
+
+    use ark_bls12_381::G1Projective;
+    use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective};
+    use ark_ff::UniformRand;
     use itertools::zip_eq;
-    use ark_ed_on_bls12_381_bandersnatch::{EdwardsAffine, EdwardsProjective, BandersnatchConfig};
     use liblasso::utils::test_lib::TestTranscript;
-    use ark_ec::twisted_edwards::Projective;
 
     use super::*;
 

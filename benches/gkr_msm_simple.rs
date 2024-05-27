@@ -1,20 +1,15 @@
+use std::fmt::{Debug, Display};
+use std::ops::Range;
+
 use ark_bls12_381::{Fr, G1Affine, G1Projective};
-use ark_std::rand::Rng;
 use ark_std::{test_rng, UniformRand};
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
+use ark_std::rand::Rng;
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use itertools::Itertools;
 use merlin::Transcript;
-use std::fmt::{Debug, Display};
-use std::io::Write;
-use std::ops::Range;
-use std::path::Path;
-use GKR_MSM::binary_msm::prepare_bases;
-use GKR_MSM::gkr_msm_simple::{gkr_msm_prove, CommitmentKey};
 
-//extern crate cpuprofiler;
-//use cpuprofiler::PROFILER;
-use criterion::profiler::Profiler;
-use profi::{print_on_exit, prof};
+use GKR_MSM::binary_msm::prepare_bases;
+use GKR_MSM::gkr_msm_simple::{CommitmentKey, gkr_msm_prove};
 
 fn prepare_data(
     (gamma, log_num_points): (usize, usize),

@@ -5,11 +5,11 @@
 
 use std::fs::File;
 
+use ark_ec::CurveGroup;
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
+use ark_std::{One, UniformRand, Zero};
 use ark_std::rand::Rng;
-use ark_std::{One, Zero, UniformRand};
-use ark_ec::CurveGroup;
 use liblasso::msm::VariableBaseMSM;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
@@ -149,12 +149,12 @@ pub fn ev<F: PrimeField>(poly : &[F], x: F) -> F {
 
 #[cfg(test)]
 mod tests {
-use ark_bls12_381::Bls12_381 as Ctx;
-use ark_bls12_381::Fr;
-use ark_std::rand::Rng;
-use ark_std::{UniformRand, test_rng};
+    use ark_bls12_381::Bls12_381 as Ctx;
+    use ark_bls12_381::Fr;
+    use ark_std::{test_rng, UniformRand};
+    use ark_std::rand::Rng;
 
-use super::*;
+    use super::*;
 
     fn random_poly(size: usize, rng: &mut impl Rng) -> Vec<Fr> {
         (0..size).map(|_|Fr::rand(rng)).collect()

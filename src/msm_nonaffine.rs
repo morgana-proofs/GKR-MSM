@@ -1,12 +1,10 @@
+use ark_ec::{CurveGroup, ScalarMul};
 /// Copy of 
 /// [Copy of ark_ec::VariableBaseMSM with minor modifications to speed up
 /// known small element sized MSMs.]
 /// with signatures changed to allow bases in non-affine coordinates
 use ark_ff::{prelude::*, PrimeField};
 use ark_std::{borrow::Borrow, iterable::Iterable, vec::Vec};
-
-use ark_ec::{CurveGroup, ScalarMul};
-
 use rayon::prelude::*;
 
 impl<G: CurveGroup> VariableBaseMSM_Nonaffine for G {}

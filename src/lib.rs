@@ -9,6 +9,4 @@ pub mod binary_msm;
 // pub mod gkr;
 pub mod protocol;
 pub mod transcript;
-mod split;
-
 pub mod commitments;

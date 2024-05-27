@@ -6,8 +6,7 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]
 use profi::prof;
 
-use crate::{protocol::{protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck::{SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier, to_multieval}}, transcript::{Challenge, TranscriptReceiver}};
-use crate::split::{Split, SplitProver, SplitVerifier};
+use crate::{protocol::{protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck::{SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier, to_multieval}, split::{Split, SplitProver, SplitVerifier}}, transcript::{Challenge, TranscriptReceiver}};
 
 #[derive(Clone)]
 pub enum Layer<F: PrimeField> {

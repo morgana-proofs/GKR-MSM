@@ -132,7 +132,7 @@ pub struct BintreeProver<F: PrimeField> {
     trace: Vec<Vec<DensePolynomial<F>>>,
     params: Vec<(Layer<F>, usize)>,
     current_claims: Option<Either<MultiEvalClaim<F>, EvalClaim<F>>>,
-    current_prover: Option<Either<SumcheckPolyMapProver<F>, SplitProver<F>>>,
+    current_prover: Option<Either<SumcheckPolyMapProver<F>, SplitProver<F, DensePolynomial<F>>>>,
 }
 
 pub struct BintreeVerifier<F: PrimeField> {

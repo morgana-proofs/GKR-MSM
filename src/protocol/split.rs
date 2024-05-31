@@ -3,76 +3,72 @@ use std::marker::PhantomData;
 use ark_ff::PrimeField;
 use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
+use crate::poly::SplitablePoly;
 
 use crate::protocol::protocol::{EvalClaim, Protocol, ProtocolProver, ProtocolVerifier};
 use crate::transcript::{Challenge, TranscriptReceiver};
 use crate::utils::{fix_var_bot, fix_var_top};
 
-pub struct Split<F: PrimeField> {
-    _marker: PhantomData<F>,
+pub struct Split<F: PrimeField, P: SplitablePoly<F>> {
+    _marker: PhantomData<(F, P)>,
 }
 
-pub struct SplitProver<F: PrimeField> {
+pub struct SplitProver<F: PrimeField, P: SplitablePoly<F>> {
     claims_to_reduce: <Self as ProtocolProver<F>>::ClaimsToReduce,
     done: bool,
+    _marker: PhantomData<(F, P)>,
 }
 
 pub struct SplitVerifier<F: PrimeField> {
     claims_to_reduce: <Self as ProtocolVerifier<F>>::ClaimsToReduce,
     done: bool,
+    _marker: PhantomData<F>,
 }
 
-impl<F: PrimeField> Protocol<F> for Split<F> {
-    type Prover = SplitProver<F>;
+impl<F: PrimeField, P: SplitablePoly<F>> Protocol<F> for Split<F, P> {
+    type Prover = SplitProver<F, P>;
     type Verifier = SplitVerifier<F>;
     type ClaimsToReduce = EvalClaim<F>;
     type ClaimsNew = EvalClaim<F>;
     type Proof = ();
     type Params = ();
-    type WitnessInput = Vec<DensePolynomial<F>>;
-    type Trace = Vec<Vec<DensePolynomial<F>>>;
+    type WitnessInput = Vec<P>;
+    type Trace = Vec<Vec<P>>;
     type WitnessOutput = Self::WitnessInput;
 
     fn witness(args: Self::WitnessInput, _params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
-        let num_vars = args[0].num_vars;
+        let num_vars = args[0].num_vars();
         assert!(num_vars > 0);
         for arg in &args {
-            assert_eq!(arg.num_vars, num_vars);
+            assert_eq!(arg.num_vars(), num_vars);
         }
 
-        #[cfg(feature = "split_bot_to_top")]
-        let (mut l, r): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = args.iter().map(|p| p.split(1 << (num_vars - 1))).unzip();
-        #[cfg(not(feature = "split_bot_to_top"))]
-        let (mut l, r): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = args.iter().map(|p| (
-            DensePolynomial::new(p.vec().iter().step_by(2).map(|x| *x).collect_vec()),
-            DensePolynomial::new(p.vec().iter().skip(1).step_by(2).map(|x| *x).collect_vec())
-        )).unzip();
-
+        let (mut l, r): (Vec<P>, Vec<P>) = args.iter().map(|p| p.split()).unzip();
         l.extend(r);
 
         (vec![args], l)
     }
 }
 
-impl<F: PrimeField> ProtocolProver<F> for SplitProver<F> {
+impl<F: PrimeField, P: SplitablePoly<F>> ProtocolProver<F> for SplitProver<F, P> {
     type ClaimsToReduce = EvalClaim<F>;
     type ClaimsNew = EvalClaim<F>;
     type Proof = ();
     type Params = ();
-    type Trace = Vec<Vec<DensePolynomial<F>>>;
+    type Trace = Vec<Vec<P>>;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
         _args: Self::Trace,
         _params: &Self::Params,
     ) -> Self {
-        Self { claims_to_reduce, done: false}
+        Self { claims_to_reduce, done: false, _marker: PhantomData}
     }
 
     fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, _transcript: &mut T)
                                        ->
                                        Option<(Self::ClaimsNew, Self::Proof)> {
-        let Self{ claims_to_reduce, done } = self;
+        let Self{ claims_to_reduce, done , ..} = self;
         assert!(!*done);
         *done = true;
         let r = challenge.value;
@@ -102,13 +98,13 @@ impl<F: PrimeField> ProtocolVerifier<F> for SplitVerifier<F> {
         _proof: Self::Proof,
         _params: &Self::Params,
     ) -> Self {
-        Self { claims_to_reduce, done: false }
+        Self { claims_to_reduce, done: false, _marker: PhantomData }
     }
 
     fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, _transcript: &mut T)
                                        ->
                                        Option<Self::ClaimsNew> {
-        let Self{ claims_to_reduce, done } = self;
+        let Self{ claims_to_reduce, done, .. } = self;
         assert!(!*done);
         *done = true;
         let r = challenge.value;

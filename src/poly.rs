@@ -82,16 +82,20 @@ impl<F: PrimeField> FixedOffsetSegment<F> {
     }
 }
 
-pub struct FixedOffsetSegmentedPolynomial<F: PrimeField> {
-    num_real_vars: usize,
-    num_fake_vars: usize,
+pub struct FOSegmentedPolynomial<F: PrimeField> {
+    num_bucket_coords: usize,
+    num_outer_coords: usize,
     segments: Vec<FixedOffsetSegment<F>>,
     constant: F,
 }
 
-impl<F: PrimeField> FixedOffsetSegmentedPolynomial<F> {
-    pub fn new(num_vars: usize, segments: Vec<FixedOffsetSegment<F>>, constant: F) -> Self {
-        let mut max_vars = 0;
+impl<F: PrimeField> FOSegmentedPolynomial<F> {
+    pub fn new(
+        num_bucket_coords: usize,
+        num_outer_coords: usize,
+        segments: Vec<FixedOffsetSegment<F>>,
+        constant: F,
+    ) -> Self {
         let mut last_idx = 0;
         for (cur_idx, segment) in segments.iter().enumerate() {
             assert!(
@@ -99,28 +103,28 @@ impl<F: PrimeField> FixedOffsetSegmentedPolynomial<F> {
                 "SegmentedPoly construction error: segment on index {} has starting pos less or equal to previous: {} <= {}",
                 cur_idx, segment.start_idx, last_idx,
             );
-            max_vars = max(max_vars, segment.evs.len().log_2());
+            assert!(segment.evs.len() < (1 << num_bucket_coords))
         }
 
-        assert!(last_idx < (1 << (num_vars - max_vars)), "SegmentedPoly construction error: provided num_vars is too small");
+        assert!(last_idx < (1 << num_outer_coords), "SegmentedPoly construction error: provided num_outer_coords is too small");
 
         Self {
-            num_real_vars: max_vars,
-            num_fake_vars: num_vars - max_vars,
+            num_bucket_coords,
+            num_outer_coords,
             segments,
             constant,
         }
     }
 
     pub fn num_vars(&self) -> usize {
-        self.num_real_vars + self.num_fake_vars
+        self.num_bucket_coords + self.num_outer_coords
     }
 
     pub fn vec(&self) -> Vec<F> {
         let mut ret = Vec::with_capacity(1 << self.num_vars());
         let mut current_idx = 0;
         for segment in self.segments.iter() {
-            ret.extend(repeat(self.constant).take((1 << self.num_real_vars) * segment.start_idx - ret.len()));
+            ret.extend(repeat(self.constant).take((1 << self.num_bucket_coords) * segment.start_idx - ret.len()));
             for val in segment.evs.iter() {
                 ret.push(val.clone());
             }
@@ -131,18 +135,18 @@ impl<F: PrimeField> FixedOffsetSegmentedPolynomial<F> {
     }
 }
 
-impl<F: PrimeField> Into<DensePolynomial<F>> for FixedOffsetSegmentedPolynomial<F> {
+impl<F: PrimeField> Into<DensePolynomial<F>> for FOSegmentedPolynomial<F> {
     fn into(self) -> DensePolynomial<F> {
         DensePolynomial::new(self.vec())
     }
 }
 
-impl<F: PrimeField> Index<usize> for FixedOffsetSegmentedPolynomial<F> {
+impl<F: PrimeField> Index<usize> for FOSegmentedPolynomial<F> {
     type Output = F;
 
     fn index(&self, index: usize) -> &Self::Output {
-        let real = index % (1 << self.num_real_vars);
-        let fake = index / (1 << self.num_real_vars);
+        let real = index % (1 << self.num_bucket_coords);
+        let fake = index / (1 << self.num_bucket_coords);
         match self.segments.binary_search_by_key(&fake, |s| s.start_idx) {
             Ok(idx) => &self.segments[idx].evs.get(real).unwrap_or(&self.constant),
             Err(_) => &self.constant,
@@ -150,7 +154,7 @@ impl<F: PrimeField> Index<usize> for FixedOffsetSegmentedPolynomial<F> {
     }
 }
 
-impl<F: PrimeField> SplitablePoly<F> for FixedOffsetSegmentedPolynomial<F> {
+impl<F: PrimeField> SplitablePoly<F> for FOSegmentedPolynomial<F> {
     fn split_bot(&self) -> (Self, Self) {
         let mut segments_l = Vec::with_capacity(self.segments.len());
         let mut segments_r = Vec::with_capacity(self.segments.len());
@@ -167,21 +171,21 @@ impl<F: PrimeField> SplitablePoly<F> for FixedOffsetSegmentedPolynomial<F> {
 
         (
             Self {
-                num_real_vars: self.num_real_vars - 1,
-                num_fake_vars: self.num_fake_vars,
+                num_bucket_coords: self.num_bucket_coords - 1,
+                num_outer_coords: self.num_outer_coords,
                 segments: segments_l,
                 constant: self.constant,
             },
             Self {
-                num_real_vars: self.num_real_vars - 1,
-                num_fake_vars: self.num_fake_vars,
+                num_bucket_coords: self.num_bucket_coords - 1,
+                num_outer_coords: self.num_outer_coords,
                 segments: segments_r,
                 constant: self.constant,
             }
         )
     }
     fn split_top(&self) -> (Self, Self) {
-        let split_size = 1 << (self.num_fake_vars - 1);
+        let split_size = 1 << (self.num_outer_coords - 1);
         let split_idx = self.segments.binary_search_by_key(&(split_size), |s| s.start_idx).map_or_else(|idx| idx, |idx| idx);
         let mut segments_l = self.segments.clone();
         let mut segments_r = segments_l.split_off(split_idx);
@@ -191,14 +195,14 @@ impl<F: PrimeField> SplitablePoly<F> for FixedOffsetSegmentedPolynomial<F> {
 
         (
             Self {
-                num_real_vars: self.num_real_vars,
-                num_fake_vars: self.num_fake_vars - 1,
+                num_bucket_coords: self.num_bucket_coords,
+                num_outer_coords: self.num_outer_coords - 1,
                 segments: segments_l,
                 constant: self.constant,
             },
             Self {
-                num_real_vars: self.num_real_vars,
-                num_fake_vars: self.num_fake_vars - 1,
+                num_bucket_coords: self.num_bucket_coords,
+                num_outer_coords: self.num_outer_coords - 1,
                 segments: segments_r,
                 constant: self.constant,
             }
@@ -206,13 +210,13 @@ impl<F: PrimeField> SplitablePoly<F> for FixedOffsetSegmentedPolynomial<F> {
     }
 }
 
-impl<F: PrimeField> Poly<F> for FixedOffsetSegmentedPolynomial<F> {
+impl<F: PrimeField> Poly<F> for FOSegmentedPolynomial<F> {
     fn num_vars(&self) -> usize {
         self.num_vars()
     }
 }
 
-impl<F: PrimeField> SumcheckablePoly<F> for FixedOffsetSegmentedPolynomial<F> {
+impl<F: PrimeField> SumcheckablePoly<F> for FOSegmentedPolynomial<F> {
     fn bound_poly_var_top(&mut self, r: &F) {
         unreachable!()
     }
@@ -229,7 +233,7 @@ impl<F: PrimeField> SumcheckablePoly<F> for FixedOffsetSegmentedPolynomial<F> {
             segment.evs.truncate((len + 1) / 2);
         }
         self.constant = self.constant + *r * self.constant;
-        self.num_real_vars -= 1;
+        self.num_bucket_coords -= 1;
     }
 }
 
@@ -240,7 +244,17 @@ mod tests {
     use ark_ff::Zero;
     use ark_std::{test_rng, UniformRand, rand::RngCore};
     use liblasso::poly::dense_mlpoly::DensePolynomial;
-    use crate::poly::{FixedOffsetSegment, FixedOffsetSegmentedPolynomial, SplitablePoly, SumcheckablePoly};
+    use crate::poly::{FixedOffsetSegment, FOSegmentedPolynomial, SplitablePoly, SumcheckablePoly};
+
+    fn assert_poly_eq(old: &DensePolynomial<Fr>, new: &FOSegmentedPolynomial<Fr>) {
+        assert_eq!(old.num_vars, new.num_vars());
+        let old_vec = old.vec();
+        let new_vec = new.vec();
+        for idx in 1..1 << old.num_vars {
+            assert_eq!(old_vec[idx], new_vec[idx]);
+            assert_eq!(old[idx], new[idx]);
+        }
+    }
 
     #[test]
     fn fixed_offset_segmented() {
@@ -312,71 +326,46 @@ mod tests {
                 ],
             },
         ];
-        let mut poly = FixedOffsetSegmentedPolynomial {
-            num_real_vars: 3,
-            num_fake_vars: 2,
+        let mut poly = FOSegmentedPolynomial {
+            num_bucket_coords: 3,
+            num_outer_coords: 2,
             segments: segments.clone(),
             constant: Fr::zero(),
         };
         assert_eq!(expected_vec, poly.vec());
 
-        for (idx, val) in expected_vec.iter().enumerate() {
-            assert_eq!(&poly[idx], val);
-            assert_eq!(&expected_poly[idx], val);
-        }
+        assert_poly_eq(&expected_poly, &poly);
 
         let r = Fr::from(rng.next_u64());
         poly.bound_poly_var_bot(&r);
         expected_poly.bound_poly_var_bot(&r);
 
-        assert_eq!(poly.num_vars(), expected_poly.num_vars);
-        for (idx, val) in expected_poly.vec().iter().take(1 << expected_poly.num_vars).enumerate() {
-            let x = poly[idx];
-            assert_eq!(x, *val);
-        }
+        assert_poly_eq(&expected_poly, &poly);
 
         let r = Fr::from(rng.next_u64());
         poly.bound_poly_var_bot(&r);
         expected_poly.bound_poly_var_bot(&r);
 
-        assert_eq!(poly.num_vars(), expected_poly.num_vars);
-        for (idx, val) in expected_poly.vec().iter().take(1 << expected_poly.num_vars).enumerate() {
-            let x = poly[idx];
-            assert_eq!(x, *val);
-        }
+        assert_poly_eq(&expected_poly, &poly);
 
-        poly = FixedOffsetSegmentedPolynomial {
-            num_real_vars: 3,
-            num_fake_vars: 2,
-            segments: segments.clone(),
-            constant: Fr::zero(),
-        };
+        poly = FOSegmentedPolynomial::new(
+            3,
+            2,
+            segments.clone(),
+            Fr::zero(),
+        );
         expected_poly = DensePolynomial::new(expected_vec.clone());
 
         let (l, r) = poly.split_top();
         let (expected_l, expected_r) = expected_poly.split_top();
-        assert_eq!(l.num_vars(), expected_l.num_vars);
-        for (idx, val) in expected_l.vec().iter().take(1 << expected_l.num_vars).enumerate() {
-            let x = l[idx];
-            assert_eq!(x, *val);
-        }
-        assert_eq!(r.num_vars(), expected_r.num_vars);
-        for (idx, val) in expected_r.vec().iter().take(1 << expected_r.num_vars).enumerate() {
-            let x = r[idx];
-            assert_eq!(x, *val);
-        }
+
+        assert_poly_eq(&expected_l, &l);
+        assert_poly_eq(&expected_r, &r);
 
         let (l, r) = poly.split_bot();
         let (expected_l, expected_r) = expected_poly.split_bot();
-        assert_eq!(l.num_vars(), expected_l.num_vars);
-        for (idx, val) in expected_l.vec().iter().take(1 << expected_l.num_vars).enumerate() {
-            let x = l[idx];
-            assert_eq!(x, *val);
-        }
-        assert_eq!(r.num_vars(), expected_r.num_vars);
-        for (idx, val) in expected_r.vec().iter().take(1 << expected_r.num_vars).enumerate() {
-            let x = r[idx];
-            assert_eq!(x, *val);
-        }
+
+        assert_poly_eq(&expected_l, &l);
+        assert_poly_eq(&expected_r, &r);
     }
 }

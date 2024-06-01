@@ -302,12 +302,56 @@ pub fn segment_evaluate<F: Field>(segment: &mut [F], continuation: F, point: &[F
         } else {
             // And if we are in this branch, multiplier is adjusted by 1-point[i], because we are just appending
             // 0-s to the indexing sequence of an upcoming chunk.
-            multiplier *= (F::one() - point[i]);
+            multiplier *= F::one() - point[i];
         }
     }
 
     acc + continuation
 }
+
+pub enum NestedValues<F: Field> {
+    Flat(Vec<F>),
+    Nested(Vec<NestedPoly<F>>),
+}
+
+pub struct NestedPoly<F: Field> {
+    values: NestedValues<F>,
+    num_ext_vars: usize,
+    continuation: F,
+}
+
+impl<F: Field> NestedPoly<F> {
+    pub fn from_values(values: Vec<F>, num_ext_vars: usize, continuation: F) -> Self {
+        assert!(values.len() <= 1 << num_ext_vars);
+        Self {values: NestedValues::Flat(values), num_ext_vars, continuation}
+    }
+
+    pub fn from_polys(polys: Vec<NestedPoly<F>>, num_ext_vars: usize, continuation: F) -> Self {
+        assert!(polys.len() <= 1 << num_ext_vars);
+        
+        if polys.len() > 0 {
+            let num_int_vars = polys[0].num_ext_vars;
+            polys
+                .iter()
+                .map(|p|{assert!(p.num_ext_vars == num_int_vars)}).count();
+        }
+        Self {values: NestedValues::Nested(polys), num_ext_vars, continuation}
+    }
+
+    pub fn evaluate(self, point : &[F]) -> F {
+        assert!(point.len() >= self.num_ext_vars);
+        let (point_ext, point_in) = point.split_at(self.num_ext_vars);
+        let mut segment = match self.values {
+            NestedValues::Flat(values) => values,
+            NestedValues::Nested(polys) => polys.into_par_iter().map(|poly|poly.evaluate(point_in)).collect(), 
+        };
+        segment_evaluate(&mut segment, self.continuation, point_ext)
+    }
+}
+
+
+
+
 
 
 
@@ -317,11 +361,11 @@ mod tests {
 
     use ark_bls12_381::Fr;
     use ark_ff::Zero;
-    use ark_std::{test_rng, UniformRand, rand::RngCore};
+    use ark_std::{log2, rand::RngCore, test_rng, UniformRand};
     use liblasso::poly::dense_mlpoly::DensePolynomial;
     use crate::poly::{segment_evaluate, FOSegmentedPolynomial, FixedOffsetSegment, SplitablePoly, SumcheckablePoly};
 
-    use super::evaluate_exact;
+    use super::{evaluate_exact, NestedPoly};
 
     fn assert_poly_eq(old: &DensePolynomial<Fr>, new: &FOSegmentedPolynomial<Fr>) {
         assert_eq!(old.num_vars, new.num_vars());
@@ -350,7 +394,7 @@ mod tests {
         let rng = &mut test_rng();
         let nvars = 10;
         let segsize = 327;
-        let continuation = Fr::zero();
+        let continuation = Fr::rand(rng);
         let point : Vec<_> = repeat_with(|| Fr::rand(rng)).take(nvars).collect(); 
         let mut poly : Vec<_> = repeat_with(|| Fr::rand(rng)).take(segsize).collect();
         let mut naive_poly = poly.clone();
@@ -358,6 +402,60 @@ mod tests {
         let lhs = segment_evaluate(&mut poly, continuation, &point);
         let rhs = DensePolynomial::new(naive_poly).evaluate(&point);
         assert!(lhs == rhs);        
+    }
+
+
+    #[test]
+    fn ev_nested() {
+        let rng = &mut test_rng();
+        
+        let mut v1 = vec![];
+        let mut poly1_naive = vec![];
+        let continuation1 = Fr::rand(rng);
+
+        for i in 0..16 {
+            let j_size = if i == 13 {0} else {(rng.next_u64() % 16) as usize};
+
+            let mut v2 = vec![];
+            let mut poly2_naive = vec![];
+            let continuation2 = Fr::rand(rng);
+            for j in 0..j_size {
+                let k_size = if j == 13 {0} else {(rng.next_u64() % 16) as usize};
+                
+                let mut v3 = vec![];
+                for _k in 0..k_size {
+                    v3.push(Fr::rand(rng));
+                }
+                let continuation3 = Fr::rand(rng);
+                let mut poly3_naive = v3.clone();
+                poly3_naive.extend(repeat_with(|| continuation3).take(16 - k_size));
+                let poly3 = NestedPoly::from_values(v3, 4, continuation3);
+
+                v2.push(poly3);
+                poly2_naive.push(poly3_naive);
+            }
+
+            let cont2_vec = vec![continuation2; 16];
+            poly2_naive.extend(repeat_with(||{cont2_vec.clone()}).take(16 - j_size));
+            let poly2 = NestedPoly::from_polys(v2, 4, continuation2);
+
+            v1.push(poly2);
+            poly1_naive.push(poly2_naive);
+        }
+
+        let poly1 = NestedPoly::from_polys(v1, 4, continuation1);
+
+        let point : Vec<_> = repeat_with(|| Fr::rand(rng)).take(4 * 3).collect();
+
+        let lhs = poly1.evaluate(&point);
+
+        let poly1_naive : Vec<_> = poly1_naive.into_iter().flatten().collect();
+        let mut poly1_naive : Vec<Fr> = poly1_naive.into_iter().flatten().collect();
+
+        let rhs = evaluate_exact(&mut poly1_naive, &point);
+
+        assert!(lhs == rhs);
+
     }
 
     #[test]

@@ -9,4 +9,4 @@ pub mod binary_msm;
 pub mod protocol;
 pub mod transcript;
 pub mod commitments;
-mod poly;
+pub mod poly;

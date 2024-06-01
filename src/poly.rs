@@ -1,11 +1,13 @@
 use std::cmp::max;
+use std::collections::VecDeque;
 use std::iter::repeat;
 use std::ops::Index;
-use ark_ff::PrimeField;
+use ark_ff::{Field, PrimeField};
 use ark_std::iterable::Iterable;
 use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 use liblasso::utils::math::Math;
+use rayon::prelude::*;
 
 pub trait GKRablePoly<F>: SplitablePoly<F> + SumcheckablePoly<F> {}
 
@@ -238,13 +240,88 @@ impl<F: PrimeField> SumcheckablePoly<F> for FOSegmentedPolynomial<F> {
 }
 
 
+// --- evaluation impl, to eventually integrate into this ^
+// this API is not safe, as it changes polynomial to something different.
+// I am not sure how to achieve this effect with safe API, probably boxed slices or smth?
+
+/// Evaluate a multilinear polynomial in coefficient form in a point.
+/// Rewritten to eventually unbind us from liblasso's DensePolynomial dependency. 
+/// Will consume the polynomial in process.
+/// Method from DensePolynomial requires 1.5n multiplications as far as I understand, so
+/// it is possible that cloning is cheaper.
+pub fn evaluate_exact<F: Field>(poly: &mut [F], point: &[F]) -> F {
+    assert!(poly.len() == 1 << point.len());
+
+    let mut half_size = poly.len() >> 1;
+    let mut poly = poly;
+    for i in 0..point.len() {
+        let p = point[i];
+        let (l, r) = poly.split_at_mut(half_size);
+        r.par_iter_mut().enumerate().map(|(i, ri)| {*ri -= l[i]; *ri *= p}).count();
+        l.par_iter_mut().enumerate().map(|(i, li)| *li += r[i]).count();
+        half_size >>= 1;
+        poly = l;
+    }
+
+    poly[0]
+}
+
+/// Similarly, this does actually consume a segment.
+pub fn segment_evaluate<F: Field>(segment: &mut [F], continuation: F, point: &[F]) -> F {
+    let l = segment.len();
+    let nvars = point.len();
+    if l == 1 << nvars {
+        return evaluate_exact(segment, point)
+    }
+    assert!(l <= 1 << nvars);
+    
+    let mut multiplier = F::one();
+
+    segment.par_iter_mut().map(|x| *x -= continuation).count();
+
+    let mut segment = segment;
+    let mut chunk;
+    let mut acc = F::zero();
+
+    // Note that edge case where l == 1 << nvars is done earlier.
+    
+    // To understand how this cycle works, let's index each possible chunk by a bit sequence.
+    // For example, [0..N/2] is 0, [N/2..N] is 1, et cetera. I.e. it is a sequence of leading
+    // bits of indices that are constant in this chunk.
+    // When we split our segment into chunks, we need to adjust each evaluation of eq(point[i+1..], _)
+    // by a constant factor that eq(point[0..i], _) takes on the whole chunk (if we imagine it embedded
+    // in the original polynomial).
+    for i in 0 .. nvars {
+        if (l >> (nvars - i - 1)) % 2 == 1 {
+            (chunk, segment) = segment.split_at_mut(1 << (nvars - i - 1));
+            // If we are in this branch, we get a segment which's last bit of indexing bit sequence is 0,
+            // so it is multiplied by 1 - point[i]. And all next segments will be to the right of it, so
+            // their corresponding multiplier is adjusted by point[i].
+            acc += multiplier * (F::one() - point[i]) * evaluate_exact(chunk, &point[i + 1 ..]);
+            multiplier *= point[i];
+        } else {
+            // And if we are in this branch, multiplier is adjusted by 1-point[i], because we are just appending
+            // 0-s to the indexing sequence of an upcoming chunk.
+            multiplier *= (F::one() - point[i]);
+        }
+    }
+
+    acc + continuation
+}
+
+
+
 #[cfg(test)]
 mod tests {
+    use std::iter::repeat_with;
+
     use ark_bls12_381::Fr;
     use ark_ff::Zero;
     use ark_std::{test_rng, UniformRand, rand::RngCore};
     use liblasso::poly::dense_mlpoly::DensePolynomial;
-    use crate::poly::{FixedOffsetSegment, FOSegmentedPolynomial, SplitablePoly, SumcheckablePoly};
+    use crate::poly::{segment_evaluate, FOSegmentedPolynomial, FixedOffsetSegment, SplitablePoly, SumcheckablePoly};
+
+    use super::evaluate_exact;
 
     fn assert_poly_eq(old: &DensePolynomial<Fr>, new: &FOSegmentedPolynomial<Fr>) {
         assert_eq!(old.num_vars, new.num_vars());
@@ -254,6 +331,33 @@ mod tests {
             assert_eq!(old_vec[idx], new_vec[idx]);
             assert_eq!(old[idx], new[idx]);
         }
+    }
+
+    #[test]
+    fn ev_exact_parity() {
+        let rng = &mut test_rng();
+        let nvars = 5;
+        let point : Vec<_> = repeat_with(|| Fr::rand(rng)).take(nvars).collect(); 
+        let poly : Vec<_> = repeat_with(|| Fr::rand(rng)).take(1 << nvars).collect();
+        let lhs = evaluate_exact(&mut poly.clone(), &point);
+        let rhs = DensePolynomial::new(poly).evaluate(&point);
+        assert!(lhs == rhs);
+    }
+
+    #[test]
+
+    fn ev_segment() {
+        let rng = &mut test_rng();
+        let nvars = 10;
+        let segsize = 327;
+        let continuation = Fr::zero();
+        let point : Vec<_> = repeat_with(|| Fr::rand(rng)).take(nvars).collect(); 
+        let mut poly : Vec<_> = repeat_with(|| Fr::rand(rng)).take(segsize).collect();
+        let mut naive_poly = poly.clone();
+        naive_poly.extend(repeat_with(|| continuation).take((1 << nvars) - segsize));
+        let lhs = segment_evaluate(&mut poly, continuation, &point);
+        let rhs = DensePolynomial::new(naive_poly).evaluate(&point);
+        assert!(lhs == rhs);        
     }
 
     #[test]

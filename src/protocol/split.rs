@@ -2,21 +2,20 @@ use std::marker::PhantomData;
 
 use ark_ff::PrimeField;
 use itertools::Itertools;
-use liblasso::poly::dense_mlpoly::DensePolynomial;
-use crate::poly::SplitablePoly;
+use crate::poly::{NestedPolynomial, SplitablePoly};
 
 use crate::protocol::protocol::{EvalClaim, Protocol, ProtocolProver, ProtocolVerifier};
 use crate::transcript::{Challenge, TranscriptReceiver};
 use crate::utils::{fix_var_bot, fix_var_top};
 
-pub struct Split<F: PrimeField, P: SplitablePoly<F>> {
-    _marker: PhantomData<(F, P)>,
+pub struct Split<F: PrimeField> {
+    _marker: PhantomData<F>,
 }
 
-pub struct SplitProver<F: PrimeField, P: SplitablePoly<F>> {
+pub struct SplitProver<F: PrimeField> {
     claims_to_reduce: <Self as ProtocolProver<F>>::ClaimsToReduce,
     done: bool,
-    _marker: PhantomData<(F, P)>,
+    _marker: PhantomData<F>,
 }
 
 pub struct SplitVerifier<F: PrimeField> {
@@ -25,16 +24,16 @@ pub struct SplitVerifier<F: PrimeField> {
     _marker: PhantomData<F>,
 }
 
-impl<F: PrimeField, P: SplitablePoly<F>> Protocol<F> for Split<F, P> {
-    type Prover = SplitProver<F, P>;
+impl<F: PrimeField> Protocol<F> for Split<F> {
+    type Prover = SplitProver<F>;
     type Verifier = SplitVerifier<F>;
     type ClaimsToReduce = EvalClaim<F>;
     type ClaimsNew = EvalClaim<F>;
+    type WitnessInput = Vec<NestedPolynomial<F>>;
+    type Trace = Vec<Vec<NestedPolynomial<F>>>;
+    type WitnessOutput = Self::WitnessInput;
     type Proof = ();
     type Params = ();
-    type WitnessInput = Vec<P>;
-    type Trace = Vec<Vec<P>>;
-    type WitnessOutput = Self::WitnessInput;
 
     fn witness(args: Self::WitnessInput, _params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
         let num_vars = args[0].num_vars();
@@ -43,19 +42,19 @@ impl<F: PrimeField, P: SplitablePoly<F>> Protocol<F> for Split<F, P> {
             assert_eq!(arg.num_vars(), num_vars);
         }
 
-        let (mut l, r): (Vec<P>, Vec<P>) = args.iter().map(|p| p.split()).unzip();
+        let (mut l, r): (Vec<NestedPolynomial<F>>, Vec<NestedPolynomial<F>>) = args.iter().map(|p| p.split_bot()).unzip();
         l.extend(r);
 
         (vec![args], l)
     }
 }
 
-impl<F: PrimeField, P: SplitablePoly<F>> ProtocolProver<F> for SplitProver<F, P> {
+impl<F: PrimeField> ProtocolProver<F> for SplitProver<F> {
     type ClaimsToReduce = EvalClaim<F>;
     type ClaimsNew = EvalClaim<F>;
     type Proof = ();
     type Params = ();
-    type Trace = Vec<Vec<P>>;
+    type Trace = Vec<Vec<NestedPolynomial<F>>>;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
@@ -78,9 +77,6 @@ impl<F: PrimeField, P: SplitablePoly<F>> ProtocolProver<F> for SplitProver<F, P>
 
         let evs_new = evs_l.zip(evs_r).map(|(x, y)| *x + r * (*y - x)).collect();
 
-        #[cfg(feature = "split_bot_to_top")]
-        fix_var_bot(point, r);
-        #[cfg(not(feature = "split_bot_to_top"))]
         fix_var_top(point, r);
 
         Some((EvalClaim{point: point.clone(), evs: evs_new}, ()))
@@ -113,9 +109,6 @@ impl<F: PrimeField> ProtocolVerifier<F> for SplitVerifier<F> {
         let (evs_l, evs_r) = (evs_l.iter(), evs_r.iter());
 
         let evs_new = evs_l.zip(evs_r).map(|(x, y)| *x + r * (*y - x)).collect();
-        #[cfg(feature = "split_bot_to_top")]
-        fix_var_bot(point, r);
-        #[cfg(not(feature = "split_bot_to_top"))]
         fix_var_top(point, r);
 
         Some(EvalClaim{point: point.clone(), evs: evs_new})
@@ -130,11 +123,10 @@ mod tests {
     use ark_bls12_381::{Fr, G1Projective};
     use ark_ff::PrimeField;
     use ark_std::rand::Rng;
-    use liblasso::poly::dense_mlpoly::DensePolynomial;
     use liblasso::utils::test_lib::TestTranscript;
 
     use crate::transcript::{IndexedProofTranscript, TranscriptSender};
-    use crate::utils::{fix_var_bot, fix_var_top};
+    use crate::utils::{fix_var_bot};
 
     use super::*;
 
@@ -146,8 +138,8 @@ mod tests {
         let num_vars: usize = 5;
         let rng = &mut ark_std::test_rng();
 
-        let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|_| {
-            DensePolynomial::new(gen_random_vec(rng, 1 << num_vars))
+        let polys: Vec<NestedPolynomial<Fr>> = (0..3).map(|_| {
+            NestedPolynomial::rand(rng, num_vars)
         }).collect();
         let point: Vec<Fr> = gen_random_vec(rng, num_vars - 1);
 
@@ -162,9 +154,6 @@ mod tests {
         let c = p_transcript.challenge_scalar(b"split");
 
         let mut expected_point = point.clone();
-        #[cfg(feature = "split_bot_to_top")]
-        fix_var_bot(&mut expected_point, c.value);
-        #[cfg(not(feature = "split_bot_to_top"))]
         fix_var_top(&mut expected_point, c.value);
 
         let mut unexpected_point = point.clone();

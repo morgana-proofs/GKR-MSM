@@ -1,12 +1,13 @@
 use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
 
 use ark_ff::PrimeField;
-use itertools::Either;
-use liblasso::poly::dense_mlpoly::DensePolynomial;
+use itertools::{Either, Itertools};
+use liblasso::poly::dense_mlpoly::{DensePolynomial};
 #[cfg(feature = "prof")]
 use profi::prof;
 
 use crate::{protocol::{protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck::{SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier, to_multieval}, split::{Split, SplitProver, SplitVerifier}}, transcript::{Challenge, TranscriptReceiver}};
+use crate::poly::NestedPolynomial;
 
 #[derive(Clone)]
 pub enum Layer<F: PrimeField> {
@@ -44,11 +45,11 @@ impl<F: PrimeField> Layer<F> {
         }
     }
 
-    pub fn layer_wtns(&self, num_vars: usize, input: Vec<DensePolynomial<F>>) -> (Vec<Vec<DensePolynomial<F>>>, Vec<DensePolynomial<F>>) {
+    pub fn layer_wtns(&self, num_vars: usize, input: Vec<NestedPolynomial<F>>) -> (Vec<Vec<NestedPolynomial<F>>>, Vec<NestedPolynomial<F>>) {
         match self {
             Self::Mapping(f) => {
                 SumcheckPolyMap::witness(
-                    input.clone(),
+                    input,
                     &SumcheckPolyMapParams{num_vars, f: f.clone()}
                 )
             },
@@ -79,14 +80,14 @@ impl<F: PrimeField> BintreeParams<F> {
     pub fn unroll(&self) -> Vec<(Layer<F>, usize)> {
         let mut num_vars = self.num_vars;
         let mut last_num_o = None;
-        
+
         let ret : Vec<_> = self.layers.iter().map(|layer| {
 
             let layer = layer.clone();
 
             let mut split_flag = false;
 
-            
+
             let (num_i, num_o) = (layer.num_i(), layer.num_o());
 
             match &layer {
@@ -97,7 +98,7 @@ impl<F: PrimeField> BintreeParams<F> {
             let tmp = (layer, num_vars);
 
             if split_flag {
-                assert!(num_vars > 0, "Can not split 0-variable vector.");    
+                assert!(num_vars > 0, "Can not split 0-variable vector.");
                 num_vars -= 1;
             }
 
@@ -129,10 +130,10 @@ pub struct Bintree<F: PrimeField> {
 
 pub struct BintreeProver<F: PrimeField> {
     proofs: Option<VecDeque<LayerProof<F>>>,
-    trace: Vec<Vec<DensePolynomial<F>>>,
+    trace: Vec<Vec<NestedPolynomial<F>>>,
     params: Vec<(Layer<F>, usize)>,
     current_claims: Option<Either<MultiEvalClaim<F>, EvalClaim<F>>>,
-    current_prover: Option<Either<SumcheckPolyMapProver<F>, SplitProver<F, DensePolynomial<F>>>>,
+    current_prover: Option<Either<SumcheckPolyMapProver<F>, SplitProver<F>>>,
 }
 
 pub struct BintreeVerifier<F: PrimeField> {
@@ -153,11 +154,11 @@ impl<F: PrimeField> Protocol<F> for Bintree<F> {
 
     type ClaimsNew = EvalClaim<F>;
 
-    type WitnessInput = Vec<DensePolynomial<F>>;
+    type WitnessInput = Vec<NestedPolynomial<F>>;
 
-    type Trace = Vec<Vec<DensePolynomial<F>>>;
+    type Trace = Vec<Vec<NestedPolynomial<F>>>;
 
-    type WitnessOutput = Vec<DensePolynomial<F>>;
+    type WitnessOutput = Vec<NestedPolynomial<F>>;
 
     type Proof = BintreeProof<F>;
 
@@ -166,9 +167,9 @@ impl<F: PrimeField> Protocol<F> for Bintree<F> {
     fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
         let mut trace = vec![];
         let num_vars = params.num_vars;
-        assert!(args[0].num_vars == num_vars);
+        assert_eq!(args[0].num_vars(), num_vars);
         let layers = params.unroll();
-        assert!(layers[0].0.num_i() == args.len());
+        assert_eq!(layers[0].0.num_i(), args.len());
 
         let mut layer_trace;
         let mut output = args;
@@ -191,7 +192,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
 
     type Params = BintreeParams<F>;
 
-    type Trace = Vec<Vec<DensePolynomial<F>>>;
+    type Trace = Vec<Vec<NestedPolynomial<F>>>;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
@@ -213,7 +214,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
     Option<(Self::ClaimsNew, Self::Proof)> {
         #[cfg(feature = "prof")]
         prof!("BintreeProver::round");
-        
+
         let Self{proofs, trace, params, current_claims, current_prover} = self;
 
         match current_prover {
@@ -229,7 +230,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
                             };
 
                             Either::Left(SumcheckPolyMapProver::start(
-                                _current_claims.clone(), 
+                                _current_claims.clone(),
                                 vec![current_trace],
                                 &SumcheckPolyMapParams{f, num_vars: current_num_vars}
                             ))
@@ -239,7 +240,6 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
                                 Either::Right(c) => c,
                                 Either::Left(_) => panic!("Unexpected multi-evaluation claim."),
                             };
-
 
                             Either::Right(SplitProver::start(
                                 _current_claims,
@@ -252,7 +252,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
             },
             Some(_) => (),
         };
-        
+
         match current_prover.as_mut().unwrap() {
             Either::Right(prover) => {
                 match prover.round(challenge, transcript) {
@@ -466,8 +466,9 @@ mod test {
     fn witness_generation() {
         let gen = &mut test_rng();
 
+        let num_vars = 5;
         let input = (0..3).map(|_|
-            DensePolynomial::new((0..32).map(|_| Fr::rand(gen)).collect())
+            NestedPolynomial::rand(gen, num_vars)
         ).collect_vec();
 
         let params = BintreeParams::new(
@@ -491,20 +492,20 @@ mod test {
 
         let (trace, output) = Bintree::witness(input.clone(), &params);
         let mut i = 0;
-        trace[i].iter().zip_eq(input.iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last();
-        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f63).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f34).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f45).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f53).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
-        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f62).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f23).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
-        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f62).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&trace[i], f23).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
-        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
-        output.iter().zip_eq(map_over_poly(&trace[i], f61).iter()).map(|(r, e)| assert_eq!(r.Z, e.Z)).last(); i += 1;
+        trace[i].iter().zip_eq(input.iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last();
+        trace[i + 1].iter().zip_eq(split_vecs(&(trace[i].iter().map(|p| p.into()).collect_vec())).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f63).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f34).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f45).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f53).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(split_vecs(&(trace[i].iter().map(|p| p.into()).collect_vec())).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f62).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f23).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(split_vecs(&(trace[i].iter().map(|p| p.into()).collect_vec())).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f62).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f23).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(split_vecs(&(trace[i].iter().map(|p| p.into()).collect_vec())).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        output.iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f61).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
         assert_eq!(i, trace.len());
     }
 
@@ -512,8 +513,9 @@ mod test {
     fn prover_vs_verifier() {
         let gen = &mut test_rng();
 
+        let num_vars = 5;
         let input = (0..3).map(|_|
-            DensePolynomial::new((0..32).map(|_| Fr::rand(gen)).collect())
+            NestedPolynomial::rand(gen, num_vars)
         ).collect_vec();
         let point = (0..1).map(|_| Fr::rand(gen)).collect_vec();
 

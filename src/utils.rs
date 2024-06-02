@@ -75,9 +75,6 @@ pub fn fold_with_coef<F: Field>(evals: &[F], layer_coef: F) -> Vec<F> {
 }
 
 pub fn split_vecs<F: PrimeField>(ins: &[DensePolynomial<F>]) -> Vec<DensePolynomial<F>> {
-    #[cfg(feature = "split_bot_to_top")]
-        let (mut l, r): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = ins.iter().map(|p| p.split(p.len() / 2)).unzip();
-    #[cfg(not(feature = "split_bot_to_top"))]
         let (mut l, r): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = ins.iter().map(|p| (
         DensePolynomial::new(p.vec().iter().step_by(2).map(|x| *x).collect_vec()),
         DensePolynomial::new(p.vec().iter().skip(1).step_by(2).map(|x| *x).collect_vec())

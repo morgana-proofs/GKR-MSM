@@ -54,7 +54,6 @@ pub trait Protocol<F: PrimeField> {
 
     type ClaimsToReduce;
     type ClaimsNew;
-
     type WitnessInput;
     type Trace;
     type WitnessOutput;

@@ -1,12 +1,16 @@
 use std::{marker::PhantomData};
 
 use ark_ff::PrimeField;
-use liblasso::{poly::{dense_mlpoly::DensePolynomial, eq_poly::EqPolynomial, unipoly::{CompressedUniPoly, UniPoly}}};
+use ark_std::iterable::Iterable;
+use itertools::Itertools;
+use liblasso::{poly::{eq_poly::EqPolynomial, unipoly::{CompressedUniPoly, UniPoly}}};
+use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]
 use profi::{prof, prof_guard};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 
 use crate::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows, map_over_poly}};
+use crate::poly::NestedPolynomial;
 use crate::utils::{fix_var_bot, fix_var_top};
 
 use super::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier};
@@ -27,25 +31,30 @@ pub struct ExtProdProof<F: PrimeField> {
 
 impl<F: PrimeField> ExtProd<F> {
 
-    pub fn witness(a: &DensePolynomial<F>, b: &DensePolynomial<F>) -> DensePolynomial<F> {
-        DensePolynomial::new(
-            a.Z.par_iter()
+    pub fn witness(a: &NestedPolynomial<F>, b: &NestedPolynomial<F>) -> NestedPolynomial<F> {
+        let a = DensePolynomial::new(a.vec());
+        let b = DensePolynomial::new(b.vec());
+        NestedPolynomial::from(&DensePolynomial::new(
+            a.vec()[..1 << a.num_vars].par_iter()
                 .map(|a_coeff| {
-                    b.Z.par_iter()
+                    b.vec()[..1 << a.num_vars].par_iter()
                         .map(|b_coeff| *a_coeff * b_coeff)
                     }
                 ).flatten().collect()
-        )
+        ))
     }
 
-    pub fn compute_claims(claim: (Vec<F>, F), split: usize, a: DensePolynomial<F>, b: DensePolynomial<F>) -> ExtProdProof<F> {
-        assert!(split == a.num_vars);
+    pub fn compute_claims(claim: (Vec<F>, F), split: usize, a: NestedPolynomial<F>, b: NestedPolynomial<F>) -> ExtProdProof<F> {
+        let a = DensePolynomial::new(a.vec());
+        let b = DensePolynomial::new(b.vec());
+
+        assert_eq!(split, a.num_vars);
         let (point, value) = claim;
         let (point_a, point_b) = point.split_at(split);
         let val_a = a.evaluate(&point_a);
         let val_b = b.evaluate(&point_b);
 
-        assert!(val_a * val_b == value);
+        assert_eq!(val_a * val_b, value);
 
         ExtProdProof{
             claim_a: val_a,
@@ -119,18 +128,19 @@ impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
 
     type ClaimsNew = EvalClaim<F>;
 
-    type WitnessInput = Vec<DensePolynomial<F>>;
+    type WitnessInput = Vec<NestedPolynomial<F>>;
 
-    type Trace = Vec<Vec<DensePolynomial<F>>>;
+    type Trace = Vec<Vec<NestedPolynomial<F>>>;
 
-    type WitnessOutput = Vec<DensePolynomial<F>>;
+    type WitnessOutput = Vec<NestedPolynomial<F>>;
 
     type Proof = SumcheckPolyMapProof<F>;
 
     type Params = SumcheckPolyMapParams<F>;
 
     fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
-        let out = map_over_poly(&args, |x|(params.f.exec)(x));
+        let _args = args.iter().map(|p| p.into()).collect_vec();
+        let out = map_over_poly(&_args, |x|(params.f.exec)(x)).iter().map(|p| NestedPolynomial::from(p)).collect_vec();
         (vec![args], out)
     }
 }
@@ -144,7 +154,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
     type Params = SumcheckPolyMapParams<F>;
 
-    type Trace = Vec<Vec<DensePolynomial<F>>>;
+    type Trace = Vec<Vec<NestedPolynomial<F>>>;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
@@ -152,8 +162,8 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
         params: &Self::Params,
     ) -> Self {
         assert_eq!(args[0].len(), params.f.num_i);
-        
-        
+        let mut args = args.iter().map(|v| v.iter().map(|p| p.into()).collect_vec()).collect_vec();
+
         let eqs_iter = claims_to_reduce
             .points
             .iter()
@@ -162,7 +172,6 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
             );
 
         args[0].extend(eqs_iter);
-
 
         Self {
             polys: args.pop().unwrap(),
@@ -181,7 +190,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
     Option<(Self::ClaimsNew, Self::Proof)> {
         #[cfg(feature = "prof")]
         prof!("SumcheckPolyMapProver::round");
-        
+
         let Self {
             claims,
             polys,
@@ -207,16 +216,10 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
         } else {
             let r_j = challenge.value;
-            #[cfg(not(feature = "sumcheck_bot_to_top"))]
-            fix_var_top(rs, r_j);
-            #[cfg(feature = "sumcheck_bot_to_top")]
             fix_var_bot(rs, r_j);
 
             // bound all tables to the verifier's challenege
             for poly in polys.iter_mut() {
-                #[cfg(not(feature = "sumcheck_bot_to_top"))]
-                poly.bound_poly_var_top(&r_j);
-                #[cfg(feature = "sumcheck_bot_to_top")]
                 poly.bound_poly_var_bot(&r_j)
             }
 
@@ -224,7 +227,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
                 let final_evaluations: Vec<F> = polys.iter().map(|poly| poly[0]).collect();
 
                 transcript.append_scalars(b"sumcheck_final_evals", &final_evaluations[0..f.num_i]);
-    
+
                 return Some((
                     EvalClaim{
                         point: rs.clone(),
@@ -243,14 +246,14 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
         let mut eval_points = vec![F::zero(); combined_degree + 1];
 
         let mle_half = polys[0].len() / 2;
-    
+
         // let mut accum = vec![vec![F::zero(); combined_degree + 1]; mle_half];
         #[cfg(feature = "multicore")]
         let iterator = (0..mle_half).into_par_iter();
-    
+
         #[cfg(not(feature = "multicore"))]
         let iterator = 0..mle_half;
-    
+
         let comb_func = f_folded.as_ref().unwrap();
 
         let accum: Vec<Vec<F>> = iterator
@@ -258,13 +261,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
                 #[cfg(feature = "prof")]
                 prof!("SumcheckPolyMapProver::accum_aggr");
 
-                #[cfg(not(feature = "sumcheck_bot_to_top"))]
-                let idx_zero = poly_term_i;
-                #[cfg(feature = "sumcheck_bot_to_top")]
                 let idx_zero = 2 * poly_term_i;
-                #[cfg(not(feature = "sumcheck_bot_to_top"))]
-                let idx_one = mle_half + poly_term_i;
-                #[cfg(feature = "sumcheck_bot_to_top")]
                 let idx_one = 1 + 2 * poly_term_i;
 
                 let diffs: Vec<F> = polys.iter().map(|p| p[idx_one] - p[idx_zero]).collect();
@@ -307,7 +304,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
         #[cfg(feature = "prof")]
         let guard = prof_guard!("SumcheckPolyMapProver::eval_points_collection");
-        
+
         #[cfg(feature = "multicore")]
         eval_points
             .par_iter_mut()
@@ -318,19 +315,19 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
                 .map(|mle| mle[poly_i])
                 .sum::<F>();
             });
-    
+
         #[cfg(not(feature = "multicore"))]
         for (poly_i, eval_point) in eval_points.iter_mut().enumerate() {
             for mle in accum.iter().take(mle_half) {
             *eval_point += mle[poly_i];
             }
         }
-        
+
         #[cfg(feature = "prof")]
         drop(guard);
 
         let round_uni_poly = UniPoly::from_evals(&eval_points);
-    
+
         // append the prover's message to the transcript
         transcript.append_scalars(b"poly", &round_uni_poly.as_vec());
         // and to proof
@@ -349,22 +346,22 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
     type ClaimsNew = EvalClaim<F>;
 
     type Proof = SumcheckPolyMapProof<F>;
-    
+
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
         proof: Self::Proof,
         params: &Self::Params,
     ) -> Self {
-        
+
         let f = params.f.clone();
 
         let num_ins = f.num_i;
         let num_outs = f.num_o;
         let num_vars = params.num_vars;
         let num_points = claims_to_reduce.points.len();
-        
+
         // Validate that claims are well-formed.
-        
+
         assert_eq!(
             claims_to_reduce.evs.len(), num_points,
             "Verifier failure. Claim ill-formed: number of points {} != number of evaluation groups {}", num_points, claims_to_reduce.evs.len()
@@ -396,7 +393,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
 
         assert_eq!(proof.round_polys.len(), num_vars);
         assert_eq!(proof.final_evaluations.len(), num_ins);
-        
+
         Self {
             proof,
             f,
@@ -407,7 +404,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
             current_poly: None,
             f_folded: None,
             rs: vec![],
-            
+
         }
     }
 
@@ -433,9 +430,6 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
 
             let current_sum = current_sum.as_mut().unwrap();
             let r_j = challenge.value;
-            #[cfg(not(feature = "sumcheck_bot_to_top"))]
-            fix_var_top(rs, r_j);
-            #[cfg(feature = "sumcheck_bot_to_top")]
             fix_var_bot(rs, r_j);
 
             sumcheck_round_idx = rs.len();
@@ -452,7 +446,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
             if rs.len() == *num_vars {
 
                 transcript.append_scalars(b"sumcheck_final_evals", &final_evaluations[0..f.num_i]);
-                
+
                 // Cloning final evals to not change the proof. We probably do not need it, as we consume it anyway.
                 let mut args = final_evaluations.clone();
                 args.extend(claims_to_reduce.points.iter().map(|p| EqPolynomial::new(p.to_vec()).evaluate(&rs)));
@@ -478,7 +472,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
 }
 
 fn make_folded_claim<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F]) -> F {
-    let mut i = 0; 
+    let mut i = 0;
     (claims.evs.iter().enumerate()).fold(
         F::zero(),
         |acc, (_, evs)| {
@@ -487,13 +481,13 @@ fn make_folded_claim<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F]
                 _acc += ev.1 * gamma_pows[i];
                 i += 1;
             }
-            acc + _acc 
+            acc + _acc
         }
     )
 }
 
 fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f: &PolynomialMapping<F>)
-        -> Box<dyn Fn(&[F]) -> F + Send + Sync> 
+        -> Box<dyn Fn(&[F]) -> F + Send + Sync>
 {
     let claims = claims.clone();
     let gamma_pows = gamma_pows.to_vec();
@@ -502,7 +496,7 @@ fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f:
         move |args: &[F]| {
             #[cfg(feature = "prof")]
             prof!("SumcheckPolyMapProver::folded_f");
-            
+
             let (args, eqpolys) = args.split_at(num_i);
             let out = exec(args);
             let mut i = 0;
@@ -529,119 +523,21 @@ mod test {
     use std::sync::Arc;
     use ark_bls12_381::G1Projective;
     use ark_bls12_381::Fr;
+    use ark_std::test_rng;
     use itertools::Itertools;
-    use liblasso::subprotocols::sumcheck::SumcheckRichProof;
 
     use liblasso::utils::test_lib::TestTranscript;
-    use liblasso::utils::transcript::ProofTranscript;
 
-    use crate::{transcript::{IndexedProofTranscript, TranscriptSender}, utils::scale};
+    use crate::transcript::{IndexedProofTranscript, TranscriptSender};
 
     use super::*;
 
-    #[cfg(not(feature = "sumcheck_bot_to_top"))]
-    #[test]
-    fn our_prover_against_liblasso_verifier() {
-        let num_vars: usize = 5;
-        let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|_| DensePolynomial::new((0..32).map(|i| Fr::from(i)).collect())).collect();
-        
-        fn combfunc(i: &[Fr]) -> Vec<Fr> {
-            vec![i[0], i[1], i[2] * i[2] * i[0], i[2] * i[2] * i[0]]
-        }
-
-        let params = SumcheckPolyMapParams {
-            f: PolynomialMapping {
-                exec: Arc::new(combfunc),
-                degree: 3,
-                num_i: 3,
-                num_o: 4,
-            },
-            num_vars,
-        };
-
-        let (trace, image_polys) = SumcheckPolyMap::witness(polys.clone(), &params);
-
-        let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
-        let claims : Vec<_> = image_polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
-        
-        
-        let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
-        let known_poly = EqPolynomial::new(point.clone());
-
-        let _point = point.clone();
-
-
-        let multiclaim = MultiEvalClaim {
-            points: vec![point],
-            evs: vec![claims.clone()],
-        };
-
-        let params = SumcheckPolyMapParams {
-            f: PolynomialMapping {
-                exec: Arc::new(combfunc),
-                degree: 3,
-                num_i: 3,
-                num_o: 4,
-            },
-            num_vars,
-        };
-
-        let mut prover = SumcheckPolyMapProver::start(
-            multiclaim,
-            trace,
-            &params,
-        );
-
-        let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
-        let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
-        let Challenge { value: gamma } = gamma_c;
-        let mut res = prover.round(gamma_c, &mut p_transcript);
-        while res.is_none() {
-            let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
-            res = prover.round(challenge, &mut p_transcript);
-        }
-
-        println!("{:?}", p_transcript.transcript.log);
-
-        let (EvalClaim{point: proof_point, evs}, proof) = res.unwrap();
-        assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
-
-        let eq_eval = EqPolynomial::new(proof_point).evaluate(&_point);
-
-        let SumcheckPolyMapProof { round_polys, final_evaluations } = proof;
-        let mut extended_final_evaluations = final_evaluations.clone();
-        extended_final_evaluations.push(eq_eval);
-
-        let frankenproof = SumcheckRichProof::<Fr> {
-            compressed_polys: round_polys,
-            final_evals: extended_final_evaluations,
-        };
-
-        let combfunc = scale(combfunc);
-
-        let folded_claim = claims.iter().rev().fold(Fr::from(0), |acc, (_, n)| acc * gamma + n);
-
-        let known_poly_evaluator = |x: &[Fr]| known_poly.evaluate(x);
-        let verifier_evaluators = vec![&known_poly_evaluator as &dyn Fn(&[Fr]) -> Fr];
-        let mut v_transcript = TestTranscript::as_this(&p_transcript.transcript);
-        assert_eq!(gamma, <TestTranscript<Fr> as ProofTranscript<G1Projective>>::challenge_scalar(&mut v_transcript,b"challenge_combine_outputs"));
-
-        frankenproof.verify::<G1Projective, _, _>(
-            folded_claim,
-            num_vars,
-            4,
-            &verifier_evaluators,
-            |d: &[Fr]| combfunc(&d).iter().rev().fold(Fr::from(0), |acc, n| acc * gamma + n),
-            &mut v_transcript,
-        ).unwrap();
-
-        v_transcript.assert_end()
-    }
-
     #[test]
     fn test_sumcheck_lite() {
+        let gen = &mut test_rng();
+
         let num_vars: usize = 5;
-        let polys: Vec<DensePolynomial<Fr>> = (0..3).map(|_| DensePolynomial::new((0..32).map(|i| Fr::from(i)).collect())).collect();
+        let polys: Vec<NestedPolynomial<Fr>> = (0..3).map(|_| NestedPolynomial::rand(gen, 5)).collect();
 
         fn combfunc(i: &[Fr]) -> Vec<Fr> {
             vec![i[0], i[1], i[2] * i[2] * i[0], i[2] * i[2] * i[0]]
@@ -711,6 +607,8 @@ mod test {
 
     #[test]
     fn test_sumcheck_multiclaim() {
+        let gen = &mut test_rng();
+
         let num_vars: usize = 5;
         let num_points: usize = 3;
         let num_polys: usize = 4;
@@ -719,7 +617,7 @@ mod test {
             vec![1, 0, 1, 1, 0],
             vec![1, 1, 0, 0, 1],
         ];
-        let polys: Vec<DensePolynomial<Fr>> = (0..num_polys).map(|j| DensePolynomial::new((0..32).map(|i| Fr::from((j * i + i + j * 18) as u64)).collect())).collect();
+        let polys: Vec<NestedPolynomial<Fr>> = (0..num_polys).map(|j| NestedPolynomial::rand(gen, 5)).collect();
 
         fn combfunc(i: &[Fr]) -> Vec<Fr> {
             vec![
@@ -730,7 +628,6 @@ mod test {
                 i[3] * i[2]
             ]
         }
-
 
         let params = SumcheckPolyMapParams {
             f: PolynomialMapping {

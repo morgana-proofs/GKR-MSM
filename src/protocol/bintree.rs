@@ -2,7 +2,6 @@ use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
 
 use ark_ff::PrimeField;
 use itertools::{Either, Itertools};
-use liblasso::poly::dense_mlpoly::{DensePolynomial};
 #[cfg(feature = "prof")]
 use profi::prof;
 

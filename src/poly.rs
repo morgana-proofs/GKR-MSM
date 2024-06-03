@@ -1,5 +1,7 @@
 use std::iter::repeat;
+use std::marker::PhantomData;
 use std::ops::Index;
+use std::sync::Arc;
 use ark_ff::{Field, PrimeField};
 use ark_std::iterable::Iterable;
 use ark_std::rand::{Rng, RngCore};
@@ -381,60 +383,6 @@ impl<F: Field> NestedPolynomial<F> {
         (l, r)
     }
 
-    pub fn rand(rng: &mut impl Rng, max_vars: usize) -> Self {
-        Self::rand_annotated(rng, max_vars).0
-    }
-
-    pub fn rand_annotated(rng: &mut impl Rng, max_vars: usize) -> (Self, Vec<F>) {
-        let mut layer_num_vars = vec![];
-        let mut sum = 0;
-        while sum < max_vars {
-            layer_num_vars.push(1 + (rng.next_u64() as usize) % (max_vars - sum));
-            sum += layer_num_vars.last().unwrap();
-        }
-        layer_num_vars = layer_num_vars.iter().filter(|&&s| s != 0).map(|&s| s).collect_vec();
-
-        Self::rand_fixed_structure(rng, &layer_num_vars)
-    }
-
-    pub fn rand_fixed_structure(rng: &mut impl Rng, layer_num_var: &[usize]) -> (Self, Vec<F>) {
-        let cont = F::from(rng.next_u64());
-        let layer_size = 1 << layer_num_var[0];
-        let filled = rng.next_u64() % (layer_size + 1);
-        if layer_num_var.len() == 1 {
-            let segment = (0..filled).map(|_| F::from(rng.next_u64())).collect_vec();
-            let full = segment.clone().into_iter().chain(repeat(cont)).take(layer_size as usize).collect_vec();
-            return (
-                NestedPolynomial::new(
-                    NestedPoly::from_values(
-                        segment,
-                        cont,
-                    ),
-                    layer_num_var.to_vec(),
-                ),
-                full,
-            )
-        }
-
-        let (segments, fulls): (Vec<NestedPoly<F>>, Vec<Vec<F>>) = (0..filled).map(|_| {
-            let (seg, f) = Self::rand_fixed_structure(rng, &layer_num_var[1..]);
-            (seg.values, f)
-        }).unzip();
-        let sub_segment_len = 1 << layer_num_var[1..].iter().sum::<usize>();
-        let full = fulls.into_iter().flatten().chain(repeat(cont)).take(layer_size as usize * sub_segment_len).collect_vec();
-
-        return (
-            NestedPolynomial::new(
-                NestedPoly::from_polys(
-                    segments,
-                    cont,
-                ),
-                layer_num_var.to_vec(),
-            ),
-            full,
-        )
-    }
-
     fn drop_variable_bot(&mut self) {
         *self.layer_num_vars.last_mut().unwrap() -= 1;
         if self.layer_num_vars.last().unwrap() == &0 {
@@ -505,15 +453,126 @@ impl<F: PrimeField> Into<DensePolynomial<F>> for NestedPolynomial<F> {
     }
 }
 
+/// randoms
+struct RandParams<RNG: Rng> {
+    gen_fill: Arc<dyn Fn(&mut RNG, usize, usize) -> usize>,
+    gen_structure: Arc<dyn Fn(&mut RNG, usize) -> Vec<usize>>,
+    phantom_data: PhantomData<Box<RNG>>
+}
+
+impl<RNG: Rng> Default for RandParams<RNG> {
+    fn default() -> Self {
+        Self {
+            gen_fill: Arc::new(|rng, layer_size, layer_idx| {
+                rng.next_u64() as usize % (layer_size + 1)
+            }),
+            gen_structure: Arc::new(|rng, num_vars| {
+                let mut layer_num_vars = vec![];
+                let mut sum = 0;
+                while sum < num_vars {
+                    layer_num_vars.push(1 + (rng.next_u64() as usize) % (num_vars - sum));
+                    sum += layer_num_vars.last().unwrap();
+                }
+                layer_num_vars = layer_num_vars.iter().filter(|&&s| s != 0).map(|&s| s).collect_vec();
+                layer_num_vars
+            }),
+            phantom_data: PhantomData,
+        }
+    }
+}
+
+impl<RNG: Rng> Clone for RandParams<RNG> {
+    fn clone(&self) -> Self {
+        let Self { gen_fill, gen_structure, .. } = self;
+        Self {
+            gen_fill: gen_fill.clone(),
+            gen_structure: gen_structure.clone(),
+            phantom_data: PhantomData,
+        }
+    }
+}
+
+impl<RNG: Rng> RandParams<RNG> {
+    fn replace_gen_fill(mut self, f: Arc<dyn Fn(&mut RNG, usize, usize) -> usize>) -> Self {
+        self.gen_fill = f;
+        self
+    }
+
+    fn replace_gen_structure(mut self, f: Arc<dyn Fn(&mut RNG, usize) -> Vec<usize>>) -> Self {
+        self.gen_structure = f;
+        self
+    }
+}
+
+impl<F: Field> NestedPolynomial<F> {
+    pub fn rand<RNG: Rng>(rng: &mut RNG, max_vars: usize) -> Self {
+        Self::rand_conf(rng, max_vars, RandParams::default())
+    }
+    pub fn rand_conf<RNG: Rng>(rng: &mut RNG, max_vars: usize, cfg: RandParams<RNG>) -> Self {
+        Self::rand_annotated_conf(rng, max_vars, cfg).0
+    }
+
+    pub fn rand_annotated<RNG: Rng>(rng: &mut RNG, max_vars: usize) -> (Self, Vec<F>) {
+        Self::rand_annotated_conf(rng, max_vars, RandParams::default())
+    }
+    pub fn rand_annotated_conf<RNG: Rng>(rng: &mut RNG, max_vars: usize, cfg: RandParams<RNG>) -> (Self, Vec<F>) {
+        let layer_num_vars = (cfg.gen_structure)(rng, max_vars);
+        Self::rand_fixed_structure_conf(rng, &layer_num_vars, cfg)
+    }
+
+    pub fn rand_fixed_structure<RNG: Rng>(rng: &mut RNG, layer_num_var: &[usize]) -> (Self, Vec<F>) {
+        Self::rand_fixed_structure_conf(rng, layer_num_var, RandParams::default())
+    }
+    pub fn rand_fixed_structure_conf<RNG: Rng>(rng: &mut RNG, layer_num_var: &[usize], cfg: RandParams<RNG>) -> (Self, Vec<F>) {
+        let cont = F::from(rng.next_u64());
+        let layer_size = 1 << layer_num_var[0];
+        let filled = (cfg.gen_fill)(rng, layer_size, 0);
+        if layer_num_var.len() == 1 {
+            let segment = (0..filled).map(|_| F::from(rng.next_u64())).collect_vec();
+            let full = segment.clone().into_iter().chain(repeat(cont)).take(layer_size as usize).collect_vec();
+            return (
+                NestedPolynomial::new(
+                    NestedPoly::from_values(
+                        segment,
+                        cont,
+                    ),
+                    layer_num_var.to_vec(),
+                ),
+                full,
+            )
+        }
+
+        let (segments, fulls): (Vec<NestedPoly<F>>, Vec<Vec<F>>) = (0..filled).map(|_| {
+            let (seg, f) = Self::rand_fixed_structure_conf(rng, &layer_num_var[1..], cfg.clone());
+            (seg.values, f)
+        }).unzip();
+        let sub_segment_len = 1 << layer_num_var[1..].iter().sum::<usize>();
+        let full = fulls.into_iter().flatten().chain(repeat(cont)).take(layer_size as usize * sub_segment_len).collect_vec();
+
+        return (
+            NestedPolynomial::new(
+                NestedPoly::from_polys(
+                    segments,
+                    cont,
+                ),
+                layer_num_var.to_vec(),
+            ),
+            full,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::iter::{once, repeat_with};
+    use std::marker::PhantomData;
+    use std::sync::Arc;
 
     use ark_bls12_381::Fr;
     use ark_std::{rand::RngCore, test_rng, UniformRand};
     use itertools::Itertools;
     use liblasso::poly::dense_mlpoly::DensePolynomial;
-    use crate::poly::{segment_evaluate, SplitablePoly, NestedPolynomial};
+    use crate::poly::{segment_evaluate, SplitablePoly, NestedPolynomial, RandParams};
 
     use super::{evaluate_exact, NestedPoly};
 
@@ -560,7 +619,17 @@ mod tests {
         let max_vars = 8;
 
         for _ in 0..10 {
-            let (nested, flat) = NestedPolynomial::rand_annotated(&mut rng, max_vars);
+            let (nested, flat) = NestedPolynomial::rand_annotated_conf(
+                &mut rng,
+                max_vars,
+                RandParams::default()
+                    .replace_gen_fill(Arc::new(|rng, layer_size, _| {
+                        if rng.next_u64() % 2 == 0 {
+                            return 0; 
+                        }
+                        return 1 + (rng.next_u64() as usize % layer_size)
+                    }))
+            );
             let dense = DensePolynomial::new(flat.clone());
             for _ in 0..10 {
                 let point: Vec<_> = repeat_with(|| Fr::rand(rng)).take(max_vars).collect();

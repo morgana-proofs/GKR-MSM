@@ -16,8 +16,8 @@ pub struct PolynomialMapping<F: PrimeField> {
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct Claim<F: PrimeField> {
-    point: Vec<F>,
-    value: F,
+    pub point: Vec<F>,
+    pub value: F,
 }
 
 #[derive(Clone)]

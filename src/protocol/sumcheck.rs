@@ -17,65 +17,6 @@ use super::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, Pr
 
 // Impls
 
-pub struct ExtProd<F: PrimeField> {
-    _marker: PhantomData<F>,
-}
-
-pub struct ExtProdProof<F: PrimeField> {
-    claim_a: F,
-    claim_b: F,
-}
-
-// We do not implement "protocol" traits because they assume there is at least a single round, and this is
-// a direct reduction.
-
-impl<F: PrimeField> ExtProd<F> {
-
-    pub fn witness(a: &NestedPolynomial<F>, b: &NestedPolynomial<F>) -> NestedPolynomial<F> {
-        let a = DensePolynomial::new(a.vec());
-        let b = DensePolynomial::new(b.vec());
-        NestedPolynomial::from(&DensePolynomial::new(
-            a.vec()[..1 << a.num_vars].par_iter()
-                .map(|a_coeff| {
-                    b.vec()[..1 << a.num_vars].par_iter()
-                        .map(|b_coeff| *a_coeff * b_coeff)
-                    }
-                ).flatten().collect()
-        ))
-    }
-
-    pub fn compute_claims(claim: (Vec<F>, F), split: usize, a: NestedPolynomial<F>, b: NestedPolynomial<F>) -> ExtProdProof<F> {
-        let a = DensePolynomial::new(a.vec());
-        let b = DensePolynomial::new(b.vec());
-
-        assert_eq!(split, a.num_vars);
-        let (point, value) = claim;
-        let (point_a, point_b) = point.split_at(split);
-        let val_a = a.evaluate(&point_a);
-        let val_b = b.evaluate(&point_b);
-
-        assert_eq!(val_a * val_b, value);
-
-        ExtProdProof{
-            claim_a: val_a,
-            claim_b: val_b
-        }
-    }
-
-    pub fn validate_claims(claim: (Vec<F>, F), split: usize, proof: ExtProdProof<F>) -> ((Vec<F>, F), (Vec<F>, F)) {
-        let ExtProdProof{claim_a, claim_b} = proof;
-
-        let (point, value) = claim;
-        assert!(split <= point.len());
-        let (point_a, point_b) = point.split_at(split);
-        assert!(claim_a * claim_b == value);
-
-        ((point_a.to_vec(), claim_a), (point_b.to_vec(), claim_b))
-    }
-
-}
-
-
 pub struct SumcheckPolyMap<F: PrimeField> {
     _marker: PhantomData<F>,
 }
@@ -514,9 +455,6 @@ fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f:
         }
     )
 }
-
-
-
 
 #[cfg(test)]
 mod test {

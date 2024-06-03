@@ -2,6 +2,8 @@ use std::marker::PhantomData;
 
 use ark_bls12_381::Fr;
 use ark_ff::{BigInt, Field, PrimeField};
+use ark_std::rand::Rng;
+use ark_std::UniformRand;
 use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]
@@ -112,6 +114,10 @@ pub fn fix_var_top<F>(vec: &mut Vec<F>, v: F) {
 
 pub fn fix_var_bot<F>(vec: &mut Vec<F>, v: F) {
     vec.insert(0, v);
+}
+
+pub fn random_point<F: UniformRand>(gen: &mut impl Rng, num_vars: usize) -> Vec<F> {
+    (0..num_vars).map(|_| F::rand(gen)).collect_vec()
 }
 
 #[cfg(feature = "memprof")]

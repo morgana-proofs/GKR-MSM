@@ -343,7 +343,7 @@ mod tests {
     use merlin::Transcript;
 
     #[cfg(feature = "memprof")]
-        use jemalloc_ctl::{epoch, stats};
+    use jemalloc_ctl::{epoch, stats};
 
     use crate::binary_msm::prepare_bases;
     #[cfg(feature = "memprof")]

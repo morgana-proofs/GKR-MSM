@@ -23,6 +23,9 @@ log = "0.4.21"
 paste = "1.0.15"
 # bandersnatch = { git = "https://github.com/zhenfeizhang/bandersnatch.git", version = "0.1.1", features = ["asm", "std"] }
 # ark-ed-on-bls12-381-bandersnatch = { git = "https://github.com/arkworks-rs/algebra.git", rev = "bf96a5b"}
+jemalloc-ctl = { version = "0.5.4", optional = true }
+jemallocator = { version = "0.5.4", optional = true }
+profi = { version = "*", default-features = true, optional = true }
 
 [features]
 parallel = []
@@ -31,16 +34,12 @@ default = [
     "parallel",
     "multicore",
 ]
-prof = ["profi/enable", "profi/attributes", "profi/rayon", "profi/deep-hierarchy"]
-memprof = []
+prof = ["dep:profi", "profi/enable", "profi/attributes", "profi/rayon", "profi/deep-hierarchy"]
+memprof = ["dep:jemalloc-ctl", "dep:jemallocator"]
 
 [dev-dependencies]
 criterion = "0.3.6"
-profi = { version = "*", default-features = true }
 
-[target.'cfg(feature = "memprof")'.dev-dependencies]
-jemalloc-ctl = "0.5.4"
-jemallocator = "0.5.4"
 
 [[bench]]
 name = "gkr_msm_simple"

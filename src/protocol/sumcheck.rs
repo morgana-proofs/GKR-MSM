@@ -9,7 +9,7 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 use profi::{prof, prof_guard};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 
-use crate::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows, map_over_poly}};
+use crate::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows, map_over_poly_legacy}};
 use crate::poly::NestedPolynomial;
 use crate::utils::{fix_var_bot, fix_var_top};
 
@@ -81,7 +81,7 @@ impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
 
     fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
         let _args = args.iter().map(|p| p.into()).collect_vec();
-        let out = map_over_poly(&_args, |x|(params.f.exec)(x)).iter().map(|p| NestedPolynomial::from(p)).collect_vec();
+        let out = map_over_poly_legacy(&_args, |x|(params.f.exec)(x)).iter().map(|p| NestedPolynomial::from(p)).collect_vec();
         (vec![args], out)
     }
 }

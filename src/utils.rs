@@ -9,6 +9,7 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]
 use profi::prof;
 use rayon::prelude::*;
+use crate::poly::{NestedPoly, NestedPolynomial};
 
 use crate::protocol::protocol::MultiEvalClaim;
 
@@ -42,7 +43,7 @@ impl TwistedEdwardsConfig for Fr {
 }
 
 
-pub fn map_over_poly<F: PrimeField>(
+pub fn map_over_poly_legacy<F: PrimeField>(
     ins: &[DensePolynomial<F>],
     f: impl Fn(&[F]) -> Vec<F> + Send + Sync
 ) -> Vec<DensePolynomial<F>> {
@@ -58,6 +59,26 @@ pub fn map_over_poly<F: PrimeField>(
         .map(|idx| {
             DensePolynomial::new(applications.iter().map(|v| v[idx]).collect())
         }).collect::<Vec<DensePolynomial::<F>>>().try_into().unwrap()
+}
+
+pub fn map_over_poly<F: PrimeField>(
+    ins: &[NestedPolynomial<F>],
+    f: impl Fn(&[F]) -> Vec<F> + Send + Sync
+) -> Vec<NestedPolynomial<F>> {
+    #[cfg(feature = "prof")]
+    prof!("map_over_poly");
+    NestedPolynomial::map_over_poly(ins, f)
+    
+    // return ins.iter().map(|x| (*x).clone()).collect_vec();
+//     let applications: Vec<Vec<F>> = (0..ins[0].len()).into_par_iter()
+//         .map(|idx| {
+//             f(&ins.iter().map(|p| p[idx]).collect_vec())
+//         }).collect();
+//
+//     (0..applications.first().unwrap().len()).into_par_iter()
+//         .map(|idx| {
+//             DensePolynomial::new(applications.iter().map(|v| v[idx]).collect())
+//         }).collect::<Vec<DensePolynomial::<F>>>().try_into().unwrap()
 }
 
 
@@ -76,10 +97,9 @@ pub fn fold_with_coef<F: Field>(evals: &[F], layer_coef: F) -> Vec<F> {
         .collect()
 }
 
-pub fn split_vecs<F: PrimeField>(ins: &[DensePolynomial<F>]) -> Vec<DensePolynomial<F>> {
-        let (mut l, r): (Vec<DensePolynomial<F>>, Vec<DensePolynomial<F>>) = ins.iter().map(|p| (
-        DensePolynomial::new(p.vec().iter().step_by(2).map(|x| *x).collect_vec()),
-        DensePolynomial::new(p.vec().iter().skip(1).step_by(2).map(|x| *x).collect_vec())
+pub fn split_vecs<F: PrimeField>(ins: &[NestedPolynomial<F>]) -> Vec<NestedPolynomial<F>> {
+        let (mut l, r): (Vec<NestedPolynomial<F>>, Vec<NestedPolynomial<F>>) = ins.iter().map(|p| (
+        p.split_bot()
     )).unzip();
 
     l.extend(r);

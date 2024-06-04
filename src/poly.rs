@@ -1,11 +1,12 @@
 use std::iter::repeat;
 use std::marker::PhantomData;
+use std::mem::MaybeUninit;
 use std::ops::Index;
 use std::sync::Arc;
 use ark_ff::{Field, PrimeField};
 use ark_std::iterable::Iterable;
 use ark_std::rand::{Rng, RngCore};
-use itertools::Itertools;
+use itertools::{Itertools, repeat_n};
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 use liblasso::utils::math::Math;
 use rayon::prelude::*;
@@ -97,7 +98,7 @@ pub enum NestedValues<F: Field> {
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct NestedPoly<F: Field> {
     values: NestedValues<F>,
-    continuation: F,
+    continuation: Option<F>,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone)]
@@ -202,7 +203,7 @@ impl<F: Field> NestedPoly<F> {
                 }
                 let len = v.len();
                 if v.len() % 2 == 1 {
-                    v[len / 2] = v[len - 1] + *r * (self.continuation - v[len - 1]);
+                    v[len / 2] = v[len - 1] + *r * (self.continuation.unwrap() - v[len - 1]);
                 }
                 v.truncate((len + 1) / 2);
             }
@@ -214,8 +215,20 @@ impl<F: Field> NestedPoly<F> {
         }
     }
 
+    pub fn from_values_uncontinued(values: Vec<F>) -> Self {
+        Self {values: NestedValues::Flat(values), continuation: None}
+    }
+
     pub fn from_values(values: Vec<F>, continuation: F) -> Self {
-        Self {values: NestedValues::Flat(values), continuation}
+        Self {values: NestedValues::Flat(values), continuation: Some(continuation)}
+    }
+
+    pub fn from_polys_uncontinued(polys: Vec<NestedPoly<F>>) -> Self {
+        if polys.len() > 0 {
+            polys
+                .iter().count();
+        }
+        Self {values: NestedValues::Nested(polys), continuation: None}
     }
 
     pub fn from_polys(polys: Vec<NestedPoly<F>>, continuation: F) -> Self {
@@ -223,7 +236,7 @@ impl<F: Field> NestedPoly<F> {
             polys
                 .iter().count();
         }
-        Self {values: NestedValues::Nested(polys), continuation}
+        Self {values: NestedValues::Nested(polys), continuation: Some(continuation)}
     }
 
     fn evaluate(&self, point: &[F], num_vars: NumVarsWrapper) -> F {
@@ -233,18 +246,18 @@ impl<F: Field> NestedPoly<F> {
             NestedValues::Flat(values) => values.clone(),
             NestedValues::Nested(polys) => polys.into_par_iter().map(|poly| poly.evaluate(point_in, num_vars.step_down())).collect(),
         };
-        segment_evaluate(&mut segment, self.continuation, point_ext)
+        segment_evaluate(&mut segment, self.continuation.unwrap(), point_ext)
     }
 
     fn vec(&self, num_vars: NumVarsWrapper) -> Vec<F> {
         match &self.values {
             NestedValues::Flat(v) => {
-                v.clone().into_iter().chain(repeat(self.continuation)).take(1 << num_vars.current()).collect_vec()
+                v.clone().into_iter().chain(repeat(self.continuation.unwrap())).take(1 << num_vars.current()).collect_vec()
             }
             NestedValues::Nested(v) => {
                 let segment_len = num_vars.total();
                 let vs = v.iter().map(|p| p.vec(num_vars.step_down())).collect_vec();
-                vs.into_iter().flatten().chain(repeat(self.continuation)).take(1 << segment_len).collect_vec()
+                vs.into_iter().flatten().chain(repeat(self.continuation.unwrap())).take(1 << segment_len).collect_vec()
             }
         }
     }
@@ -284,7 +297,7 @@ impl<F: Field> NestedPoly<F> {
             NestedValues::Nested(v) => {
                 self.values = NestedValues::Flat(v.iter_mut().map(|p| match &mut p.values {
                     NestedValues::Flat(x) => {
-                         x.pop().unwrap_or(p.continuation)
+                         x.pop().unwrap_or(p.continuation.unwrap())
                     },
                     NestedValues::Nested(_) => unreachable!(),
                 }).collect_vec());
@@ -322,8 +335,28 @@ impl<F: Field> NestedPoly<F> {
 
     fn index(&self, idx: usize, num_vars: NumVarsWrapper) -> &F {
         match &self.values {
-            NestedValues::Flat(v) => {v.get(idx).unwrap_or(&self.continuation)}
-            NestedValues::Nested(v) => {v.get(idx / (1 << num_vars.total_lower())).map_or(&self.continuation, |v| v.index(idx % (1 << num_vars.total_lower()), num_vars.step_down()))}
+            NestedValues::Flat(v) => {v.get(idx).unwrap_or(&self.continuation.as_ref().unwrap())}
+            NestedValues::Nested(v) => {v.get(idx / (1 << num_vars.total_lower())).map_or(&self.continuation.as_ref().unwrap(), |v| v.index(idx % (1 << num_vars.total_lower()), num_vars.step_down()))}
+        }
+    }
+
+    pub fn merge_structure(&mut self, other: &Self, num_vars: NumVarsWrapper) {
+        match (&other.values, &mut self.values) {
+            (NestedValues::Flat(s), NestedValues::Flat(t)) => {
+                t.extend(repeat_n(F::zero(), s.len() - t.len()));
+            },
+            (NestedValues::Nested(s), NestedValues::Nested(t)) => {
+                match num_vars.height() {
+                    0 => unreachable!(),
+                    1 => {
+                        t.extend(repeat_n(NestedPoly::from_values_uncontinued(vec![]), s.len() - t.len()))
+                    },
+                    _ => {
+                        t.extend(repeat_n(NestedPoly::from_polys_uncontinued(vec![]), s.len() - t.len()))
+                    },
+                }
+            },
+            _ => unreachable!(),
         }
     }
 }
@@ -343,6 +376,28 @@ impl<F: Field> NestedPolynomial<F> {
             values: NestedPoly::from_values(values, continuation),
             layer_num_vars: vec![num_vars],
         }
+    }
+
+    pub fn empty_from_structure(layer_num_vars: &[usize]) -> Self {
+        if layer_num_vars.len() > 1 {
+            Self {
+                values: NestedPoly::from_polys_uncontinued(
+                    vec![],
+                ),
+                layer_num_vars: layer_num_vars.to_vec(),
+            }
+        } else {
+            Self {
+                values: NestedPoly::from_values_uncontinued(
+                    vec![],
+                ),
+                layer_num_vars: layer_num_vars.to_vec(),
+            }
+        }
+    }
+    pub fn merge_structure(&mut self, other: &Self) {
+        assert_eq!(self.layer_num_vars, other.layer_num_vars);
+        self.values.merge_structure(&other.values, NumVarsWrapper::new(&other.layer_num_vars))
     }
 
     pub fn num_vars(&self) -> usize {
@@ -381,6 +436,19 @@ impl<F: Field> NestedPolynomial<F> {
         l.drop_variable_bot();
         r.drop_variable_bot();
         (l, r)
+    }
+
+    pub fn map_over_poly(
+        ins: &[NestedPolynomial<F>],
+        f: impl Fn(&[F]) -> Vec<F> + Send + Sync
+    ) -> Vec<NestedPolynomial<F>> {
+        assert!(ins.len() > 0);
+        let layer_num_vars = &ins.first().unwrap().layer_num_vars;
+        let mut out = NestedPolynomial::empty_from_structure(&layer_num_vars);
+        for p in ins {
+            out.merge_structure(p);
+        }
+        todo!();
     }
 
     fn drop_variable_bot(&mut self) {
@@ -625,7 +693,7 @@ mod tests {
                 RandParams::default()
                     .replace_gen_fill(Arc::new(|rng, layer_size, _| {
                         if rng.next_u64() % 2 == 0 {
-                            return 0; 
+                            return 0;
                         }
                         return 1 + (rng.next_u64() as usize % layer_size)
                     }))

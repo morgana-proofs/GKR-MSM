@@ -108,8 +108,8 @@ pub fn gkr_msm_prove<
     let size = 1 << num_vars;
     let num_bit_columns = 1 << log_num_bit_columns;
 
-    assert!(points.len() == num_points);
-    assert!(scalars.len() == num_points);
+    assert_eq!(points.len(), num_points);
+    assert_eq!(scalars.len(), num_points);
 
     scalars
         .iter()
@@ -162,7 +162,7 @@ pub fn gkr_msm_prove<
         .flatten()
         .unzip();
 
-    
+
     let tmp = _points_table_poly.0.len().log_2();
     let points_table_poly = (
         NestedPolynomial::from_values(

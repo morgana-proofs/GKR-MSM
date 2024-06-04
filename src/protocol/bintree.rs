@@ -402,7 +402,7 @@ mod test {
     use liblasso::utils::test_lib::TestTranscript;
 
     use crate::transcript::{IndexedProofTranscript, TranscriptSender};
-    use crate::utils::{map_over_poly, split_vecs};
+    use crate::utils::{map_over_poly_legacy, split_vecs};
 
     use super::*;
 
@@ -492,19 +492,19 @@ mod test {
         let (trace, output) = Bintree::witness(input.clone(), &params);
         let mut i = 0;
         trace[i].iter().zip_eq(input.iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last();
-        trace[i + 1].iter().zip_eq(split_vecs(&(trace[i].iter().map(|p| p.into()).collect_vec())).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f63).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f34).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f45).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f53).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(split_vecs(&(trace[i].iter().map(|p| p.into()).collect_vec())).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f62).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f23).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(split_vecs(&(trace[i].iter().map(|p| p.into()).collect_vec())).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f62).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f23).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(split_vecs(&(trace[i].iter().map(|p| p.into()).collect_vec())).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        output.iter().zip_eq(map_over_poly(&(trace[i].iter().map(|p| p.into()).collect_vec()), f61).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f63).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f34).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f45).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f53).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f62).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f23).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f62).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f23).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        output.iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f61).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
         assert_eq!(i, trace.len());
     }
 

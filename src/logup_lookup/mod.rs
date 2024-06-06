@@ -59,7 +59,7 @@ fn find_multiplicities<F: PrimeField>(
     for i in 0..size{
         for poly in to_lookup.iter(){
             if poly.Z[i] == table.Z[i]{
-                multiplicities_values[i] += F::one();
+                multiplicities_values[i] -= F::one();
             }
         }
     }

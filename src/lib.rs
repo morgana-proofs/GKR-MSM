@@ -1,3 +1,4 @@
+
 extern crate core;
 
 pub mod pullback;
@@ -10,3 +11,5 @@ pub mod binary_msm;
 pub mod protocol;
 pub mod transcript;
 pub mod commitments;
+
+pub mod logup_lookup;

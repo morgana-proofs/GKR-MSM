@@ -1,3 +1,4 @@
+use std::fmt::{Debug, Formatter};
 use std::iter::repeat;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
@@ -10,6 +11,8 @@ use itertools::{Itertools, repeat_n};
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 use liblasso::utils::math::Math;
 use rayon::prelude::*;
+use crate::protocol::protocol::PolynomialMapping;
+use crate::utils::map_over_poly;
 
 pub trait SplitablePoly<F>: Sized {
     fn split_bot(&self) -> (Self, Self);
@@ -114,6 +117,32 @@ struct NumVarsWrapper<'a> {
     current_idx: usize,
 }
 
+#[derive(Debug)]
+enum Nightmare<'a, F: Field + Debug> {
+    Flat(Vec<&'a F>, &'a F),
+    Nested(Vec<&'a NestedPoly<F>>, &'a F),
+    Constant(&'a F),
+}
+
+impl<'a, F: Field> Nightmare<'a, F> {
+    pub fn get_index(&self, idx: usize) -> Self {
+        match &self {
+            Nightmare::Flat(v, c) => Nightmare::Constant(v.get(idx).as_ref().unwrap_or(&c)),
+            Nightmare::Nested(v, c) => {
+                if let Some(s) = v.get(idx) {
+                    match &s.values {
+                        NestedValues::Flat(f) => Nightmare::Flat(f.iter().collect_vec(), c),
+                        NestedValues::Nested(n) => Nightmare::Nested(n.iter().collect_vec(), c)
+                    }
+                } else {
+                    Nightmare::Constant(c)
+                }
+            }
+            Nightmare::Constant(c) => Nightmare::Constant(c)
+        }
+    }
+}
+
 impl<F: Field> NestedValues<F> {
     pub fn len(&self) -> usize {
         match &self {
@@ -141,6 +170,9 @@ impl<'a> NumVarsWrapper<'a> {
 
     fn current(&self) -> usize {
         self.layer_num_vars[self.current_idx]
+    }
+    fn current_max_len(&self) -> usize {
+        1 << self.current()
     }
 
     fn total(&self) -> usize {
@@ -252,12 +284,20 @@ impl<F: Field> NestedPoly<F> {
     fn vec(&self, num_vars: NumVarsWrapper) -> Vec<F> {
         match &self.values {
             NestedValues::Flat(v) => {
-                v.clone().into_iter().chain(repeat(self.continuation.unwrap())).take(1 << num_vars.current()).collect_vec()
+                if v.len() < num_vars.current_max_len() {
+                    v.clone().into_iter().chain(repeat(self.continuation.unwrap())).take(1 << num_vars.current()).collect_vec()
+                } else {
+                    v.clone()
+                }
             }
             NestedValues::Nested(v) => {
                 let segment_len = num_vars.total();
                 let vs = v.iter().map(|p| p.vec(num_vars.step_down())).collect_vec();
-                vs.into_iter().flatten().chain(repeat(self.continuation.unwrap())).take(1 << segment_len).collect_vec()
+                if vs.len() < num_vars.current_max_len() {
+                    vs.into_iter().flatten().chain(repeat(self.continuation.unwrap())).take(1 << segment_len).collect_vec()
+                } else {
+                    vs.into_iter().flatten().collect_vec()
+                }
             }
         }
     }
@@ -335,30 +375,169 @@ impl<F: Field> NestedPoly<F> {
 
     fn index(&self, idx: usize, num_vars: NumVarsWrapper) -> &F {
         match &self.values {
-            NestedValues::Flat(v) => {v.get(idx).unwrap_or(&self.continuation.as_ref().unwrap())}
-            NestedValues::Nested(v) => {v.get(idx / (1 << num_vars.total_lower())).map_or(&self.continuation.as_ref().unwrap(), |v| v.index(idx % (1 << num_vars.total_lower()), num_vars.step_down()))}
+            NestedValues::Flat(v) => {v.get(idx).or(self.continuation.as_ref()).unwrap()}
+            NestedValues::Nested(v) => {
+                v.get(idx / (1 << num_vars.total_lower()))
+                    .map(|v|
+                        v.index(idx % (1 << num_vars.total_lower()), num_vars.step_down())
+                    ).or(self.continuation.as_ref())
+                    .unwrap()
+            }
         }
     }
 
     pub fn merge_structure(&mut self, other: &Self, num_vars: NumVarsWrapper) {
         match (&other.values, &mut self.values) {
             (NestedValues::Flat(s), NestedValues::Flat(t)) => {
-                t.extend(repeat_n(F::zero(), s.len() - t.len()));
+                if t.len() < s.len() {
+                    t.extend(repeat_n(F::zero(), s.len() - t.len()));
+                }
             },
             (NestedValues::Nested(s), NestedValues::Nested(t)) => {
-                match num_vars.height() {
-                    0 => unreachable!(),
-                    1 => {
-                        t.extend(repeat_n(NestedPoly::from_values_uncontinued(vec![]), s.len() - t.len()))
-                    },
-                    _ => {
-                        t.extend(repeat_n(NestedPoly::from_polys_uncontinued(vec![]), s.len() - t.len()))
-                    },
+                if t.len() < s.len() {
+                    match num_vars.height() {
+                        0 => unreachable!(),
+                        1 => {
+                            t.extend(repeat_n(NestedPoly::from_values_uncontinued(vec![]), s.len() - t.len()))
+                        },
+                        _ => {
+                            t.extend(repeat_n(NestedPoly::from_polys_uncontinued(vec![]), s.len() - t.len()))
+                        },
+                    }
+                }
+                for (nt, ns) in t.iter_mut().zip(s.iter()) {
+                    nt.merge_structure(&ns, num_vars.step_down());
                 }
             },
             _ => unreachable!(),
         }
     }
+
+    fn map_over_poly_simple(ins: &[&Self], f: PolynomialMapping<F>, out: &mut [&mut Self], structure: &Self, num_vars: NumVarsWrapper) {
+        match &structure.values {
+            NestedValues::Flat(v) => {
+                let inputs = ins.iter().map(|i| {
+                    let NestedValues::Flat(p) = &i.values else { panic!() };
+                    p
+                }).collect_vec();
+                let ins_conts = ins.iter().map(|i| i.continuation ).collect_vec();
+                let mut outputs = out.iter_mut().map(|o| {
+                    let NestedValues::Flat(p) = &mut o.values else { panic!() };
+                    p.as_mut_slice()
+                }).collect_vec();
+
+                for idx in 0..v.len() {
+                    let outs = (f.exec)(&inputs.iter().zip(ins_conts.iter()).map(|(i, cont)| i.get(idx).unwrap_or(cont.as_ref().unwrap())).map(|x| *x).collect_vec());
+                    for (o, r) in outputs.iter_mut().zip_eq(outs.iter()) {
+                        o[idx] = *r;
+                    }
+                }
+                if v.len() < num_vars.current_max_len() {
+                    let outs = (f.exec)(&ins_conts.iter().map(|c| c.unwrap()).collect_vec());
+                    for (o, r) in out.iter_mut().zip_eq(outs.iter()) {
+                        o.continuation = Some(*r);
+                    }
+                }
+            },
+            NestedValues::Nested(v) => {
+                let inputs= ins.iter().map(|i| {
+                    let NestedValues::Nested(p) = &i.values else { panic!() };
+                    p.as_slice()
+                }).collect_vec();
+                let ins_conts = ins.iter().map(|i| {
+                    match num_vars.height() {
+                        1|0 => NestedPoly{ values: NestedValues::Flat(vec![]), continuation: i.continuation},
+                        _ => NestedPoly{ values: NestedValues::Nested(vec![]), continuation: i.continuation},
+                    }
+                }).collect_vec();
+                let mut outputs = out.iter_mut().map(|o| {
+                    let NestedValues::Nested(p) = &mut o.values else { panic!() };
+                    p.as_mut_slice()
+                }).collect_vec();
+
+                for idx in 0..v.len() {
+                    Self::map_over_poly_simple(
+                        &inputs.iter().zip(ins_conts.iter()).map(|(i, cont)| i.get(idx).unwrap_or(cont)).collect_vec(),
+                        f.clone(),
+                        &mut outputs.iter_mut().map(|i| i.get_mut(idx).unwrap()).collect_vec(),
+                        &v[idx],
+                        num_vars.step_down(),
+                    )
+                }
+
+                if v.len() < num_vars.current_max_len() {
+                    let outs = (f.exec)(&ins.iter().map(|c| c.continuation.unwrap()).collect_vec());
+                    for (o, r) in out.iter_mut().zip_eq(outs.iter()) {
+                        o.continuation = Some(*r);
+                    }
+                }
+            }
+        }
+    }
+
+    // pub fn map_over_poly(ins: &[Nightmare<F>], f: PolynomialMapping<F>, out: &mut [&mut Self], structure: &Self, num_vars: NumVarsWrapper) {
+    //     match &structure.values {
+    //         NestedValues::Flat(_) => {
+    //
+    //         }
+    //         NestedValues::Nested(v) => {
+    //             let batch_count = rayon::current_num_threads();
+    //             let greater_batches = v.len() % batch_count;
+    //             let batch_size = v.len() / batch_count;
+    //             for batch_size in repeat_n(batch_size + 1, greater_batches).chain(repeat_n(batch_size, batch_count - greater_batches)) {
+    //                 let (cur_i, left_i): (Vec<Nightmare<F>>, Vec<Nightmare<F>>) = ins.iter().map(|i| {
+    //                     match &i {
+    //                         Nightmare::Flat(_) => unreachable!(),
+    //                         Nightmare::Nested(vp, c) => {
+    //                             if vp.len() >= batch_size {
+    //                                 let (l, r) = vp.split_at(batch_size);
+    //                                 return (Nightmare::Nested(l, c), Nightmare::Nested(r,c));
+    //                             } else {
+    //                                 return (Nightmare::Nested(vp, c), Nightmare::Constant(c))
+    //                             }
+    //                         }
+    //                         Nightmare::Constant(c) => {
+    //                             (Nightmare::Constant(*c), Nightmare::Constant(*c))
+    //                         }
+    //                     }
+    //                 }).unzip();
+    //
+    //                 let ()
+    //             }
+    //
+    //             v.par_iter().enumerate().map(|(idx, s)| {
+    //                 // todo: switch once we move to better poly mapping
+    //                 let inputs = ins.iter().map(|i| {
+    //                     match i {
+    //                         Nightmare::Poly(p) => {
+    //                             let NestedValues::Nested(v) = &p.values else { panic!() };
+    //                             match v.get(idx) {
+    //                                 None => Nightmare::Constant(p.continuation.as_ref().unwrap()),
+    //                                 Some(s) => Nightmare::Poly(s),
+    //                             }
+    //                         }
+    //                         Nightmare::Constant(c) => Nightmare::Constant(*c),
+    //                     }
+    //                 }).collect_vec();
+    //                 let mut outputs = unsafe {out.iter_mut().map(|o| {
+    //                     let NestedValues::Nested(v) = &mut o.values else { panic!() };
+    //                     let Some(s) = v.get_mut(idx) else { panic!() };
+    //                     s
+    //                 }).collect_vec()};
+    //
+    //
+    //
+    //                 Self::map_over_poly(
+    //                     &inputs,
+    //                     f.clone(),
+    //                     &mut outputs,
+    //                     s,
+    //                     num_vars.step_down(),
+    //                 )
+    //             }).count();
+    //         }
+    //     }
+    // }
 }
 
 impl<F: Field> NestedPolynomial<F> {
@@ -440,15 +619,28 @@ impl<F: Field> NestedPolynomial<F> {
 
     pub fn map_over_poly(
         ins: &[NestedPolynomial<F>],
-        f: impl Fn(&[F]) -> Vec<F> + Send + Sync
+        f: PolynomialMapping<F>
     ) -> Vec<NestedPolynomial<F>> {
         assert!(ins.len() > 0);
         let layer_num_vars = &ins.first().unwrap().layer_num_vars;
-        let mut out = NestedPolynomial::empty_from_structure(&layer_num_vars);
+        let mut structure = NestedPolynomial::empty_from_structure(&layer_num_vars);
         for p in ins {
-            out.merge_structure(p);
+            structure.merge_structure(p);
         }
-        todo!();
+        let mut out = (0..f.num_o).map(|_| {
+            let mut out = NestedPolynomial::empty_from_structure(&layer_num_vars);
+            out.merge_structure(&structure);
+            out
+        }).collect::<Vec<_>>();
+
+        NestedPoly::map_over_poly_simple(
+            &ins.iter().map(|i| &i.values).collect::<Vec<_>>(),
+            f,
+            &mut out.iter_mut().map(|o| &mut o.values).collect::<Vec<_>>(),
+            &structure.values,
+            NumVarsWrapper::new(layer_num_vars),
+        );
+        out
     }
 
     fn drop_variable_bot(&mut self) {
@@ -640,7 +832,9 @@ mod tests {
     use ark_std::{rand::RngCore, test_rng, UniformRand};
     use itertools::Itertools;
     use liblasso::poly::dense_mlpoly::DensePolynomial;
-    use crate::poly::{segment_evaluate, SplitablePoly, NestedPolynomial, RandParams};
+    use crate::poly::{segment_evaluate, SplitablePoly, NestedPolynomial, RandParams, Nightmare};
+    use crate::protocol::protocol::PolynomialMapping;
+    use crate::utils::map_over_poly_legacy;
 
     use super::{evaluate_exact, NestedPoly};
 
@@ -863,5 +1057,137 @@ mod tests {
         let expected_dense = DensePolynomial::new(vec);
         assert_eq!(dense.vec(), expected_dense.vec());
         assert_eq!(nested.vec(), NestedPolynomial::from(&dense).vec())
+    }
+
+    #[test]
+    fn map_over_poly() {
+        let mut rng = test_rng();
+        let num_vars = 6;
+
+        fn mapper(v: &[Fr]) -> Vec<Fr> {
+            vec![v[0] * v[1]]
+        }
+
+        for _ in 0..100 {
+            let (a_nested, a_vec) = NestedPolynomial::<Fr>::rand_annotated(&mut rng, num_vars);
+            let (b_nested, b_vec) = NestedPolynomial::<Fr>::rand_fixed_structure(&mut rng, &a_nested.layer_num_vars);
+
+            let x = NestedPolynomial::map_over_poly(
+                &vec![
+                    a_nested,
+                    b_nested
+                ],
+                PolynomialMapping {
+                    exec: Arc::new(mapper),
+                    degree: 2,
+                    num_i: 2,
+                    num_o: 1,
+                }
+            );
+            assert_eq!(x.len(), 1);
+            let expected = map_over_poly_legacy(&vec![DensePolynomial::new(a_vec), DensePolynomial::new(b_vec)], mapper);
+            assert_poly_eq(&expected[0], &x[0]);
+        }
+    }
+
+
+    #[test]
+    fn map_over_poly_big() {
+        let mut rng = test_rng();
+        let num_vars = 16;
+
+        fn mapper(v: &[Fr]) -> Vec<Fr> {
+            vec![v[0] * v[1]]
+        }
+
+        let (a_nested, a_vec) = NestedPolynomial::<Fr>::rand_annotated(&mut rng, num_vars);
+        let (b_nested, b_vec) = NestedPolynomial::<Fr>::rand_fixed_structure(&mut rng, &a_nested.layer_num_vars);
+
+        let x = NestedPolynomial::map_over_poly(
+            &vec![
+                a_nested,
+                b_nested
+            ],
+            PolynomialMapping {
+                exec: Arc::new(mapper),
+                degree: 2,
+                num_i: 2,
+                num_o: 1,
+            }
+        );
+        assert_eq!(x.len(), 1);
+        let expected = map_over_poly_legacy(&vec![DensePolynomial::new(a_vec), DensePolynomial::new(b_vec)], mapper);
+        assert_poly_eq(&expected[0], &x[0]);
+    }
+
+    #[test]
+    fn map_over_poly_dense() {
+        let mut rng = test_rng();
+        let num_vars = 16;
+
+        fn mapper(v: &[Fr]) -> Vec<Fr> {
+            vec![v[0] * v[1]]
+        }
+
+        let (a_nested, a_vec) = NestedPolynomial::<Fr>::rand_annotated(&mut rng, num_vars);
+        let (b_nested, b_vec) = NestedPolynomial::<Fr>::rand_fixed_structure_conf(
+            &mut rng,
+            &a_nested.layer_num_vars,
+            RandParams::default()
+                .replace_gen_fill(Arc::new(|rng, layer_size, _| {
+                    layer_size
+                }))
+        );
+
+        let x = NestedPolynomial::map_over_poly(
+            &vec![
+                a_nested,
+                b_nested
+            ],
+            PolynomialMapping {
+                exec: Arc::new(mapper),
+                degree: 2,
+                num_i: 2,
+                num_o: 1,
+            }
+        );
+        assert_eq!(x.len(), 1);
+        let expected = map_over_poly_legacy(&vec![DensePolynomial::new(a_vec), DensePolynomial::new(b_vec)], mapper);
+        assert_poly_eq(&expected[0], &x[0]);
+    }
+    #[test]
+    fn map_over_poly_bench() {
+        let mut rng = test_rng();
+        let num_vars = 16;
+
+        fn mapper(v: &[Fr]) -> Vec<Fr> {
+            vec![v[0] * v[1]]
+        }
+
+        let (a_nested, a_vec) = NestedPolynomial::<Fr>::rand_annotated(&mut rng, num_vars);
+        let (b_nested, b_vec) = NestedPolynomial::<Fr>::rand_fixed_structure_conf(
+            &mut rng,
+            &a_nested.layer_num_vars,
+            RandParams::default()
+                .replace_gen_fill(Arc::new(|rng, layer_size, _| {
+                    layer_size
+                }))
+        );
+
+        let x = NestedPolynomial::map_over_poly(
+            &vec![
+                a_nested,
+                b_nested
+            ],
+            PolynomialMapping {
+                exec: Arc::new(mapper),
+                degree: 2,
+                num_i: 2,
+                num_o: 1,
+            }
+        );
+        assert_eq!(x.len(), 1);
+        let expected = map_over_poly_legacy(&vec![DensePolynomial::new(a_vec), DensePolynomial::new(b_vec)], mapper);
+        assert_poly_eq(&expected[0], &x[0]);
     }
 }

@@ -5,7 +5,7 @@ use ark_ff::PrimeField;
 use crate::transcript::{Challenge, TranscriptReceiver};
 
 #[derive(Clone)]
-pub struct PolynomialMapping<F: PrimeField> {
+pub struct PolynomialMapping<F> {
     pub exec: Arc<dyn Fn(&[F]) -> Vec<F> + Send + Sync>,
     pub degree: usize,
     pub num_i: usize,

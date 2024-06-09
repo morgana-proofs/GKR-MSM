@@ -10,6 +10,7 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 use merlin::Transcript;
 
 use GKR_MSM::grand_add::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
+use GKR_MSM::poly::NestedPolynomial;
 use GKR_MSM::protocol::bintree::{Bintree, BintreeParams, BintreeProver, Layer};
 use GKR_MSM::protocol::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver};
 use GKR_MSM::protocol::sumcheck::to_multieval;
@@ -19,7 +20,7 @@ fn prepare_params(
     log_num_points: usize,
 ) -> (
     Vec<Fr>,
-    Vec<DensePolynomial<Fr>>,
+    Vec<NestedPolynomial<Fr>>,
     BintreeParams<Fr>,
 ) {
     let gen = &mut test_rng();
@@ -30,8 +31,8 @@ fn prepare_params(
         .unzip();
 
     let points_table_poly = vec![
-        DensePolynomial::new(points.0),
-        DensePolynomial::new(points.1),
+        DensePolynomial::new(points.0).into(),
+        DensePolynomial::new(points.1).into(),
     ];
     let point = (0..1).map(|_| Fr::rand(gen)).collect_vec();
 
@@ -111,9 +112,9 @@ fn prepare_witness((
     params,
 ): (
     Vec<Fr>,
-    Vec<DensePolynomial<Fr>>,
+    Vec<NestedPolynomial<Fr>>,
     &BintreeParams<Fr>,
-)) -> (MultiEvalClaim<Fr>, Vec<Vec<DensePolynomial<Fr>>>) {
+)) -> (MultiEvalClaim<Fr>, Vec<Vec<NestedPolynomial<Fr>>>) {
     let (trace, output) = Bintree::witness(points_table_poly, &params);
 
     let claims_to_reduce = to_multieval(EvalClaim {

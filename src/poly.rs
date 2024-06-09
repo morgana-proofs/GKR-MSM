@@ -107,7 +107,7 @@ pub struct NestedPoly<F: Field> {
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct NestedPolynomial<F: Field> {
     values: NestedPoly<F>,
-    layer_num_vars: Vec<usize>,
+    pub layer_num_vars: Vec<usize>,
 }
 
 #[derive(Copy, Clone)]
@@ -714,7 +714,7 @@ impl<F: PrimeField> Into<DensePolynomial<F>> for NestedPolynomial<F> {
 }
 
 /// randoms
-struct RandParams<RNG: Rng> {
+pub struct RandParams<RNG: Rng> {
     gen_fill: Arc<dyn Fn(&mut RNG, usize, usize) -> usize>,
     gen_structure: Arc<dyn Fn(&mut RNG, usize) -> Vec<usize>>,
     phantom_data: PhantomData<Box<RNG>>
@@ -753,12 +753,12 @@ impl<RNG: Rng> Clone for RandParams<RNG> {
 }
 
 impl<RNG: Rng> RandParams<RNG> {
-    fn replace_gen_fill(mut self, f: Arc<dyn Fn(&mut RNG, usize, usize) -> usize>) -> Self {
+    pub fn replace_gen_fill(mut self, f: Arc<dyn Fn(&mut RNG, usize, usize) -> usize>) -> Self {
         self.gen_fill = f;
         self
     }
 
-    fn replace_gen_structure(mut self, f: Arc<dyn Fn(&mut RNG, usize) -> Vec<usize>>) -> Self {
+    pub fn replace_gen_structure(mut self, f: Arc<dyn Fn(&mut RNG, usize) -> Vec<usize>>) -> Self {
         self.gen_structure = f;
         self
     }

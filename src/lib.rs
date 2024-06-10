@@ -10,3 +10,4 @@ pub mod protocol;
 pub mod transcript;
 pub mod commitments;
 pub mod poly;
+pub mod copoly;

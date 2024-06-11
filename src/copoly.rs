@@ -268,9 +268,7 @@ impl<F: Field> Copolynomial<F> for RotPoly<F> {
         let poly = EqPoly::new(point.clone());
         let (mut b_rot, a_rot) = poly.half_sums_segment(target_start, target_end);
         if end == l {
-            let x = F::zero();
-            poly.materialize_segment(0, 1, &mut[x]);
-            b_rot += x;
+            b_rot += point.iter().map(|x| F::one() - x).product::<F>();
         }
         let (a_eq, b_eq) = poly.half_sums_segment(start, end);
 
@@ -456,30 +454,33 @@ mod tests {
 
         let rot = RotPoly::new(y.clone());
         
-        let mut rot_naive = liblasso::poly::eq_poly::EqPolynomial::new(y.clone()).evals();
-        let l = rot_naive.len();
-        let stash = rot_naive[0];
-        for i in (0..l-1) {
-            rot_naive[i] = rot_naive[i+1]
-        }
-        rot_naive[l-1] = stash;
+        let mut y_evs = eq_poly::EqPolynomial::new(y.clone()).evals();
 
+        let y_ev_0 = y_evs[0];
+        let l1 = y_evs.len() - 1;
+        for i in 0..l1 {
+            y_evs[i] = y_evs[i+1];
+        }
+        
+        y_evs[l1] = y_ev_0; // Rotate evaluations of y left.
+        
         for start in 0..64 {
             for end in start..65 {
+                if start == 0 || end == 64 { continue }
                 let (al, bl) = rot.half_sums_segment(start, end);
                 let (mut ar, mut br) = (Fr::ZERO, Fr::ZERO);
 
                 for i in 0..64 {
                     if i >= start && i < end {
                         if i%2 == 0 {
-                            ar += rot_naive[i];
+                            ar += y_evs[i];
                         } else {
-                            br += rot_naive[i];
+                            br += y_evs[i];
                         }
                     }
                 }
 
-                assert_eq!((al + bl), (ar + br))
+                assert_eq!((al, bl), (ar, br))
 
             }
         }

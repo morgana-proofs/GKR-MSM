@@ -2,7 +2,7 @@
 // sums over admissible subset, and evaluation over admissible subset. Example is eq(r, x).
 // Every sumcheck will have degree 1 in copolynomials.
 
-use std::{cmp::min};
+use std::{cmp::min, collections::VecDeque};
 
 use ark_ff::{Field, PrimeField};
 use rayon::prelude::*;
@@ -69,9 +69,10 @@ pub fn compute_segment_split(mut start: usize, end: usize) -> Vec<StandardSubset
 pub trait Copolynomial<F: Field> {
     fn num_vars(&self) -> usize;
     
-    /// Computes the sum over a standard subset.
-    fn sum_standard_subset(&self, standard_subset: StandardSubset) -> F;
-    
+    /// Computes the sums over even and odd parts of the standard subset.
+    /// Assumes that the standard subset has even length (i.e. loglength > 0).
+    fn half_sums_standard_subset(&self, standard_subset: StandardSubset) -> (F, F);
+
     /// Computes the inner product with the vector of values on a standard subset.
     fn ip_standard_subset(&self, standard_subset: StandardSubset, values: &[F]) -> F;
     
@@ -81,9 +82,17 @@ pub trait Copolynomial<F: Field> {
     /// Evaluates a copolynomial in a point.
     fn ev(&self, pt: &[F]) -> F;
 
-    fn sum_segment(&self, start: usize, end: usize) -> F {
+    /// Binds the first variable to a value.
+    /// Importantly, this is the reverse order to the poly_var_bound from liblasso.
+    fn bound(&mut self, value: F);
+
+    /// Computes half sums over the segment. Assumes that the start and end of the segment are even.
+    fn half_sums_segment(&self, start: usize, end: usize) -> (F, F) {
+        assert!(start % 2 == 0);
+        assert!(end % 2 == 0);
         let stsubs = compute_segment_split(start, end);
-        stsubs.into_iter().map(|stsub| self.sum_standard_subset(stsub)).fold(F::zero(), |x, y| x + y)
+        stsubs.into_iter().map(|stsub| self.half_sums_standard_subset(stsub))
+            .fold((F::zero(), F::zero()), |(x0, x1), (y0, y1)| (x0 + y0, x1 + y1))
     }
 
     fn ip_segment(&self, start: usize, end: usize, mut values: &[F]) -> F {
@@ -108,15 +117,18 @@ pub trait Copolynomial<F: Field> {
             self.materialize_standard_subset(stsub, chunk);
         }
     }
+
 }
 
 pub struct EqPoly<F: Field> {
-    point: Vec<F>,
+    multiplier: F,
+    point: Vec<F>, // Keeps coordinates in reverse order, so we can pop them normally.
 }
 
 impl<F: Field> EqPoly<F> {
-    pub fn new(point: Vec<F>) -> Self {
-        EqPoly { point }
+    pub fn new(mut point: Vec<F>) -> Self {
+        point.reverse();
+        EqPoly { multiplier: F::one(), point }
     }
 }
 
@@ -125,20 +137,22 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
         self.point.len()
     }
 
-    fn sum_standard_subset(&self, standard_subset: StandardSubset) -> F {
+    fn half_sums_standard_subset(&self, standard_subset: StandardSubset) -> (F, F) {
         let loglength = standard_subset.loglength() as usize;
+        assert!(loglength > 0);
         let mut prefix = standard_subset.start >> loglength;
-        let mut ret = F::one();
+        let mut sum = self.multiplier;
         let n = self.num_vars();
         for i in loglength .. n {
             let prefix_bit = prefix % 2;
-            ret *= if prefix_bit == 1 {self.point[n - i - 1]} else {F::one() - self.point[n - i - 1]};
+            sum *= if prefix_bit == 1 {self.point[i]} else {F::one() - self.point[i]};
             prefix >>= 1;
         }
-        ret
+        let dif = sum * self.point[0];
+        (sum - dif, dif)
     }
 
-    // Non-destroying version.
+    // Non data destroying version.
     fn ip_standard_subset(&self, standard_subset: StandardSubset, values: &[F]) -> F {
         let target = &mut vec![F::zero(); values.len()];
         self.materialize_standard_subset(standard_subset, target);
@@ -151,21 +165,22 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
         assert!(target.len() == 1 << loglength);
         let mut prefix = standard_subset.start >> loglength;
         let n = self.num_vars();
-        let mut multiplier = F::one();
+        let mut multiplier = self.multiplier;
+
         for i in loglength .. n {
             let prefix_bit = prefix % 2;
-            multiplier *= if prefix_bit == 1 {point[n - i - 1]} else {F::one() - point[n - i - 1]};
+            multiplier *= if prefix_bit == 1 {point[i]} else {F::one() - point[i]};
             prefix >>= 1;
         }
+
         target[0] = multiplier;
-        
-        let point = &point[n - loglength ..];
+        let point = &point[.. loglength];
         let mut curr_size = 1;
 
         for i in 0 .. loglength {
             let (left, right) = target[0 .. 2 * curr_size].split_at_mut(curr_size);
             left.par_iter_mut().zip(right.par_iter_mut())
-                .map(|(a, b)| { *b = point[loglength - i - 1] * *a; *a *= (F::one() - point[loglength - i - 1]) })
+                .map(|(a, b)| { *b = point[i] * *a; *a *= (F::one() - point[i]) })
                 .count();
             curr_size <<= 1;
         }
@@ -175,7 +190,12 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
     fn ev(&self, pt: &[F]) -> F {
         let r = &self.point;
         assert!(r.len() == pt.len());
-        r.iter().zip(pt.iter()).fold(F::zero(), |acc, (x, y)| acc + *x * y + (F::one() - x)*(F::one() - y))
+        self.multiplier * r.iter().zip(pt.iter()).fold(F::zero(), |acc, (x, y)| acc * (*x * y + (F::one() - x)*(F::one() - y)))
+    }
+    
+    fn bound(&mut self, value: F) {
+        let p0 = self.point.pop().unwrap();
+        self.multiplier *= p0 * value + (F::one() - p0) * (F::one() - value);
     }
 }
 
@@ -216,13 +236,21 @@ mod tests {
     fn test_eqpoly_sum() {
         let rng = &mut test_rng();
         let point : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
+        let multiplier = Fr::ONE; // Fr::rand(rng);
         let eqvals_naive = eq_poly::EqPolynomial::new(point.clone()).evals();
-        for start in 0..64 {
-            for end in start..65 {
-                let eqpoly = EqPoly::new(point.clone());
-                let lhs = eqpoly.sum_segment(start, end);
-                let rhs = eqvals_naive[start..end].iter().fold(Fr::ZERO, |x, y| x + y);
-                assert!(lhs == rhs);
+        let mut eqpoly = EqPoly::new(point.clone());
+        eqpoly.multiplier = multiplier;
+        for start in (0..64).step_by(2) {
+            for end in (start..65).step_by(2) {
+                let lhs = eqpoly.half_sums_segment(start, end);
+                let mut rhs = (start..end).step_by(2)
+                        .fold(
+                            (Fr::ZERO, Fr::ZERO),
+                            |acc, i| (acc.0 + eqvals_naive[i], acc.1 + eqvals_naive[i+1])
+                        );
+                rhs.0 *= multiplier;
+                rhs.1 *= multiplier;
+                assert_eq!(lhs, rhs);
             }
         }
     }
@@ -231,13 +259,16 @@ mod tests {
     fn test_materialize() {
         let rng = &mut test_rng();
         let point : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
-        let eqpoly = EqPoly::new(point.clone());
+        let mut eqpoly = EqPoly::new(point.clone());
+        let multiplier = Fr::rand(rng);
+        eqpoly.multiplier = multiplier;
+
         let eqvals_naive = eq_poly::EqPolynomial::new(point.clone()).evals();
         for start in 0 .. 64 {
             for end in start .. 65 {
                 let mut target = vec![Fr::ZERO; end - start];
                 eqpoly.materialize_segment(start, end, &mut target);
-                target.iter_mut().zip(eqvals_naive[start .. end].iter()).map(|(t, x)| *t -= x).count();
+                target.iter_mut().zip(eqvals_naive[start .. end].iter()).map(|(t, x)| *t -= *x * multiplier).count();
                 for t in target {
                     assert!(t == Fr::ZERO);
                 }
@@ -262,5 +293,23 @@ mod tests {
                 assert_eq!(lhs, rhs);
             }
         }
+    }
+
+    #[test]
+    fn test_bound() {
+        let rng = &mut test_rng();
+        let point : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
+        let mut eqpoly = EqPoly::new(point.clone());
+
+        let evaluation_point : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
+
+        let lhs = eqpoly.ev(&evaluation_point);
+
+        let e0 = evaluation_point[0];
+        eqpoly.bound(e0);
+
+        let rhs = eqpoly.ev(&evaluation_point[1 ..]);
+
+        assert_eq!(lhs, rhs);
     }
 }

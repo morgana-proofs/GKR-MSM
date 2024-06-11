@@ -207,7 +207,7 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
 // In most cases, using Eq will suffice. However, there are other copolynomials that are sometimes useful
 //
 // Next, we implement Rot(x, y), which rotates the indices by 1 in cyclical order. This is useful for copy
-// constraint argument - and any permutation arguments that do not want to involve binary tree, for example,
+// constraint argument - and any permutation arguments that do not want to involve GKR tree, for example,
 // out of verifier size concerns. Notably, this is different from Hyperplonk permutation argument, which is
 // inconvenient for us, as it skips the point with index 0, and all our other protocols work in terms of
 // hypercubes, and different from Hyperplonk rotation argument (which also skips 0 and additionally has
@@ -255,12 +255,35 @@ impl<F: Field> Copolynomial<F> for RotPoly<F> {
         todo!()
     }
 
+    fn half_sums_segment(&self, start: usize, end: usize) -> (F, F) {
+        // Edge case: if start = end, always return 0.
+        if start == end {
+            return (F::zero(), F::zero())
+        };
+
+        let l = 1 << self.num_vars();
+        let point = &self.point;
+        let target_start = start + 1;
+        let target_end = min(end + 1, l);
+        let poly = EqPoly::new(point.clone());
+        let (mut b_rot, a_rot) = poly.half_sums_segment(target_start, target_end);
+        if end == l {
+            let x = F::zero();
+            poly.materialize_segment(0, 1, &mut[x]);
+            b_rot += x;
+        }
+        let (a_eq, b_eq) = poly.half_sums_segment(start, end);
+
+        (a_eq * self.eq_multiplier + a_rot * self.rot_multiplier, b_eq * self.eq_multiplier + b_rot * self.rot_multiplier)
+    }
+
     fn ev(&self, pt: &[F]) -> F {
+        assert!(pt.len() == self.num_vars());
         let mut poly = self.clone();
         for &x in pt.iter().rev() {
             poly.bound(x);
         }
-        poly.eq_multiplier //+ poly.rot_multiplier
+        poly.eq_multiplier + poly.rot_multiplier
     }
 
     fn bound(&mut self, x0: F) {
@@ -269,7 +292,6 @@ impl<F: Field> Copolynomial<F> for RotPoly<F> {
         self.eq_multiplier *= F::one() - y0 - x0 + y0x0.double(); // Multiply by eq(x0, y0)
         self.eq_multiplier += (y0 - y0x0) * self.rot_multiplier; // Add the component from Rot.
         self.rot_multiplier *= x0 - y0x0;
-        println!("After bind, eq mult = {:?}, rot mult = {:?}", self.eq_multiplier, self.rot_multiplier);
     }
 }
 
@@ -404,13 +426,13 @@ mod tests {
         let x_evs = eq_poly::EqPolynomial::new(x.clone()).evals();
         let mut y_evs = eq_poly::EqPolynomial::new(y.clone()).evals();
 
-        //let y_ev_0 = y_evs[0];
+        let y_ev_0 = y_evs[0];
         let l1 = y_evs.len() - 1;
         for i in 0..l1 {
             y_evs[i] = y_evs[i+1];
         }
         
-        y_evs[l1] = Fr::ZERO; //y_ev_0; // Rotate evaluations of y left.
+        y_evs[l1] = y_ev_0; // Rotate evaluations of y left.
         
         let rot = RotPoly::new(y.clone());
 
@@ -419,15 +441,50 @@ mod tests {
 
         assert_eq!(lhs, rhs);
     }
+
+    #[test]
+    fn test_rot_sum() {
+        let rng = &mut test_rng();
+        let y : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
+
+        let first : Vec<Fr> = repeat_with(|| Fr::ZERO)
+                                .take(5)
+                                .chain(
+                                    repeat_with(||Fr::ONE)
+                                    .take(1)
+                                ).collect();
+
+        let rot = RotPoly::new(y.clone());
+        
+        let mut rot_naive = liblasso::poly::eq_poly::EqPolynomial::new(y.clone()).evals();
+        let l = rot_naive.len();
+        let stash = rot_naive[0];
+        for i in (0..l-1) {
+            rot_naive[i] = rot_naive[i+1]
+        }
+        rot_naive[l-1] = stash;
+
+        for start in 0..64 {
+            for end in start..65 {
+                let (al, bl) = rot.half_sums_segment(start, end);
+                let (mut ar, mut br) = (Fr::ZERO, Fr::ZERO);
+
+                for i in 0..64 {
+                    if i >= start && i < end {
+                        if i%2 == 0 {
+                            ar += rot_naive[i];
+                        } else {
+                            br += rot_naive[i];
+                        }
+                    }
+                }
+
+                assert_eq!((al + bl), (ar + br))
+
+            }
+        }
+
+
+
+    }
 }
-
-
-// 01 + 1 = 10
-
-// (1-x0)y0x1y1 + (1-x0)y0(1-x1)(1-y1) + x0(1-y0)(1-x1)y1
-
-// (1-x0)(1-x1), (1-x0)x1, x0(1-x1), x0x1 
-// (1-y0)(1-y1), (1-y0)y1, y0(1-y1), y0y1
-
-
-// eq(x, s) Rot(s, t) eq(t, y)

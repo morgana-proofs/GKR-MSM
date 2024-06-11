@@ -94,16 +94,10 @@ pub trait Copolynomial<F: Field> {
             .fold((F::zero(), F::zero()), |(x0, x1), (y0, y1)| (x0 + y0, x1 + y1))
     }
 
-    fn ip_segment(&self, start: usize, end: usize, mut values: &[F]) -> F {
-        assert!(values.len() == end - start);
-        let mut chunk;
-        let stsubs = compute_segment_split(start, end);
-        let mut ret = F::zero();
-        for stsub in stsubs {
-            (chunk, values) = values.split_at(1 << stsub.loglength());
-            ret += self.ip_standard_subset(stsub, chunk);
-        };
-        ret
+    fn ip_segment(&self, start: usize, end: usize, values: &[F]) -> F {
+        let mut target = vec![F::zero(); values.len()];
+        self.materialize_segment(start, end, &mut target);
+        target.par_iter().zip(values.par_iter()).map(|(a, b)| *a * b).sum()
     }
 
     fn materialize_segment(&self, start: usize, end: usize, target: &mut[F]) {
@@ -141,6 +135,9 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
         let mut prefix = standard_subset.start >> loglength;
         let mut sum = self.multiplier;
         let n = self.num_vars();
+        
+        assert!(standard_subset.end() <= 1 << n);
+        
         for i in (0 .. n - loglength).rev() {
             let prefix_bit = prefix % 2;
             sum *= if prefix_bit == 1 {self.point[i]} else {F::one() - self.point[i]};
@@ -165,9 +162,12 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
     fn materialize_standard_subset(&self, standard_subset: StandardSubset, target: &mut[F]) {
         let loglength = standard_subset.loglength() as usize;
         let point = &self.point;
+
         assert!(target.len() == 1 << loglength);
         let mut prefix = standard_subset.start >> loglength;
         let n = self.num_vars();
+        assert!(standard_subset.end() <= 1 << n);
+
         let mut multiplier = self.multiplier;
 
         for i in (0 .. n - loglength).rev() {
@@ -244,15 +244,15 @@ impl<F: Field> Copolynomial<F> for RotPoly<F> {
     }
 
     fn half_sums_standard_subset(&self, standard_subset: StandardSubset) -> (F, F) {
-        todo!()
+        self.half_sums_segment(standard_subset.start(), standard_subset.end())
     }
 
     fn ip_standard_subset(&self, standard_subset: StandardSubset, values: &[F]) -> F {
-        todo!()
+        self.ip_segment(standard_subset.start(), standard_subset.end(), values)
     }
 
     fn materialize_standard_subset(&self, standard_subset: StandardSubset, target: &mut[F]) {
-        todo!()
+        self.materialize_segment(standard_subset.start(), standard_subset.end(), target)
     }
 
     fn half_sums_segment(&self, start: usize, end: usize) -> (F, F) {
@@ -266,13 +266,44 @@ impl<F: Field> Copolynomial<F> for RotPoly<F> {
         let target_start = start + 1;
         let target_end = min(end + 1, l);
         let poly = EqPoly::new(point.clone());
-        let (mut b_rot, a_rot) = poly.half_sums_segment(target_start, target_end);
+        let (mut b, mut a) = poly.half_sums_segment(target_start, target_end);
         if end == l {
-            b_rot += point.iter().map(|x| F::one() - x).product::<F>();
+            b += point.iter().map(|x| F::one() - x).product::<F>();
         }
-        let (a_eq, b_eq) = poly.half_sums_segment(start, end);
 
-        (a_eq * self.eq_multiplier + a_rot * self.rot_multiplier, b_eq * self.eq_multiplier + b_rot * self.rot_multiplier)
+        a *= self.rot_multiplier;
+        b *= self.rot_multiplier;
+
+        if self.eq_multiplier != F::zero() {
+            let (a_eq, b_eq) = poly.half_sums_segment(start, end);
+            a += a_eq * self.eq_multiplier;
+            b += b_eq * self.eq_multiplier; 
+        }
+
+        (a, b)
+    }
+
+    fn materialize_segment(&self, start: usize, end: usize, target: &mut[F]) {
+        let l = target.len();
+        assert!(l == end - start);
+
+        let mut eq = EqPoly::new(self.point.clone());
+        let mut offset = 0;
+
+        if end == 1 << self.num_vars() {
+            target[l-1] = self.rot_multiplier * self.point.iter().map(|x| F::one() - x).product::<F>();
+            offset = 1;
+        }
+
+        eq.multiplier = self.rot_multiplier;
+        eq.materialize_segment(start + 1, end - offset + 1, &mut target[.. l-offset]);
+        if self.eq_multiplier != F::zero() {
+            let mut eq_target = vec![F::zero(); end - start];
+            eq.multiplier = self.eq_multiplier;
+            eq.materialize_segment(start, end, &mut eq_target);
+            target.par_iter_mut().zip(eq_target.par_iter()).map(|(x, y)| *x += y).count();
+        }
+        
     }
 
     fn ev(&self, pt: &[F]) -> F {
@@ -443,17 +474,15 @@ mod tests {
     #[test]
     fn test_rot_sum() {
         let rng = &mut test_rng();
-        let y : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
+        let mut y : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
 
-        let first : Vec<Fr> = repeat_with(|| Fr::ZERO)
-                                .take(5)
-                                .chain(
-                                    repeat_with(||Fr::ONE)
-                                    .take(1)
-                                ).collect();
+        let r0  = Fr::rand(rng);
+        let r1 = Fr::rand(rng);
 
-        let rot = RotPoly::new(y.clone());
-        
+        let mut rot = RotPoly::new(y.clone());
+        rot.bound(r0);
+        rot.bound(r1);
+
         let mut y_evs = eq_poly::EqPolynomial::new(y.clone()).evals();
 
         let y_ev_0 = y_evs[0];
@@ -464,18 +493,24 @@ mod tests {
         
         y_evs[l1] = y_ev_0; // Rotate evaluations of y left.
         
-        for start in 0..64 {
-            for end in start..65 {
-                if start == 0 || end == 64 { continue }
+        let mut y_evs = DensePolynomial::new(y_evs);
+        y_evs.bound_poly_var_bot(&r0);
+        y_evs.Z.truncate(32);
+        y_evs.bound_poly_var_bot(&r1);
+        y_evs.Z.truncate(16);
+
+
+        for start in 0..16 {
+            for end in start..17 {
                 let (al, bl) = rot.half_sums_segment(start, end);
                 let (mut ar, mut br) = (Fr::ZERO, Fr::ZERO);
 
-                for i in 0..64 {
+                for i in 0..16 {
                     if i >= start && i < end {
                         if i%2 == 0 {
-                            ar += y_evs[i];
+                            ar += y_evs.Z[i];
                         } else {
-                            br += y_evs[i];
+                            br += y_evs.Z[i];
                         }
                     }
                 }
@@ -484,8 +519,43 @@ mod tests {
 
             }
         }
+    }
 
+    #[test]
+    fn test_rot_materialize() {
+        let rng = &mut test_rng();
+        let y : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
 
+        let mut x : Vec<Fr> = repeat_with( || Fr::rand(rng)).take(6).collect();
 
+        let mut rot = RotPoly::new(y.clone());
+        let mut y_evs = eq_poly::EqPolynomial::new(y.clone()).evals();
+
+        let y_ev_0 = y_evs[0];
+        let l1 = y_evs.len() - 1;
+        for i in 0..l1 {
+            y_evs[i] = y_evs[i+1];
+        }
+        
+        y_evs[l1] = y_ev_0; // Rotate evaluations of y left.
+
+        let mut y_evs = DensePolynomial::new(y_evs);
+        
+        let r = x.pop().unwrap();
+        y_evs.bound_poly_var_bot(&r);
+        y_evs.Z.truncate(32);
+        rot.bound(r);
+        let r = x.pop().unwrap();
+        y_evs.bound_poly_var_bot(&r);
+        y_evs.Z.truncate(16);
+        rot.bound(r);
+
+        for start in 0..16 {
+            for end in start..17 {
+                let mut target = vec![Fr::ZERO; end - start];
+                rot.materialize_segment(start, end, &mut target);
+                assert_eq!(target, y_evs.Z[start..end])
+            }
+        }
     }
 }

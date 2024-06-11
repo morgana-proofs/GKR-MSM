@@ -70,7 +70,6 @@ pub trait Copolynomial<F: Field> {
     fn num_vars(&self) -> usize;
     
     /// Computes the sums over even and odd parts of the standard subset.
-    /// Assumes that the standard subset has even length (i.e. loglength > 0).
     fn half_sums_standard_subset(&self, standard_subset: StandardSubset) -> (F, F);
 
     /// Computes the inner product with the vector of values on a standard subset.
@@ -86,10 +85,10 @@ pub trait Copolynomial<F: Field> {
     /// Importantly, this is the reverse order to the poly_var_bound from liblasso.
     fn bound(&mut self, value: F);
 
-    /// Computes half sums over the segment. Assumes that the start and end of the segment are even.
+    /// Computes half sums over the segment.
+    /// Half sums are determined in terms of external indexation, i.e. even and odd parts are determined
+    /// as value with even and odd global indices, respectively.
     fn half_sums_segment(&self, start: usize, end: usize) -> (F, F) {
-        assert!(start % 2 == 0);
-        assert!(end % 2 == 0);
         let stsubs = compute_segment_split(start, end);
         stsubs.into_iter().map(|stsub| self.half_sums_standard_subset(stsub))
             .fold((F::zero(), F::zero()), |(x0, x1), (y0, y1)| (x0 + y0, x1 + y1))
@@ -139,7 +138,6 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
 
     fn half_sums_standard_subset(&self, standard_subset: StandardSubset) -> (F, F) {
         let loglength = standard_subset.loglength() as usize;
-        assert!(loglength > 0);
         let mut prefix = standard_subset.start >> loglength;
         let mut sum = self.multiplier;
         let n = self.num_vars();
@@ -148,6 +146,11 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
             sum *= if prefix_bit == 1 {self.point[i]} else {F::one() - self.point[i]};
             prefix >>= 1;
         }
+
+        if loglength == 0 {
+            return if standard_subset.start % 2 == 0 {(sum, F::zero())} else {(F::zero(), sum)}
+        }
+
         let dif = sum * self.point[0];
         (sum - dif, dif)
     }
@@ -240,13 +243,21 @@ mod tests {
         let eqvals_naive = eq_poly::EqPolynomial::new(point.clone()).evals();
         let mut eqpoly = EqPoly::new(point.clone());
         eqpoly.multiplier = multiplier;
-        for start in (0..64).step_by(2) {
-            for end in (start..65).step_by(2) {
+        for start in 0..64 {
+            for end in start..65 {
                 let lhs = eqpoly.half_sums_segment(start, end);
-                let mut rhs = (start..end).step_by(2)
+                let mut rhs = (0..64)
                         .fold(
                             (Fr::ZERO, Fr::ZERO),
-                            |acc, i| (acc.0 + eqvals_naive[i], acc.1 + eqvals_naive[i+1])
+                            |acc, i| {
+                                if i < start || i >= end {
+                                    acc
+                                } else if i % 2 == 0 {
+                                    (acc.0 + eqvals_naive[i], acc.1)
+                                } else {
+                                    (acc.0, acc.1 + eqvals_naive[i])
+                                }
+                            }
                         );
                 rhs.0 *= multiplier;
                 rhs.1 *= multiplier;

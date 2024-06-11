@@ -236,7 +236,7 @@ mod tests {
     fn test_eqpoly_sum() {
         let rng = &mut test_rng();
         let point : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
-        let multiplier = Fr::ONE; // Fr::rand(rng);
+        let multiplier = Fr::rand(rng);
         let eqvals_naive = eq_poly::EqPolynomial::new(point.clone()).evals();
         let mut eqpoly = EqPoly::new(point.clone());
         eqpoly.multiplier = multiplier;

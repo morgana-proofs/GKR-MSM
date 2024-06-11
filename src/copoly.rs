@@ -119,14 +119,14 @@ pub trait Copolynomial<F: Field> {
 
 }
 
+#[derive(Clone)]
 pub struct EqPoly<F: Field> {
     multiplier: F,
     point: Vec<F>, // Keeps coordinates in reverse order, so we can pop them normally.
 }
 
 impl<F: Field> EqPoly<F> {
-    pub fn new(mut point: Vec<F>) -> Self {
-        point.reverse();
+    pub fn new(point: Vec<F>) -> Self {
         EqPoly { multiplier: F::one(), point }
     }
 }
@@ -141,7 +141,7 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
         let mut prefix = standard_subset.start >> loglength;
         let mut sum = self.multiplier;
         let n = self.num_vars();
-        for i in loglength .. n {
+        for i in (0 .. n - loglength).rev() {
             let prefix_bit = prefix % 2;
             sum *= if prefix_bit == 1 {self.point[i]} else {F::one() - self.point[i]};
             prefix >>= 1;
@@ -151,7 +151,7 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
             return if standard_subset.start % 2 == 0 {(sum, F::zero())} else {(F::zero(), sum)}
         }
 
-        let dif = sum * self.point[0];
+        let dif = sum * self.point[n-1];
         (sum - dif, dif)
     }
 
@@ -170,17 +170,17 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
         let n = self.num_vars();
         let mut multiplier = self.multiplier;
 
-        for i in loglength .. n {
+        for i in (0 .. n - loglength).rev() {
             let prefix_bit = prefix % 2;
             multiplier *= if prefix_bit == 1 {point[i]} else {F::one() - point[i]};
             prefix >>= 1;
         }
 
         target[0] = multiplier;
-        let point = &point[.. loglength];
+        let point = &point[n - loglength ..];
         let mut curr_size = 1;
 
-        for i in 0 .. loglength {
+        for i in (0..loglength).rev() {
             let (left, right) = target[0 .. 2 * curr_size].split_at_mut(curr_size);
             left.par_iter_mut().zip(right.par_iter_mut())
                 .map(|(a, b)| { *b = point[i] * *a; *a *= (F::one() - point[i]) })
@@ -203,6 +203,76 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
 }
 
 
+// ----------------------------------------------------------------------------------------------------------
+// In most cases, using Eq will suffice. However, there are other copolynomials that are sometimes useful
+//
+// Next, we implement Rot(x, y), which rotates the indices by 1 in cyclical order. This is useful for copy
+// constraint argument - and any permutation arguments that do not want to involve binary tree, for example,
+// out of verifier size concerns. Notably, this is different from Hyperplonk permutation argument, which is
+// inconvenient for us, as it skips the point with index 0, and all our other protocols work in terms of
+// hypercubes, and different from Hyperplonk rotation argument (which also skips 0 and additionally has
+// a somewhat weird indexing).
+//
+// We will also implement polynomials that allow us to move some standard subset into other standard subset, 
+// and their sums. This is useful for the cases where we need to move some data to other computation.
+//
+// In theory this could be combined with even arbitrary rotations, but this quickly becomes messy, so
+// we won't do it for now.
+//
+// ----------------------------------------------------------------------------------------------------------
+
+/// This struct desribes rotation polynomial Rot(x, y), with y substituted to be a point r.
+/// Rot(x, y) = (1-x0)y0 * Eq(x[1..], y[1..]) + x0(1-y0) Rot(x[1..], y[1..]).
+/// As our structure needs to support variable binding, we actually keep two multipliers - one for Rot and
+/// another one for Eq (initialized to 0 on entry).
+#[derive(Clone)]
+pub struct RotPoly<F: Field> {
+    rot_multiplier: F,
+    eq_multiplier: F,
+    point: Vec<F>,
+}
+
+impl<F: Field> RotPoly<F> {
+    pub fn new(point: Vec<F>) -> Self {
+        RotPoly { rot_multiplier : F::one(), eq_multiplier: F::zero(), point }
+    }
+}
+
+impl<F: Field> Copolynomial<F> for RotPoly<F> {
+    fn num_vars(&self) -> usize {
+        self.point.len()
+    }
+
+    fn half_sums_standard_subset(&self, standard_subset: StandardSubset) -> (F, F) {
+        todo!()
+    }
+
+    fn ip_standard_subset(&self, standard_subset: StandardSubset, values: &[F]) -> F {
+        todo!()
+    }
+
+    fn materialize_standard_subset(&self, standard_subset: StandardSubset, target: &mut[F]) {
+        todo!()
+    }
+
+    fn ev(&self, pt: &[F]) -> F {
+        let mut poly = self.clone();
+        for &x in pt.iter().rev() {
+            poly.bound(x);
+        }
+        poly.eq_multiplier //+ poly.rot_multiplier
+    }
+
+    fn bound(&mut self, x0: F) {
+        let y0 = self.point.pop().unwrap();
+        let y0x0 = y0 * x0;
+        self.eq_multiplier *= F::one() - y0 - x0 + y0x0.double(); // Multiply by eq(x0, y0)
+        self.eq_multiplier += (y0 - y0x0) * self.rot_multiplier; // Add the component from Rot.
+        self.rot_multiplier *= x0 - y0x0;
+        println!("After bind, eq mult = {:?}, rot mult = {:?}", self.eq_multiplier, self.rot_multiplier);
+    }
+}
+
 
 #[cfg(test)]
 
@@ -212,6 +282,7 @@ mod tests {
     use ark_bls12_381::Fr;
     use ark_std::test_rng;
     use ark_std::UniformRand;
+    use liblasso::poly::dense_mlpoly::DensePolynomial;
     use liblasso::poly::eq_poly;
 
     use super::*;
@@ -236,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn test_eqpoly_sum() {
+    fn test_eq_sum() {
         let rng = &mut test_rng();
         let point : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
         let multiplier = Fr::rand(rng);
@@ -267,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn test_materialize() {
+    fn test_eq_materialize() {
         let rng = &mut test_rng();
         let point : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
         let mut eqpoly = EqPoly::new(point.clone());
@@ -288,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ip() {
+    fn test_eq_ip() {
         let rng = &mut test_rng();
         let point : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
         let eqpoly = EqPoly::new(point.clone());
@@ -307,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bound() {
+    fn test_eq_bound() {
         let rng = &mut test_rng();
         let point : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
         let mut eqpoly = EqPoly::new(point.clone());
@@ -323,4 +394,40 @@ mod tests {
 
         assert_eq!(lhs, rhs);
     }
+
+    #[test]
+    fn test_rot_ev() {
+        let rng = &mut test_rng();
+        let x : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
+        let y : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(6).collect();
+
+        let x_evs = eq_poly::EqPolynomial::new(x.clone()).evals();
+        let mut y_evs = eq_poly::EqPolynomial::new(y.clone()).evals();
+
+        //let y_ev_0 = y_evs[0];
+        let l1 = y_evs.len() - 1;
+        for i in 0..l1 {
+            y_evs[i] = y_evs[i+1];
+        }
+        
+        y_evs[l1] = Fr::ZERO; //y_ev_0; // Rotate evaluations of y left.
+        
+        let rot = RotPoly::new(y.clone());
+
+        let lhs = rot.ev(&x);
+        let rhs = x_evs.iter().zip(y_evs.iter()).fold(Fr::ZERO, |acc, (x, y)| acc + *x * y);
+
+        assert_eq!(lhs, rhs);
+    }
 }
+
+
+// 01 + 1 = 10
+
+// (1-x0)y0x1y1 + (1-x0)y0(1-x1)(1-y1) + x0(1-y0)(1-x1)y1
+
+// (1-x0)(1-x1), (1-x0)x1, x0(1-x1), x0x1 
+// (1-y0)(1-y1), (1-y0)y1, y0(1-y1), y0y1
+
+
+// eq(x, s) Rot(s, t) eq(t, y)

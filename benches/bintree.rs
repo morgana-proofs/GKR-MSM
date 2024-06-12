@@ -10,7 +10,7 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 use merlin::Transcript;
 
 use GKR_MSM::grand_add::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
-use GKR_MSM::poly::NestedPolynomial;
+use GKR_MSM::nested_poly::NestedPolynomial;
 use GKR_MSM::protocol::bintree::{Bintree, BintreeParams, BintreeProver, Layer};
 use GKR_MSM::protocol::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver};
 use GKR_MSM::protocol::sumcheck::to_multieval;

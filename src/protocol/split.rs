@@ -2,8 +2,7 @@ use std::marker::PhantomData;
 
 use ark_ff::PrimeField;
 use itertools::Itertools;
-use crate::poly::{NestedPolynomial, SplitablePoly};
-
+use crate::nested_poly::{NestedPolynomial, SplitablePoly};
 use crate::protocol::protocol::{EvalClaim, Protocol, ProtocolProver, ProtocolVerifier};
 use crate::transcript::{Challenge, TranscriptReceiver};
 use crate::utils::{fix_var_bot, fix_var_top};
@@ -126,7 +125,7 @@ mod tests {
     use liblasso::utils::test_lib::TestTranscript;
 
     use crate::transcript::{IndexedProofTranscript, TranscriptSender};
-    use crate::utils::{fix_var_bot};
+    use crate::utils::fix_var_bot;
 
     use super::*;
 

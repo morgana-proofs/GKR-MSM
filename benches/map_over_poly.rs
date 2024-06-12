@@ -3,17 +3,12 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use ark_bls12_381::{Fr, G1Affine, G1Projective};
+use ark_bls12_381::Fr;
 use ark_std::{test_rng, UniformRand};
-use ark_std::rand::Rng;
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
-use merlin::Transcript;
-
-use GKR_MSM::binary_msm::prepare_bases;
-use GKR_MSM::gkr_msm_simple::{CommitmentKey, gkr_msm_prove};
-use GKR_MSM::poly::{NestedPolynomial, RandParams};
+use GKR_MSM::nested_poly::{NestedPolynomial, RandParams};
 use GKR_MSM::protocol::protocol::PolynomialMapping;
 use GKR_MSM::utils::{map_over_poly, map_over_poly_legacy};
 

@@ -1,7 +1,7 @@
 use std::{fs::File, sync::Arc};
 use std::iter::repeat;
 
-use ark_ec::{CurveGroup};
+use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use itertools::Itertools;
 use liblasso::utils::math::Math;
@@ -20,7 +20,7 @@ use crate::{
     transcript::{TranscriptReceiver, TranscriptSender},
     utils::TwistedEdwardsConfig,
 };
-use crate::poly::{NestedPoly, NestedPolynomial};
+use crate::nested_poly::NestedPolynomial;
 use crate::protocol::bintree::{Bintree, BintreeParams, BintreeProof, BintreeProver, Layer};
 use crate::protocol::protocol::{EvalClaim, ProtocolProver};
 use crate::protocol::sumcheck::to_multieval;

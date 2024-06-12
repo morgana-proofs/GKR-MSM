@@ -6,7 +6,7 @@ use itertools::{Either, Itertools};
 use profi::prof;
 
 use crate::{protocol::{protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck::{SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier, to_multieval}, split::{Split, SplitProver, SplitVerifier}}, transcript::{Challenge, TranscriptReceiver}};
-use crate::poly::NestedPolynomial;
+use crate::nested_poly::NestedPolynomial;
 
 #[derive(Clone)]
 pub enum Layer<F: PrimeField> {

@@ -34,7 +34,7 @@ default = [
     "parallel",
     "multicore",
 ]
-prof = ["dep:profi", "profi/enable", "profi/attributes", "profi/rayon", "profi/deep-hierarchy"]
+prof = ["profi/enable", "profi/attributes", "profi/rayon", "profi/deep-hierarchy"]
 memprof = ["dep:jemalloc-ctl", "dep:jemallocator"]
 
 [dev-dependencies]

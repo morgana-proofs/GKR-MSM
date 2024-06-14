@@ -1,95 +1,183 @@
+use std::cmp::min;
+use std::fmt::Debug;
+use ark_bls12_381::Fr;
 use itertools::Itertools;
+use crate::poly::FragmentContent::{Consts, Data};
 
 pub trait Split: Sized {
     fn split(&self) -> (Self, Self);
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum FragmentContent {
+    Data,
+    Consts,
+}
 
-#[derive(Default, Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 struct Fragment {
-    data_idx: usize,
-    data_len: usize,
-    continuation_idx: usize,
-    continuation_len: usize,
+    idx: usize,
+    len: usize,
+    content: FragmentContent,
     start: usize,
 }
 
-type Shape = Vec<Fragment>;
-
 impl Fragment {
-    pub fn len(&self) -> usize {
-        self.data_len + self.continuation_len
+    pub fn new_of(content: FragmentContent) -> Self {
+        Self {
+            idx: 0,
+            len: 0,
+            content,
+            start: 0,
+        }
     }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct Poly<F> {
     data: Vec<F>,
-    continuations: Vec<F>,
-    shape: Shape,
+    // continuations: Vec<F>,
+    shape: Vec<Fragment>,
 }
 
 impl<F> Default for Poly<F> {
     fn default() -> Self {
         Self {
             data: vec![],
-            continuations: vec![],
+            // continuations: vec![],
             shape: vec![],
         }
+    }
+}
+
+impl<F: Eq + Clone> Extend<F> for Poly<F> {
+    fn extend<T: IntoIterator<Item=F>>(&mut self, iter: T) {
+        for item in iter {
+            let mut f = Fragment::new_of(Consts);
+            f.idx = self.data.len();
+            f.len = 1;
+            f.start = self.shape.last().map_or(0, |l| l.start + l.len);
+            self.shape.push(f);
+            self.data.push(item);
+            optimise_tail(self);
+        }
+    }
+}
+
+impl<F: Eq + Clone> From<Vec<F>> for Poly<F> {
+    fn from(value: Vec<F>) -> Self {
+        let mut new = Self::default();
+        new.extend(value.into_iter());
+        new
     }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct PolyRef<'a, 'b, F> {
     data: &'a Vec<F>,
-    shape: &'b Shape,
+    shape: &'b Vec<Fragment>,
 }
 
-impl<F: Clone> Split for Poly<F> {
+
+/// Merges last and one before last fragments of given poly
+/// Assumes that they can be merged and are correct
+fn merge_last_fragments<F: Clone>(poly: &mut Poly<F>) {
+    let last = poly.shape.pop().unwrap();
+    let prev = poly.shape.last_mut().unwrap();
+    match (&prev.content, last.content) {
+        (FragmentContent::Data, FragmentContent::Data) => {
+            poly.data.pop().unwrap();
+            prev.len += last.len;
+        }
+        (FragmentContent::Data, FragmentContent::Consts) => {
+            for _ in 0..(last.len - 1) {
+                poly.data.push(poly.data.last().unwrap().clone());
+            }
+            prev.len += last.len;
+        }
+        (FragmentContent::Consts, FragmentContent::Data) => {
+            unreachable!()
+        }
+        (FragmentContent::Consts, FragmentContent::Consts) => {
+            if prev.len == 1 && last.len == 1 {
+                prev.content = Data;
+            }
+            prev.len += last.len;
+        }
+    }
+}
+
+
+const const_merge_thresh: usize = 2;
+
+fn should_merge<F: Eq>(poly: &Poly<F>, f1: &Fragment, f2: &Fragment) -> bool {
+    match (&f1.content, &f2.content) {
+        (FragmentContent::Data, FragmentContent::Data) => true,
+        (FragmentContent::Data, FragmentContent::Consts) => {
+            f2.len < const_merge_thresh
+        },
+        (FragmentContent::Consts, FragmentContent::Data) => false,
+        (FragmentContent::Consts, FragmentContent::Consts) => {
+            (poly.data[f1.idx] == poly.data[f2.idx]) || (f1.len == 1 && f2.len == 1)
+        },
+    }
+}
+
+fn optimise_tail<F: Clone + Eq>(poly: &mut Poly<F>) {
+    while poly.shape.len() >= 2 && should_merge(&poly, &poly.shape[poly.shape.len() - 2], &poly.shape[poly.shape.len() - 1]) {
+        merge_last_fragments(poly);
+    }
+}
+
+impl<F: Clone + Eq> Split for Poly<F> {
     fn split(&self) -> (Self, Self) {
         let mut l = Self::default();
         let mut r = Self::default();
-        let mut data_len_taken = 0;
+
         for fragment in &self.shape {
-            if fragment.len() > 2 {
-                let mut l_frag = Fragment::default();
-                let mut r_frag = Fragment::default();
-                l_frag.start = fragment.start / 2;
-                r_frag.start = fragment.start / 2;
+            let mut l_frag = Fragment::new_of(fragment.content);
+            let mut r_frag = Fragment::new_of(fragment.content);
 
-                r_frag.data_len = fragment.data_len / 2;
-                l_frag.data_len = fragment.data_len - r_frag.data_len;
+            l_frag.start = fragment.start / 2; // unsure about this
+            r_frag.start = fragment.start / 2; // unsure about this
 
-                l_frag.continuation_len = fragment.continuation_len / 2;
-                r_frag.continuation_len = fragment.continuation_len - l_frag.continuation_len;
+            r_frag.len = fragment.len / 2;
+            l_frag.len = fragment.len - r_frag.len;
 
-                { // THIS BLOCK IS ABSOLUTE BULLSHIT BUT RIGHT NOW IT IS A NECESSITY
-                    if l_frag.continuation_len > 0 {
-                        l.continuations.push(self.continuations[fragment.continuation_idx].clone());
-                        l_frag.continuation_idx = l.continuations.len() - 1;
+            match fragment.content {
+                FragmentContent::Data => {
+                    let (mut l_iter, mut r_iter) = self.data.iter().skip(fragment.idx).take(fragment.len).tee();
+                    let (mut l_iter, mut r_iter) = (l_iter.step_by(2), r_iter.skip(1).step_by(2));
+
+                    if l_frag.len > 0 {
+                        l_frag.idx = l.data.len();
+                        l.data.extend(l_iter.cloned());
                     }
-                    if r_frag.continuation_len > 0 {
-                        r.continuations.push(self.continuations[fragment.continuation_idx].clone());
-                        r_frag.continuation_idx = r.continuations.len() - 1;
+                    if r_frag.len > 0 {
+                        r_frag.idx = r.data.len();
+                        r.data.extend(r_iter.cloned());
                     }
-
-                    l_frag.data_idx = l.data.len();
-                    r_frag.data_idx = r.data.len();
                 }
-                let (mut l_iter, mut r_iter) = self.data.iter().skip(data_len_taken).take(fragment.data_len).tee();
-                let (mut l_iter, mut r_iter) = (l_iter.step_by(2), r_iter.skip(1).step_by(2));
+                FragmentContent::Consts => {
+                    if l_frag.len > 0 {
+                        l_frag.idx = l.data.len();
+                        l.data.push(self.data[fragment.idx].clone());
+                    }
+                    if r_frag.len > 0 {
+                        r_frag.idx = r.data.len();
+                        r.data.push(self.data[fragment.idx].clone());
+                    }
+                }
+            }
 
-                data_len_taken += fragment.data_len;
-
-                l.data.extend(l_iter.cloned());
-                r.data.extend(r_iter.cloned());
-
+            if l_frag.len > 0 {
                 l.shape.push(l_frag);
+            }
+            if r_frag.len > 0 {
                 r.shape.push(r_frag);
             }
-            else {
-                todo!()
-            }
+            optimise_tail(&mut l);
+            optimise_tail(&mut r);
         }
         (l, r)
     }
@@ -99,121 +187,99 @@ impl<F: Clone> Split for Poly<F> {
 
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
     use crate::poly::{Fragment, Poly, Split};
+    use crate::poly::FragmentContent::{Consts, Data};
+
 
     #[test]
-    fn split_poly() {
-        let p = Poly {
-            data: vec![
-                1, 2, 3, // 0
-                4, 5, // 1 1
-                6, // 2 2 2 2 2 2 2
-            ],
-            continuations: vec![
-                0,
-                1,
-                2
-            ],
+    fn from_vec() {
+        let v = vec![
+            1, 2, 3, 0,
+            0, 0, 0, 4,
+            5, 6, 7, 8,
+            0, 0, 0, 9,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            1, 2, 2, 3,
+            4, 4, 5, 5,
+        ];
+        let p = Poly::from(v);
+        let ep = Poly {
+            data: vec![],
             shape: vec![
                 Fragment {
-                    data_idx: 0,
-                    data_len: 3,
-                    continuation_idx: 0,
-                    continuation_len: 1,
+                    idx: 0,
+                    len: 3,
+                    content: Data,
                     start: 0,
                 },
                 Fragment {
-                    data_idx: 3,
-                    data_len: 2,
-                    continuation_idx: 1,
-                    continuation_len: 2,
-                    start: 4,
+                    idx: 3,
+                    len: 4,
+                    content: Consts,
+                    start: 3,
                 },
                 Fragment {
-                    data_idx: 5,
-                    data_len: 1,
-                    continuation_idx: 2,
-                    continuation_len: 7,
-                    start: 8,
+                    idx: 4,
+                    len: 5,
+                    content: Data,
+                    start: 7,
+                },
+                Fragment {
+                    idx: 9,
+                    len: 3,
+                    content: Consts,
+                    start: 12,
+                },
+                Fragment {
+                    idx: 12,
+                    len: 1,
+                    content: Consts,
+                    start: 15,
+                },
+                Fragment {
+                    idx: 13,
+                    len: 8,
+                    content: Consts,
+                    start: 16,
+                },
+                Fragment {
+                    idx: 12,
+                    len: 1,
+                    content: Consts,
+                    start: 15,
+                },
+                Fragment {
+                    idx: 13,
+                    len: 8,
+                    content: Consts,
+                    start: 16,
                 },
             ],
         };
+        assert_eq!(p, ep);
+    }
+
+    #[test]
+    fn split() {
+        let v = vec![
+            1, 2, 3, 0,
+            0, 0, 0, 4,
+            5, 6, 7, 8,
+            0, 0, 0, 9,
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            1, 2, 2, 3,
+            4, 5, 4, 5,
+        ];
+        let (mut lvi,mut rvi) = v.iter().cloned().tee();
+        let (lv, rv) = (lvi.step_by(2).collect_vec(), rvi.skip(1).step_by(2).collect_vec());
+        let p = Poly::from(v);
+        let el = Poly::from(lv);
+        let er = Poly::from(rv);
         let (l, r) = p.split();
-        assert_eq!(
-            l,
-            Poly {
-                data: vec![
-                    1, 3,
-                    4, // 1
-                    6, // 2 2 2
-                ],
-                continuations: vec![
-                    // _
-                    1,
-                    2,
-                ],
-                shape: vec![
-                    Fragment {
-                        data_idx: 0,
-                        data_len: 2,
-                        continuation_idx: 0,
-                        continuation_len: 0,
-                        start: 0,
-                    },
-                    Fragment {
-                        data_idx: 2,
-                        data_len: 1,
-                        continuation_idx: 0,
-                        continuation_len: 1,
-                        start: 2,
-                    },
-                    Fragment {
-                        data_idx: 3,
-                        data_len: 1,
-                        continuation_idx: 1,
-                        continuation_len: 3,
-                        start: 4,
-                    },
-                ],
-            }
-        );
-        assert_eq!(
-            r,
-            Poly {
-                data: vec![
-                    2, // 0
-                    5, // 1
-                    // 2, 2 2 2
-                ],
-                continuations: vec![
-                    0,
-                    1,
-                    2,
-                ],
-                shape: vec![
-                    Fragment {
-                        data_idx: 0,
-                        data_len: 1,
-                        continuation_idx: 0,
-                        continuation_len: 1,
-                        start: 0,
-                    },
-                    Fragment {
-                        data_idx: 1,
-                        data_len: 1,
-                        continuation_idx: 1,
-                        continuation_len: 1,
-                        start: 2,
-                    },
-                    Fragment {
-                        data_idx: 2,
-                        data_len: 0,
-                        continuation_idx: 2,
-                        continuation_len: 4,
-                        start: 4,
-                    },
-                ],
-            }
-        )
+        assert_eq!(l, el);
+        assert_eq!(r, er);
     }
 }

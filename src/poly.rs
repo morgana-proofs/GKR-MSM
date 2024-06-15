@@ -1,8 +1,10 @@
 use std::cmp::min;
 use std::fmt::Debug;
 use std::io::repeat;
+use std::sync::Arc;
 use ark_bls12_381::Fr;
-use itertools::{Itertools, repeat_n};
+use ark_std::iterable::Iterable;
+use itertools::{Either, Itertools, repeat_n};
 use crate::poly::FragmentContent::{Consts, Data};
 
 pub trait Split: Sized {
@@ -34,23 +36,89 @@ impl Fragment {
     }
 }
 
+
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct Shape {
+    shape: Vec<Fragment>,
+    splits: Option<Arc<Shape>>,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct Poly<F> {
     data: Vec<F>,
-    continuations: Vec<F>,
-    shape: Vec<Fragment>,
+    shape: Arc<Shape>,
 }
 
-impl<F> Default for Poly<F> {
-    fn default() -> Self {
+impl<F> Poly<F> {
+    pub fn new(data: Vec<F>, shape: Arc<Shape>) -> Self {
         Self {
-            data: vec![],
-            continuations: vec![],
-            shape: vec![],
+            data,
+            shape,
+        }
+    }
+
+    fn get_by_fragment(&self, frag: &Fragment, idx: usize) -> &F {
+        match frag.content {
+            Data => &self.data[frag.idx + idx],
+            Consts => &self.data[frag.idx],
         }
     }
 }
-//
+
+impl<F: Clone> Poly<F> {
+    fn split_into_shape(&self, target: &Arc<Shape>) -> (Self, Self) {
+        let last_target = target.shape.last().unwrap();
+        let data_size = last_target.idx + match last_target.content {
+            Data => last_target.len,
+            Consts => 1,
+        };
+        let (mut l, mut r) = (Self::new(Vec::with_capacity(data_size), target.clone()), Self::new(Vec::with_capacity(data_size), target.clone()));
+
+        let mut self_iter = self.shape.shape.iter();
+        let mut target_iter = target.shape.iter();
+
+        let mut self_frag = self_iter.next();
+        let mut self_frag_counter = 0;
+        for target_frag in target_iter {
+            match &target_frag.content {
+                Data => {
+                    for _ in 0..target_frag.len {
+                        l.data.push(self.get_by_fragment(self_frag.unwrap(), self_frag_counter).clone());
+                        self_frag_counter += 1;
+                        r.data.push(self.get_by_fragment(self_frag.unwrap(), self_frag_counter).clone());
+                        self_frag_counter += 1;
+
+                        if self_frag_counter >= self_frag.unwrap().len {
+                            self_frag = self_iter.next();
+                            self_frag_counter = 0;
+                        }
+                    }
+                }
+                Consts => {
+                    l.data.push(self.get_by_fragment(self_frag.unwrap(), self_frag_counter).clone());
+                    r.data.push(self.get_by_fragment(self_frag.unwrap(), self_frag_counter).clone());
+                    self_frag_counter += target_frag.len * 2;
+
+                    if self_frag_counter >= self_frag.unwrap().len {
+                        self_frag = self_iter.next();
+                        self_frag_counter = 0;
+                    }
+                }
+            }
+        }
+
+        (l, r)
+    }
+}
+
+impl<F: Clone> Split for Poly<F> {
+    fn split(&self) -> (Self, Self) {
+        let Some(split) = &self.shape.splits else { panic!() };
+        self.split_into_shape(split)
+    }
+}
+
 // impl<F: Eq + Clone> Extend<F> for Poly<F> {
 //     fn extend<T: IntoIterator<Item=F>>(&mut self, iter: T) {
 //         let mut iter = iter.into_iter();
@@ -90,14 +158,9 @@ impl<F> Default for Poly<F> {
 impl <F: Clone> Into<Vec<F>> for Poly<F> {
     fn into(self) -> Vec<F> {
         let mut out = vec![];
-        for fragment in &self.shape {
-            match fragment.content {
-                Data => {
-                    out.extend(self.data[fragment.idx..(fragment.idx + fragment.len)].iter().cloned());
-                }
-                Consts => {
-                    out.extend(repeat_n(self.data[fragment.idx].clone(), fragment.len));
-                }
+        for fragment in &self.shape.shape {
+            for idx in 0..fragment.len {
+                out.push(self.get_by_fragment(fragment, idx).clone());
             }
         }
         out
@@ -240,125 +303,100 @@ impl Split for Vec<Fragment> {
 }
 
 
+impl Shape {
+    pub fn split(&mut self) {
+        match &mut self.splits {
+            None => {
+                self.splits = Some(Arc::new(Shape { shape: self.shape.split().0, splits: None }))
+            }
+            _ => {}
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use itertools::Itertools;
-    use crate::poly::{Fragment, Poly, Split};
+    use crate::poly::{Fragment, Poly, Shape, Split};
     use crate::poly::FragmentContent::{Consts, Data};
 
-
     #[test]
-    // fn from_vec() {
-    //     let v = vec![
-    //         1, 2, 3, 0,
-    //         0, 0, 0, 4,
-    //         5, 6, 7, 8,
-    //         0, 0, 0, 9,
-    //         0, 0, 0, 0,
-    //         0, 0, 0, 0,
-    //         1, 2, 2, 3,
-    //         4, 4, 5, 5,
-    //     ];
-    //     let p = Poly::from(v.clone());
-    //     let ep = Poly {
-    //         data: vec![
-    //             1, 2, 3, 0, 4, 5, 6, 7, 8, 0, 9, 0, 1, 2, 3, 4, 5,
-    //         ],
-    //         shape: vec![
-    //             Fragment {
-    //                 idx: 0,
-    //                 len: 3,
-    //                 content: Data,
-    //                 start: 0,
-    //             },
-    //             Fragment {
-    //                 idx: 3,
-    //                 len: 4,
-    //                 content: Consts,
-    //                 start: 3,
-    //             },
-    //             Fragment {
-    //                 idx: 4,
-    //                 len: 5,
-    //                 content: Data,
-    //                 start: 7,
-    //             },
-    //             Fragment {
-    //                 idx: 9,
-    //                 len: 3,
-    //                 content: Consts,
-    //                 start: 12,
-    //             },
-    //             Fragment {
-    //                 idx: 10,
-    //                 len: 1,
-    //                 content: Consts,
-    //                 start: 15,
-    //             },
-    //             Fragment {
-    //                 idx: 11,
-    //                 len: 8,
-    //                 content: Consts,
-    //                 start: 16,
-    //             },
-    //             Fragment {
-    //                 idx: 12,
-    //                 len: 1,
-    //                 content: Consts,
-    //                 start: 24,
-    //             },
-    //             Fragment {
-    //                 idx: 13,
-    //                 len: 2,
-    //                 content: Consts,
-    //                 start: 25,
-    //             },
-    //             Fragment {
-    //                 idx: 14,
-    //                 len: 1,
-    //                 content: Consts,
-    //                 start: 27,
-    //             },
-    //             Fragment {
-    //                 idx: 15,
-    //                 len: 2,
-    //                 content: Consts,
-    //                 start: 28,
-    //             },
-    //             Fragment {
-    //                 idx: 16,
-    //                 len: 2,
-    //                 content: Consts,
-    //                 start: 30,
-    //             },
-    //         ],
-    //     };
-    //     assert_eq!(v, <Poly<i32> as Into<Vec<i32>>>::into(p.clone()));
-    //     assert_eq!(p, ep);
-    // }
+    fn split_poly() {
+        let v = vec![
+            1, 2, 3, 4,
+            0, 0, 0, 0,
+            1, 2, 3, 4, 5, 6,
+            0, 0,
+            9, 9, 9, 9,
+            1, 2, 3, 4, 5, 6, 7, 8,
+            0, 0, 0, 0,
+        ];
+        let d = vec![
+            1, 2, 3, 4,
+            0,
+            1, 2, 3, 4, 5, 6,
+            0,
+            9,
+            1, 2, 3, 4, 5, 6, 7, 8,
+            0,
+        ];
+        let s = vec![
+            Fragment {
+                idx: 0,
+                len: 4,
+                content: Data,
+                start: 0,
+            },
+            Fragment {
+                idx: 4,
+                len: 4,
+                content: Consts,
+                start: 4,
+            },
+            Fragment {
+                idx: 5,
+                len: 6,
+                content: Data,
+                start: 8,
+            },
+            Fragment {
+                idx: 11,
+                len: 2,
+                content: Consts,
+                start: 14,
+            },
+            Fragment {
+                idx: 12,
+                len: 4,
+                content: Consts,
+                start: 16,
+            },
+            Fragment {
+                idx: 13,
+                len: 8,
+                content: Data,
+                start: 20,
+            },
+            Fragment {
+                idx: 21,
+                len: 4,
+                content: Consts,
+                start: 28,
+            },
+        ];
 
-    // #[test]
-    // fn split() {
-    //     let v = vec![
-    //         1, 2, 3, 0,
-    //         0, 0, 0, 4,
-    //         5, 6, 7, 8,
-    //         0, 0, 0, 9,
-    //         0, 0, 0, 0,
-    //         0, 0, 0, 0,
-    //         1, 2, 2, 3,
-    //         4, 4, 5, 5,
-    //     ];
-    //     let (mut lvi,mut rvi) = v.iter().cloned().tee();
-    //     let (lv, rv) = (lvi.step_by(2).collect_vec(), rvi.skip(1).step_by(2).collect_vec());
-    //     let p = Poly::from(v);
-    //     let el = Poly::from(lv);
-    //     let er = Poly::from(rv);
-    //     let (l, r) = p.split();
-    //     assert_eq!(l, el);
-    //     assert_eq!(r, er);
-    // }
+        let mut shape = Shape { shape: s, splits: None };
+        shape.split();
+        let p = Poly::new(d, Arc::new(shape).clone());
+        assert_eq!(v, <Poly<i32> as Into<Vec<i32>>>::into(p.clone()));
+        let el = v.iter().cloned().step_by(2).collect_vec();
+        let er = v.iter().cloned().skip(1).step_by(2).collect_vec();
+        let (l, r) = p.split();
+        assert_eq!(el, <Poly<i32> as Into<Vec<i32>>>::into(l.clone()));
+        assert_eq!(er, <Poly<i32> as Into<Vec<i32>>>::into(r.clone()));
+    }
 
     #[test]
     fn split_shape() {
@@ -455,6 +493,5 @@ mod tests {
         assert_eq!(llll, lllr);
         let (lllll, llllr) = llll.split();
         assert_eq!(lllll, llllr);
-
     }
 }

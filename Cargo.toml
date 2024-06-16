@@ -27,6 +27,9 @@ jemalloc-ctl = { version = "0.5.4", optional = true }
 jemallocator = { version = "0.5.4", optional = true }
 profi = { version = "*", default-features = true, optional = true }
 
+num-bigint = "0.4.5"
+num-traits = "0.2.19"
+
 [features]
 parallel = []
 multicore = []

@@ -13,3 +13,4 @@ pub mod lrepoly;
 pub mod nested_poly;
 pub mod poly;
 pub mod copoly;
+pub mod non_native_opening;

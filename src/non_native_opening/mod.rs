@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use std::{fs::File, sync::Arc};
 use std::iter::repeat;
 
@@ -24,8 +25,10 @@ use crate::nested_poly::NestedPolynomial;
 use crate::protocol::bintree::{Bintree, BintreeParams, BintreeProof, BintreeProver, Layer};
 use crate::protocol::protocol::{EvalClaim, ProtocolProver};
 use crate::protocol::sumcheck::to_multieval;
-#[cfg(feature = "memprof")]
-use crate::utils::memprof;
+
+pub mod commit;
+
+
 
 pub trait MSMCircuitConfig {
     type F: PrimeField;
@@ -66,7 +69,6 @@ impl<G: CurveGroup> CommitmentKey<G> {
             &prepare_coefs(v, self.gamma),
             self.binary_extended_bases.as_ref().unwrap(),
         )
-        // G::zero()
     }
 }
 
@@ -77,7 +79,18 @@ pub struct MSMProof<G: CurveGroup> {
     output: Vec<G::ScalarField>,
 }
 
-// This function takes a bit and a point, parsed as b, p.x, p.y, and returns b ? p : zero_point
+fn two<F: PrimeField>() -> F {
+    F::one() + F::one()
+}
+
+fn bits_to_big_limb<F: PrimeField>(bits: &[F], limb_size: usize) -> Vec<F> {
+    todo!();
+}
+
+
+fn range_check_bits<F: PrimeField>(bits: &[F]) -> Vec<F> {
+    todo!();
+}
 
 fn pt_bit_choice<F: PrimeField>(args: &[F]) -> Vec<F> {
     vec![args[0] * args[1], args[0] * (args[2] - F::one()) + F::one()]

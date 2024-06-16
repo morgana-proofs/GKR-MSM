@@ -19,6 +19,8 @@ dependencies = [
  "liblasso",
  "log",
  "merlin",
+ "num-bigint",
+ "num-traits",
  "paste",
  "profi",
  "rayon",

@@ -12,13 +12,13 @@ pub trait Split: Sized {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum FragmentContent {
+pub enum FragmentContent {
     Data,
     Consts,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct Fragment {
+pub struct Fragment {
     idx: usize,
     len: usize,
     content: FragmentContent,
@@ -39,13 +39,13 @@ impl Fragment {
 
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct Shape {
+pub struct Shape {
     shape: Vec<Fragment>,
     splits: Option<Arc<Shape>>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-struct Poly<F> {
+pub struct Poly<F> {
     data: Vec<F>,
     shape: Arc<Shape>,
 }

@@ -54,6 +54,30 @@ pub fn log_floor(mut x: usize) -> u8 {
     ret
 }
 
+
+pub struct StSubIter {
+    start: usize,
+    end: usize,
+}
+
+impl StSubIter {
+    pub fn new(start: usize, end: usize) -> Self {
+        assert!(start <= end);
+        StSubIter { start, end }
+    }
+}
+
+impl Iterator for StSubIter {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.end == self.start {return None}
+        let loglength = min(count_trailing_zeros(self.start), log_floor(self.end - self.start));
+        self.start += 1 << loglength;
+        Some(loglength)
+    }
+}
+
 /// Divides a contigious segment into the standard subsets.
 pub fn compute_segment_split(mut start: usize, end: usize) -> Vec<StandardSubset> {
     let mut ret = vec![];
@@ -63,6 +87,90 @@ pub fn compute_segment_split(mut start: usize, end: usize) -> Vec<StandardSubset
         start += 1 << loglength;
     }
     ret
+}
+
+/// Bintree node. Internal node describes positions of of left and right children,
+/// leaf describes the address of the leaf content.
+#[derive(Clone, Copy, Debug)]
+pub enum BinTreeNode {
+    Internal(usize, usize),
+    Leaf(usize),
+}
+
+#[derive(Clone, Debug)]
+pub struct BinTree {
+    nodes: Vec<BinTreeNode>,
+}
+
+
+/// Assumes that logsizes satisfy our standard subset condition, i.e. size[i] | sum.
+pub fn standard_subsets_bintree(logsizes: impl Iterator<Item = u8>) -> BinTree {
+    let mut nodes = vec![]; // Keeps the increasing sequence of nodes.
+    let mut node_logsizes : Vec<u8> = vec![];
+    let mut front : Vec<usize> = vec![];
+
+    let mut to_append;
+    for (i, logsize) in logsizes.enumerate() {
+        nodes.push(BinTreeNode::Leaf(i));
+        node_logsizes.push(logsize);
+        to_append = nodes.len() - 1;
+        loop {
+            if let Some(&last_node_idx) = front.last() {
+                let a = node_logsizes[last_node_idx]; 
+                let b = node_logsizes[to_append];
+                if a > b {
+                    front.push(to_append);
+                    break;
+                } else if a == b {
+                    front.pop();
+                    nodes.push(BinTreeNode::Internal(last_node_idx, to_append));
+                    node_logsizes.push(a + 1);
+                    to_append = nodes.len() - 1;
+                } else {
+                    panic!("Ill-formed sequence of logsizes.");
+                }
+            } else {
+                front.push(to_append);
+                break;
+            }
+        }
+    }
+    BinTree { nodes }
+}
+
+pub struct PrefixFoldIter<T: Iterator, Acc : Clone, F: Fn(&Acc, &T::Item) -> Acc> {
+    acc: Acc,
+    iter: T,
+    f: F,
+}
+
+impl<T: Iterator, Acc : Clone, F: Fn(&Acc, &T::Item) -> Acc> Iterator for PrefixFoldIter<T, Acc, F> {
+    type Item = (T::Item, Acc);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(next_item) = self.iter.next() {
+            self.acc = (self.f)(&self.acc, &next_item);
+            Some((next_item, self.acc.clone()))
+        } else {
+            None
+        }
+    }
+}
+
+pub trait PrefixFold : Iterator {
+    fn prefix_fold<
+        Acc: Clone,
+        F: Fn(&Acc, &Self::Item) -> Acc
+    >(self, init: Acc, f: F) -> PrefixFoldIter<Self, Acc, F> where Self : Sized {
+        PrefixFoldIter { acc: init, iter: self, f }
+    }
+}
+
+impl<T: Iterator> PrefixFold for T {}
+
+
+pub fn compute_subsegments(sizes: impl Iterator<Item = usize>) -> impl Iterator<Item = u8> {
+    sizes.prefix_fold(0, |a, b| *a + b).map(|(size, sum)| StSubIter::new(sum - size, sum)).flatten()
 }
 
 
@@ -329,6 +437,7 @@ impl<F: Field> Copolynomial<F> for RotPoly<F> {
 
 mod tests {
     use std::iter::repeat_with;
+    use std::mem::MaybeUninit;
 
     use ark_bls12_381::Fr;
     use ark_std::test_rng;
@@ -558,4 +667,14 @@ mod tests {
             }
         }
     }
+
+
+    #[test]
+
+    fn test_bintree() {
+        let sizes = vec![13, 8, 7, 4];
+        let bintree = standard_subsets_bintree(compute_subsegments(sizes.into_iter()));
+        println!("{:?}", bintree);
+    }
+
 }

@@ -7,6 +7,8 @@ use std::{cmp::min, collections::VecDeque};
 use ark_ff::{Field, PrimeField};
 use rayon::prelude::*;
 
+use crate::poly::Fragment;
+
 #[derive(Clone, Copy)]
 /// A segment starting at start and ending at start + 2^loglength, such that 2^loglength | start.
 pub struct StandardSubset {

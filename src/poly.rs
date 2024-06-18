@@ -19,13 +19,13 @@ pub trait Split: Sized {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-enum FragmentContent {
+pub enum FragmentContent {
     Data,
     Consts,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-struct Fragment {
+pub struct Fragment {
     idx: usize,
     len: usize,
     content: FragmentContent,

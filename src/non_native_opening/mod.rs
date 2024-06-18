@@ -27,6 +27,7 @@ use crate::protocol::protocol::{EvalClaim, ProtocolProver};
 use crate::protocol::sumcheck::to_multieval;
 
 pub mod commit;
+pub mod open;
 
 
 

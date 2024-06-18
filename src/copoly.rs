@@ -54,6 +54,10 @@ pub fn log_floor(mut x: usize) -> u8 {
     ret
 }
 
+pub struct FragmentQuery {
+    fragments: Vec<Fragment>,
+}
+
 
 pub struct StSubIter {
     start: usize,

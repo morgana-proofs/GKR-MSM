@@ -10,7 +10,7 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 use merlin::Transcript;
 
 use GKR_MSM::grand_add::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
-use GKR_MSM::nested_poly::NestedPolynomial;
+use GKR_MSM::Polynomial;;
 use GKR_MSM::protocol::bintree::{Bintree, BintreeParams, BintreeProver, Layer};
 use GKR_MSM::protocol::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver};
 use GKR_MSM::protocol::sumcheck::to_multieval;
@@ -20,7 +20,7 @@ fn prepare_params(
     log_num_points: usize,
 ) -> (
     Vec<Fr>,
-    Vec<NestedPolynomial<Fr>>,
+    Vec<Polynomial<Fr>>,
     BintreeParams<Fr>,
 ) {
     let gen = &mut test_rng();
@@ -112,9 +112,9 @@ fn prepare_witness((
     params,
 ): (
     Vec<Fr>,
-    Vec<NestedPolynomial<Fr>>,
+    Vec<Polynomial<Fr>>,
     &BintreeParams<Fr>,
-)) -> (MultiEvalClaim<Fr>, Vec<Vec<NestedPolynomial<Fr>>>) {
+)) -> (MultiEvalClaim<Fr>, Vec<Vec<Polynomial<Fr>>>) {
     let (trace, output) = Bintree::witness(points_table_poly, &params);
 
     let claims_to_reduce = to_multieval(EvalClaim {

@@ -9,7 +9,7 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]
 use profi::prof;
 use rayon::prelude::*;
-use crate::nested_poly::NestedPolynomial;
+use crate::polynomial::nested_poly::NestedPolynomial;
 use crate::protocol::protocol::{MultiEvalClaim, PolynomialMapping};
 
 pub trait TwistedEdwardsConfig {

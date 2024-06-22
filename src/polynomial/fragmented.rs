@@ -1,18 +1,15 @@
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::fmt::Debug;
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::repeat;
-use std::marker::PhantomData;
+use std::hash::{Hash, Hasher};
 use std::ops::{Add, AddAssign, Mul, Sub};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use ark_ff::Field;
 use ark_std::iterable::Iterable;
-use ark_std::rand;
 use ark_std::rand::{Rng, RngCore};
-use itertools::{Either, Itertools, repeat_n};
+use itertools::Itertools;
 use liblasso::utils::math::Math;
 use rayon::prelude::*;
-use crate::poly::FragmentContent::{Consts, Data};
+use crate::polynomial::fragmented::FragmentContent::{Consts, Data};
 
 pub trait Split: Sized {
     fn split(&self) -> (Self, Self);
@@ -44,10 +41,12 @@ impl Fragment {
 }
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
-struct Shape {
-    shape: Vec<Fragment>,
-    data_len: usize,
-    consts_len: usize,
+pub struct Shape {
+    pub shape: Vec<Fragment>,
+    pub data_len: usize,
+    pub consts_len: usize,
+    
+    pub split: Arc<OnceLock<Shape>>
 }
 
 /// Merges last and one before last fragments of given poly
@@ -55,16 +54,16 @@ struct Shape {
 fn merge_last_fragments(shape: &mut Vec<Fragment>, last: Fragment) {
     let prev = shape.last_mut().unwrap();
     match (&prev.content, last.content) {
-        (FragmentContent::Data, FragmentContent::Data) => {
+        (Data, Data) => {
             prev.len += last.len;
         }
-        (FragmentContent::Data, FragmentContent::Consts) => {
+        (Data, Consts) => {
             prev.len += last.len;
         }
-        (FragmentContent::Consts, FragmentContent::Data) => {
+        (Consts, Data) => {
             unreachable!()
         }
-        (FragmentContent::Consts, FragmentContent::Consts) => {
+        (Consts, Consts) => {
             prev.len += last.len;
         }
     }
@@ -72,14 +71,14 @@ fn merge_last_fragments(shape: &mut Vec<Fragment>, last: Fragment) {
 
 const const_merge_thresh: usize = 2;
 
-fn should_merge(poly: &Vec<Fragment>, f1: &Fragment, f2: &Fragment) -> bool {
+fn should_merge(f1: &Fragment, f2: &Fragment) -> bool {
     match (&f1.content, &f2.content) {
-        (FragmentContent::Data, FragmentContent::Data) => true,
-        (FragmentContent::Data, FragmentContent::Consts) => {
+        (Data, Data) => true,
+        (Data, Consts) => {
             f2.len < const_merge_thresh
         },
-        (FragmentContent::Consts, FragmentContent::Data) => false,
-        (FragmentContent::Consts, FragmentContent::Consts) => {
+        (Consts, Data) => false,
+        (Consts, Consts) => {
             f1.idx == f2.idx
         },
     }
@@ -92,13 +91,14 @@ impl Shape {
         new.finish();
         new
     }
+
     fn add(&mut self, fragment: Fragment) {
         match self.shape.last() {
             None => {
                 self.shape.push(fragment);
             }
             Some(prev) => {
-                if should_merge(&self.shape, &prev, &fragment) {
+                if should_merge(&prev, &fragment) {
                     merge_last_fragments(&mut self.shape, fragment)
                 } else {
                     self.shape.push(fragment);
@@ -155,18 +155,96 @@ impl Shape {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct Poly<F> {
-    data: Vec<F>,
-    consts: Vec<F>,
+impl Shape {
+    pub fn split(&self) -> &Self {
+        self.split.get_or_init(|| {
+            let mut l = Self::default();
+            let mut data_idx = 0;
+            for frag in self.shape.iter() {
+                let Fragment { mut len, content, mut start , idx} = frag;
+                if start % 2 == 1 {
+                    // steal first element into previous frag, push previous frag
+                    match content {
+                        Data => {
+                            len += 1;
+                            start -= 1;
+                        }
+                        Consts => {
+                            len -= 1;
+                            start += 1;
+                            l.add(Fragment {
+                                idx: data_idx,
+                                len: 1,
+                                content: Data,
+                                start: (start - 2) / 2,
+                            });
+                            data_idx += 1;
+                        }
+                    }
+                }
+                if len % 2 == 1 {
+                    len -= 1;
+                }
+                if len > 0 {
+                    match content {
+                        Data => {
+                            l.add(Fragment {
+                                idx: data_idx,
+                                len: len / 2,
+                                content: Data,
+                                start: start / 2,
+                            });
+                            data_idx += len / 2;
+                        }
+                        Consts => {
+                            if len / 2 < const_merge_thresh {
+                                l.add(Fragment {
+                                    idx: data_idx,
+                                    len: len / 2,
+                                    content: Data,
+                                    start: start / 2,
+                                });
+                                data_idx += len / 2;
+                            } else {
+                                l.add(Fragment {
+                                    idx: *idx,
+                                    len: len / 2,
+                                    content: Consts,
+                                    start: start / 2,
+                                });
+                            }
+                        }
+                    };
+                }
+            }
+            l.finish();
+            l  
+        })
+    }
 }
 
-impl<F> Poly<F> {
-    pub fn new(data: Vec<F>, consts: Vec<F>) -> Self {
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct FragmentedPoly<F> {
+    pub data: Vec<F>,
+    pub consts: Vec<F>,
+    pub shape: Arc<OnceLock<Shape>>,
+}
+
+impl<F> FragmentedPoly<F> {
+    pub fn new(data: Vec<F>, consts: Vec<F>, shape: Arc<OnceLock<Shape>>) -> Self {
         Self {
             data,
             consts,
+            shape,
         }
+    }
+
+    pub fn num_vars(&self) -> usize {
+        todo!()
+    }
+
+    pub fn evaluate(&self, r: &F) -> F {
+        todo!()
     }
 
     fn get_by_fragment(&self, frag: &Fragment, idx: usize) -> &F {
@@ -177,48 +255,63 @@ impl<F> Poly<F> {
     }
 }
 
-impl<F: Clone> Poly<F> {
-    pub fn morph_into_shape(&self, source: &Shape, target: &Shape) -> Self {
-        let mut new = Self::new(Vec::with_capacity(target.data_len), Vec::with_capacity(target.consts_len));
-        let mut source_iter = source.shape.iter();
-        let mut target_iter = target.shape.iter();
-
-        let mut source_frag = source_iter.next();
-        let mut source_frag_counter = 0;
-        for target_frag in target_iter {
-            match &target_frag.content {
-                Data => {
-                    for _ in 0..target_frag.len {
-                        new.data.push(self.get_by_fragment(source_frag.unwrap(), source_frag_counter).clone());
-                        source_frag_counter += 1;
-
-                        if source_frag_counter >= source_frag.unwrap().len {
-                            source_frag = source_iter.next();
-                            source_frag_counter = 0;
-                        }
-                    }
-                }
-                Consts => {
-                    new.consts.push(self.get_by_fragment(source_frag.unwrap(), source_frag_counter).clone());
-                    source_frag_counter += target_frag.len;
-
-                    if source_frag_counter >= source_frag.unwrap().len {
-                        source_frag = source_iter.next();
-                        source_frag_counter = 0;
-                    }
-                }
-            }
+impl<F: From<u64>> FragmentedPoly<F> {
+    pub fn rand<RNG: Rng>(rng: &mut RNG, frag_size: usize, frags: usize) -> Self {
+        let shape = Arc::new(OnceLock::new());
+        let s = shape.get_or_init(|| Shape::rand(rng, frag_size, frags));
+        Self {
+            data: (0..s.data_len).map(|_| F::from(rng.next_u64())).collect_vec(),
+            consts: (0..s.consts_len).map(|_| F::from(rng.next_u64())).collect_vec(),
+            shape,
         }
-        new
     }
+}
 
-    pub fn split_into_shape(&self, source: &Shape, target: &Shape) -> (Self, Self) {
+impl<F: Clone> FragmentedPoly<F> {
+    // pub fn morph_into_shape(&self, source: &Shape, target: &Shape) -> Self {
+    //     let mut new = Self::new(Vec::with_capacity(target.data_len), Vec::with_capacity(target.consts_len));
+    //     let mut source_iter = source.shape.iter();
+    //     let mut target_iter = target.shape.iter();
+    //
+    //     let mut source_frag = source_iter.next();
+    //     let mut source_frag_counter = 0;
+    //     for target_frag in target_iter {
+    //         match &target_frag.content {
+    //             Data => {
+    //                 for _ in 0..target_frag.len {
+    //                     new.data.push(self.get_by_fragment(source_frag.unwrap(), source_frag_counter).clone());
+    //                     source_frag_counter += 1;
+    //
+    //                     if source_frag_counter >= source_frag.unwrap().len {
+    //                         source_frag = source_iter.next();
+    //                         source_frag_counter = 0;
+    //                     }
+    //                 }
+    //             }
+    //             Consts => {
+    //                 new.consts.push(self.get_by_fragment(source_frag.unwrap(), source_frag_counter).clone());
+    //                 source_frag_counter += target_frag.len;
+    //
+    //                 if source_frag_counter >= source_frag.unwrap().len {
+    //                     source_frag = source_iter.next();
+    //                     source_frag_counter = 0;
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     new
+    // }
+
+    pub fn split(&self) -> (Self, Self) {
+        let source = self.shape.get().unwrap();
+        let target = self.shape.get().unwrap().split();
+        let split_shape = self.shape.get().unwrap().split.clone();
         let last_target = target.shape.last().unwrap();
         let data_size = last_target.idx + match last_target.content {
             Data => last_target.len,
             Consts => 1,
         };
-        let (mut l, mut r) = (Self::new(Vec::with_capacity(data_size), self.consts.clone()), Self::new(Vec::with_capacity(data_size), self.consts.clone()));
+        let (mut l, mut r) = (Self::new(Vec::with_capacity(data_size), self.consts.clone(), split_shape.clone()), Self::new(Vec::with_capacity(data_size), self.consts.clone(), split_shape));
 
         let mut source_iter = source.shape.iter();
         let mut target_iter = target.shape.iter();
@@ -259,16 +352,18 @@ impl<F: Clone> Poly<F> {
     }
 }
 
-impl<F: AddAssign + Mul<Output=F> + Sub<Output=F> + Send + Sync + Sized + Copy> Poly<F> {
-    pub fn bind(a: &mut Self, b: &Self, f: &F) {
-        a.data.par_iter_mut()
-            .chain(a.consts.par_iter_mut())
-            .zip(b.data.par_iter().chain(b.consts.par_iter()))
+impl<F: AddAssign + Mul<Output=F> + Sub<Output=F> + Send + Sync + Sized + Copy> FragmentedPoly<F> {
+    pub fn bind(&self, f: &F) -> Self {
+        let (mut l, r) = self.split();
+        l.data.par_iter_mut()
+            .chain(l.consts.par_iter_mut())
+            .zip(r.data.par_iter().chain(r.consts.par_iter()))
             .map(|(l, r)| { *l += *f * (*r - *l) }).count();
+        l
     }
 }
 
-impl <F: Clone> Poly<F> {
+impl <F: Clone> FragmentedPoly<F> {
     fn into_vec(self, shape: &Shape) -> Vec<F> {
         let mut out = vec![];
         for fragment in &shape.shape {
@@ -280,95 +375,31 @@ impl <F: Clone> Poly<F> {
     }
 }
 
-impl Shape {
-    fn split(&self) -> Self {
-        let mut l = Self::default();
-        let mut data_idx = 0;
-        for frag in self.shape.iter() {
-            let Fragment { mut len, content, mut start , idx} = frag;
-            if start % 2 == 1 {
-                // steal first element into previous frag, push previous frag
-                match content {
-                    Data => {
-                        len += 1;
-                        start -= 1;
-                    }
-                    Consts => {
-                        len -= 1;
-                        start += 1;
-                        l.add(Fragment {
-                            idx: data_idx,
-                            len: 1,
-                            content: FragmentContent::Data,
-                            start: (start - 2) / 2,
-                        });
-                        data_idx += 1;
-                    }
-                }
-            }
-            if len % 2 == 1 {
-                len -= 1;
-            }
-            if len > 0 {
-                match content {
-                    Data => {
-                        l.add(Fragment {
-                            idx: data_idx,
-                            len: len / 2,
-                            content: Data,
-                            start: start / 2,
-                        });
-                        data_idx += len / 2;
-                    }
-                    Consts => { 
-                        if len / 2 < const_merge_thresh {
-                            l.add(Fragment {
-                                idx: data_idx,
-                                len: len / 2,
-                                content: Data,
-                                start: start / 2,
-                            });
-                            data_idx += len / 2;
-                        } else {
-                            l.add(Fragment {
-                                idx: *idx,
-                                len: len / 2,
-                                content: Consts,
-                                start: start / 2,
-                            });
-                        }
-                    }
-                };
-            }
-        }
-        l.finish();
-        l
-    }
-}
-
-
-
 
 #[cfg(test)]
 mod tests {
+    use std::cell::OnceCell;
+    use std::sync::{Arc, OnceLock, RwLock, RwLockWriteGuard, TryLockError, TryLockResult};
     use ark_ed_on_bls12_381_bandersnatch::Fr;
     use ark_std::rand::RngCore;
     use ark_std::test_rng;
     use itertools::Itertools;
     use liblasso::poly::dense_mlpoly::DensePolynomial;
-    use crate::poly::{Fragment, Poly, Shape, Split};
-    use crate::poly::FragmentContent::{Consts, Data};
+    use super::*;
 
 
     #[test]
     fn bind_rand_poly() {
         let rng = &mut test_rng();
         for _ in 0..100 {
+            let shape_cell = Arc::new(OnceLock::new());
             let shape = Shape::rand(rng, 10, 10);
+            shape_cell.set(shape.clone()).unwrap();
             let split = shape.split();
-            let p = Poly::new(
+            let p = FragmentedPoly::new(
                 (0..shape.data_len).map(|_| Fr::from(rng.next_u64())).collect_vec(),
                 (0..shape.consts_len).map(|_| Fr::from(rng.next_u64())).collect_vec(),
+                shape_cell,
             );
             let v = p.clone().into_vec(&shape);
             let mut ev = DensePolynomial::new(v.clone());
@@ -377,9 +408,7 @@ mod tests {
             let el = v.iter().cloned().step_by(2).collect_vec();
             let er = v.iter().cloned().skip(1).step_by(2).collect_vec();
 
-            let (mut l, r) = p.split_into_shape(&shape, &split);
-            Poly::bind(&mut l, &r, &f);
-            drop(r);
+            let l = p.bind(&f);
 
             assert_eq!(ev.vec().iter().take(1 << ev.num_vars).cloned().collect_vec(), l.into_vec(&split));
         }
@@ -389,16 +418,19 @@ mod tests {
     fn split_rand_poly() {
         let rng = &mut test_rng();
         for _ in 0..100 {
+            let shape_cell = Arc::new(OnceLock::new());
             let shape = Shape::rand(rng, 10, 10);
+            shape_cell.set(shape.clone()).unwrap();
             let split = shape.split();
-            let p = Poly::new(
+            let p = FragmentedPoly::new(
                 (0..shape.data_len).map(|_| rng.next_u64() % 10).collect_vec(),
                 (0..shape.consts_len).map(|_| rng.next_u64() % 10).collect_vec(),
+                shape_cell,
             );
             let v = p.clone().into_vec(&shape);
             let el = v.iter().cloned().step_by(2).collect_vec();
             let er = v.iter().cloned().skip(1).step_by(2).collect_vec();
-            let (l, r) = p.split_into_shape(&shape, &split);
+            let (l, r) = p.split();
             assert_eq!(el, l.into_vec(&split));
             assert_eq!(er, r.into_vec(&split));
         }
@@ -481,12 +513,14 @@ mod tests {
         ];
 
         let shape = Shape::new(s);
+        let shape_cell = Arc::new(OnceLock::new());
+        shape_cell.set(shape.clone()).unwrap();
         let split = shape.split();
-        let p = Poly::new(d, c);
+        let p = FragmentedPoly::new(d, c, shape_cell);
         assert_eq!(v, p.clone().into_vec(&shape));
         let el = v.iter().cloned().step_by(2).collect_vec();
         let er = v.iter().cloned().skip(1).step_by(2).collect_vec();
-        let (l, r) = p.split_into_shape(&shape, &split);
+        let (l, r) = p.split();
         assert_eq!(el, l.into_vec(&split));
         assert_eq!(er, r.into_vec(&split));
     }
@@ -576,7 +610,7 @@ mod tests {
                 start: 14,
             },
         ]);
-        assert_eq!(l, el);
+        assert_eq!(l, &el);
         let ll = l.split();
         let ell =  Shape::new(vec![
             Fragment {
@@ -586,6 +620,28 @@ mod tests {
                 start: 0,
             },
         ]);
-        assert_eq!(ll, ell);
+        assert_eq!(ll, &ell);
+    }
+    
+    #[test]
+    fn onceLock() {
+        let x = OnceLock::new();
+        fn initialize(x: &OnceLock<usize>, marker: usize) {
+            x.get_or_init(|| {
+                println!("initializing in {}", marker);
+                marker
+            });
+            println!("in {}: {:?}", marker, x.get())
+        }
+
+        rayon::scope(|s| {
+            s.spawn(|_| initialize(&x, 0));
+            s.spawn(|_| initialize(&x, 1));
+            s.spawn(|_| initialize(&x, 2));
+            s.spawn(|_| initialize(&x, 3));
+            s.spawn(|_| initialize(&x, 4));
+            s.spawn(|_| initialize(&x, 5));
+        });
+        println!("{:?}", x.get())
     }
 }

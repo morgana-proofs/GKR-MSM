@@ -8,14 +8,14 @@ use ark_std::{test_rng, UniformRand};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
-use GKR_MSM::nested_poly::{NestedPolynomial, RandParams};
+use GKR_MSM::nested_poly::{Polynomial, RandParams};
 use GKR_MSM::protocol::protocol::PolynomialMapping;
 use GKR_MSM::utils::{map_over_poly, map_over_poly_legacy};
 
 fn prepare_data(
     (filled, num_ins, num_vars): (bool, usize, usize),
 ) -> (
-    Vec<NestedPolynomial<Fr>>, PolynomialMapping<Fr>
+    Vec<Polynomial<Fr>>, PolynomialMapping<Fr>
 ) {
     let gen = &mut test_rng();
     let mut params = RandParams::default();
@@ -25,13 +25,13 @@ fn prepare_data(
         }));
     }
 
-    let mut ins = vec![NestedPolynomial::<Fr>::rand_conf(
+    let mut ins = vec![Polynomial::<Fr>::rand_conf(
         gen,
         num_vars,
         params,
     )];
     while ins.len() < num_ins {
-        ins.push(NestedPolynomial::rand_fixed_structure(gen, &ins[0].layer_num_vars).0);
+        ins.push(Polynomial::rand_fixed_structure(gen, &ins[0].layer_num_vars).0);
     }
 
     fn mapper(ins: &[Fr]) -> Vec<Fr> {

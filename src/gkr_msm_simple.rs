@@ -20,7 +20,7 @@ use crate::{
     transcript::{TranscriptReceiver, TranscriptSender},
     utils::TwistedEdwardsConfig,
 };
-use crate::nested_poly::NestedPolynomial;
+use crate::polynomial::nested_poly::NestedPolynomial;
 use crate::protocol::bintree::{Bintree, BintreeParams, BintreeProof, BintreeProver, Layer};
 use crate::protocol::protocol::{EvalClaim, ProtocolProver};
 use crate::protocol::sumcheck::to_multieval;

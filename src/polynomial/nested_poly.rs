@@ -828,7 +828,7 @@ mod tests {
     use ark_std::{rand::RngCore, test_rng, UniformRand};
     use itertools::Itertools;
     use liblasso::poly::dense_mlpoly::DensePolynomial;
-    use crate::nested_poly::{evaluate_exact, NestedPoly, NestedPolynomial, RandParams, segment_evaluate, SplitablePoly};
+    use crate::polynomial::nested_poly::{evaluate_exact, NestedPoly, NestedPolynomial, RandParams, segment_evaluate, SplitablePoly};
     use crate::protocol::protocol::PolynomialMapping;
     use crate::utils::map_over_poly_legacy;
 

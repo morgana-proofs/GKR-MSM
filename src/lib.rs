@@ -7,7 +7,5 @@ pub mod binary_msm;
 pub mod protocol;
 pub mod transcript;
 pub mod commitments;
-pub mod lrepoly;
-pub mod nested_poly;
-pub mod poly;
 pub mod copoly;
+pub mod polynomial;

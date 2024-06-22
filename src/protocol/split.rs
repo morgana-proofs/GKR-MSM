@@ -2,7 +2,8 @@ use std::marker::PhantomData;
 
 use ark_ff::PrimeField;
 use itertools::Itertools;
-use crate::nested_poly::{NestedPolynomial, SplitablePoly};
+use crate::polynomial::fragmented::FragmentedPoly;
+use crate::polynomial::nested_poly::{NestedPolynomial, SplitablePoly};
 use crate::protocol::protocol::{EvalClaim, Protocol, ProtocolProver, ProtocolVerifier};
 use crate::transcript::{Challenge, TranscriptReceiver};
 use crate::utils::{fix_var_bot, fix_var_top};

@@ -5,6 +5,7 @@
 use std::{cmp::min, collections::VecDeque};
 
 use ark_ff::{Field, PrimeField};
+use itertools::Itertools;
 use rayon::prelude::*;
 
 use crate::poly::Fragment;
@@ -56,31 +57,67 @@ pub fn log_floor(mut x: usize) -> u8 {
     ret
 }
 
-pub struct FragmentQuery {
-    fragments: Vec<Fragment>,
+// This is dual to fragments from poly.rs. Probably we should refactor this at some point.
+
+#[derive(Clone, Copy)]
+pub enum QueryContent {
+    Data,
+    Sum,
 }
 
+#[derive(Clone, Copy)]
+pub struct SegmentQuery {
+    start: usize,
+    end: usize,
+    content: QueryContent,
+}
+
+impl SegmentQuery {
+    pub fn new(start: usize, end: usize, content: QueryContent) -> Self {
+        assert!(start <= end);
+        Self {start, end, content}
+    }
+}
+
+#[derive(Clone, Copy)]
+
+pub struct StSubQuery {
+    start: usize,
+    logsize: u8,
+    content: QueryContent,
+}
+
+impl StSubQuery {
+    pub fn new_unchecked(start: usize, logsize: u8, content: QueryContent) -> Self {
+        Self {start, logsize, content}        
+    }
+
+    pub fn new(start: usize, logsize: u8, content: QueryContent) -> Self {
+        assert!((start >> logsize) << logsize == start);
+        Self::new_unchecked(start, logsize, content)
+    }
+}
 
 pub struct StSubIter {
     start: usize,
     end: usize,
+    content: QueryContent
 }
 
 impl StSubIter {
-    pub fn new(start: usize, end: usize) -> Self {
-        assert!(start <= end);
-        StSubIter { start, end }
+    pub fn new(query: SegmentQuery) -> Self {
+        StSubIter { start: query.start, end: query.end, content: query.content }
     }
 }
 
 impl Iterator for StSubIter {
-    type Item = u8;
+    type Item = StSubQuery;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.end == self.start {return None}
-        let loglength = min(count_trailing_zeros(self.start), log_floor(self.end - self.start));
-        self.start += 1 << loglength;
-        Some(loglength)
+        let logsize = min(count_trailing_zeros(self.start), log_floor(self.end - self.start));
+        self.start += 1 << logsize;
+        Some(Self::Item::new_unchecked(self.start - (1 << logsize), logsize, self.content))
     }
 }
 
@@ -95,53 +132,70 @@ pub fn compute_segment_split(mut start: usize, end: usize) -> Vec<StandardSubset
     ret
 }
 
-/// Bintree node. Internal node describes positions of of left and right children,
-/// leaf describes the address of the leaf content.
-#[derive(Clone, Copy, Debug)]
-pub enum BinTreeNode {
-    Internal(usize, usize),
-    Leaf(usize),
-}
 
 #[derive(Clone, Debug)]
 pub struct BinTree {
-    nodes: Vec<BinTreeNode>,
+    total_logsize: usize, 
+    nodes: Vec<Vec<(usize, bool, usize)>>, // Points to parent + L/R identifier, ordered from the root.
+    leaves: Vec<(usize, usize)>, // Points to (id, depth).
 }
 
 
-/// Assumes that logsizes satisfy our standard subset condition, i.e. size[i] | sum.
-pub fn standard_subsets_bintree(logsizes: impl Iterator<Item = u8>) -> BinTree {
-    let mut nodes = vec![]; // Keeps the increasing sequence of nodes.
-    let mut node_logsizes : Vec<u8> = vec![];
-    let mut front : Vec<usize> = vec![];
+/// Assumes that queries are non-intersecting and ordered from left to right.
+pub fn standard_subsets_bintree(total_logsize: usize, stsub_queries: impl Iterator<Item = StSubQuery>) -> BinTree {
 
-    let mut to_append;
-    for (i, logsize) in logsizes.enumerate() {
-        nodes.push(BinTreeNode::Leaf(i));
-        node_logsizes.push(logsize);
-        to_append = nodes.len() - 1;
-        loop {
-            if let Some(&last_node_idx) = front.last() {
-                let a = node_logsizes[last_node_idx]; 
-                let b = node_logsizes[to_append];
-                if a > b {
-                    front.push(to_append);
-                    break;
-                } else if a == b {
-                    front.pop();
-                    nodes.push(BinTreeNode::Internal(last_node_idx, to_append));
-                    node_logsizes.push(a + 1);
-                    to_append = nodes.len() - 1;
-                } else {
-                    panic!("Ill-formed sequence of logsizes.");
-                }
-            } else {
-                front.push(to_append);
-                break;
+    let mut ret = BinTree {total_logsize, nodes: vec![vec![]; total_logsize + 1], leaves: vec![]};
+    let nodes = &mut ret.nodes;
+    let leaves = &mut ret.leaves;
+    let mut nodes_metadata = vec![vec![]; total_logsize + 1];
+
+
+    let mut prev_right_end = 0;
+
+    for (i, query) in stsub_queries.enumerate() {
+        assert!(query.start >= prev_right_end, "query sequence is not properly ordered");
+        prev_right_end = query.start + (1 << query.logsize);
+
+        let mut path = query.start >> query.logsize;
+        let mut depth = total_logsize - (query.logsize as usize);
+
+        leaves.push((nodes[depth].len(), depth));
+
+        let mut bit;
+
+        while depth > 0 {
+            bit = (path % 2) == 1;
+
+            match nodes_metadata[depth - 1].last() {
+                None => {
+                    nodes[depth].push((0, bit, i));
+                    nodes_metadata[depth].push(path);
+                },
+                Some(parent_path) => {
+                    if path >> 1 == *parent_path {
+                        assert!(bit, "should always happen");
+                        nodes[depth].push((nodes_metadata[depth - 1].len() - 1, bit, i));
+                        nodes_metadata[depth].push(path);
+                        break;
+                    } else {
+                        nodes[depth].push((nodes_metadata[depth - 1].len(), bit, i));
+                        nodes_metadata[depth].push(path);
+                    }
+                },
+            }
+            path >>= 1;
+            depth -= 1;
+            }
+        // Process initial case - add root.
+        if i == 0 {
+            nodes[0].push((0, false, i)); // root
+            nodes_metadata[0].push(0); // root's path is trivial            
+            if query.logsize as usize == total_logsize {
+                return ret;
             }
         }
     }
-    BinTree { nodes }
+    ret
 }
 
 pub struct PrefixFoldIter<T: Iterator, Acc : Clone, F: Fn(&Acc, &T::Item) -> Acc> {
@@ -175,8 +229,8 @@ pub trait PrefixFold : Iterator {
 impl<T: Iterator> PrefixFold for T {}
 
 
-pub fn compute_subsegments(sizes: impl Iterator<Item = usize>) -> impl Iterator<Item = u8> {
-    sizes.prefix_fold(0, |a, b| *a + b).map(|(size, sum)| StSubIter::new(sum - size, sum)).flatten()
+pub fn compute_subsegments(segments: impl Iterator<Item = SegmentQuery>) -> impl Iterator<Item = StSubQuery> {
+    segments.map(|x| StSubIter::new(x)).flatten()
 }
 
 
@@ -679,8 +733,9 @@ mod tests {
 
     fn test_bintree() {
         let sizes = vec![13, 8, 7, 4];
-        let bintree = standard_subsets_bintree(compute_subsegments(sizes.into_iter()));
+        let mut acc = 0;
+        let queries = sizes.into_iter().map(|size| {acc += size; SegmentQuery::new(acc - size, acc, QueryContent::Data)});
+        let bintree = standard_subsets_bintree(5, compute_subsegments(queries));
         println!("{:?}", bintree);
     }
-
 }

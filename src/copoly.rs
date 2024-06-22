@@ -8,7 +8,7 @@ use ark_ff::{Field, PrimeField};
 use itertools::Itertools;
 use rayon::prelude::*;
 
-use crate::poly::Fragment;
+use crate::polynomial::fragmented::Fragment;
 
 #[derive(Clone, Copy)]
 /// A segment starting at start and ending at start + 2^loglength, such that 2^loglength | start.

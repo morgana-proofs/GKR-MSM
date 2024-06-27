@@ -3,7 +3,7 @@ use std::{fs::File, sync::Arc};
 use std::iter::repeat;
 
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
+use ark_ff::{PrimeField, BigInteger};
 use itertools::Itertools;
 use liblasso::utils::math::Math;
 #[cfg(feature = "prof")]
@@ -26,8 +26,16 @@ use crate::protocol::bintree::{Bintree, BintreeParams, BintreeProof, BintreeProv
 use crate::protocol::protocol::{EvalClaim, ProtocolProver};
 use crate::protocol::sumcheck::to_multieval;
 
+use liblasso::poly::dense_mlpoly::DensePolynomial;
+use rayon::collections::btree_set::Iter;
+use num_traits::{One, Zero};
+use crate::gkr_msm_simple::{CommitmentKey, MSMCircuitConfig, MSMProof};
+
+
+
 pub mod commit;
 pub mod open;
+pub mod bit_utils;
 
 
 

@@ -302,11 +302,10 @@ impl<F> FragmentedPoly<F> {
     }
 
     pub fn num_vars(&self) -> usize {
-        todo!()
-    }
-
-    pub fn evaluate(&self, r: &F) -> F {
-        todo!()
+        match self.shape.get().unwrap().fragments.last() {
+            None => 0,
+            Some(Fragment{ len, start, .. }) => (start + len).log_2(),
+        }
     }
 
     fn get_by_fragment(&self, frag: &Fragment, idx: usize) -> &F {
@@ -423,12 +422,26 @@ impl<F: AddAssign + Mul<Output=F> + Sub<Output=F> + Send + Sync + Sized + Copy> 
             .map(|(l, r)| { *l += *f * (*r - *l) }).count();
         l
     }
+
+    pub fn evaluate(&self, r: &[F]) -> F {
+        let mut tmp = None;
+        for f in r.iter().rev() {
+            tmp = Some(
+                tmp
+                    .as_ref()
+                    .unwrap_or(self)
+                    .bind(f)
+            );
+        }
+        let cur = tmp.as_ref().unwrap_or(self);
+        cur.get_by_fragment(cur.shape.get().unwrap().fragments.first().unwrap(), 0).clone()
+    }
 }
 
 impl <F: Clone> FragmentedPoly<F> {
-    fn into_vec(self, shape: &Shape) -> Vec<F> {
+    fn into_vec(self) -> Vec<F> {
         let mut out = vec![];
-        for fragment in &shape.fragments {
+        for fragment in &self.shape.get().unwrap().fragments {
             for idx in 0..fragment.len {
                 out.push(self.get_by_fragment(fragment, idx).clone());
             }
@@ -441,12 +454,14 @@ impl <F: Clone> FragmentedPoly<F> {
 #[cfg(test)]
 mod tests {
     use std::cell::OnceCell;
+    use std::iter::repeat_with;
     use std::sync::{Arc, OnceLock, RwLock, RwLockWriteGuard, TryLockError, TryLockResult};
     use ark_ed_on_bls12_381_bandersnatch::Fr;
     use ark_std::rand::RngCore;
-    use ark_std::test_rng;
+    use ark_std::{test_rng, UniformRand};
     use itertools::Itertools;
     use liblasso::poly::dense_mlpoly::DensePolynomial;
+    use crate::polynomial::nested_poly::{evaluate_exact, NestedPolynomial, RandParams};
     use super::*;
 
 
@@ -463,7 +478,7 @@ mod tests {
                 (0..shape.num_consts).map(|_| Fr::from(rng.next_u64())).collect_vec(),
                 shape_cell,
             );
-            let v = p.clone().into_vec(&shape);
+            let v = p.clone().into_vec();
             let mut ev = DensePolynomial::new(v.clone());
             let f = Fr::from(rng.next_u64());
             ev.bound_poly_var_bot(&f);
@@ -472,7 +487,7 @@ mod tests {
 
             let l = p.bind(&f);
 
-            assert_eq!(ev.vec().iter().take(1 << ev.num_vars).cloned().collect_vec(), l.into_vec(&split));
+            assert_eq!(ev.vec().iter().take(1 << ev.num_vars).cloned().collect_vec(), l.into_vec());
         }
     }
 
@@ -489,12 +504,12 @@ mod tests {
                 (0..shape.num_consts).map(|_| rng.next_u64() % 10).collect_vec(),
                 shape_cell,
             );
-            let v = p.clone().into_vec(&shape);
+            let v = p.clone().into_vec();
             let el = v.iter().cloned().step_by(2).collect_vec();
             let er = v.iter().cloned().skip(1).step_by(2).collect_vec();
             let (l, r) = p.split();
-            assert_eq!(el, l.into_vec(&split));
-            assert_eq!(er, r.into_vec(&split));
+            assert_eq!(el, l.into_vec());
+            assert_eq!(er, r.into_vec());
         }
     }
 
@@ -579,12 +594,12 @@ mod tests {
         shape_cell.set(shape.clone()).unwrap();
         let split = shape.split();
         let p = FragmentedPoly::new(d, c, shape_cell);
-        assert_eq!(v, p.clone().into_vec(&shape));
+        assert_eq!(v, p.clone().into_vec());
         let el = v.iter().cloned().step_by(2).collect_vec();
         let er = v.iter().cloned().skip(1).step_by(2).collect_vec();
         let (l, r) = p.split();
-        assert_eq!(el, l.into_vec(&split));
-        assert_eq!(er, r.into_vec(&split));
+        assert_eq!(el, l.into_vec());
+        assert_eq!(er, r.into_vec());
     }
 
     #[test]
@@ -687,26 +702,24 @@ mod tests {
         ], 4);
         assert_eq!(ll, &ell);
     }
-    
-    #[test]
-    fn once_lock() {
-        let x = OnceLock::new();
-        fn initialize(x: &OnceLock<usize>, marker: usize) {
-            x.get_or_init(|| {
-                println!("initializing in {}", marker);
-                marker
-            });
-            println!("in {}: {:?}", marker, x.get())
-        }
 
-        rayon::scope(|s| {
-            s.spawn(|_| initialize(&x, 0));
-            s.spawn(|_| initialize(&x, 1));
-            s.spawn(|_| initialize(&x, 2));
-            s.spawn(|_| initialize(&x, 3));
-            s.spawn(|_| initialize(&x, 4));
-            s.spawn(|_| initialize(&x, 5));
-        });
-        println!("{:?}", x.get())
+    #[test]
+    fn evaluate() {
+        let mut rng = &mut test_rng();
+
+        for _ in 0..10 {
+            let poly = FragmentedPoly::rand(rng, 10, 10);
+            let flat = poly.clone().into_vec();
+            let dense = DensePolynomial::new(flat.clone());
+            for _ in 0..10 {
+                let point: Vec<_> = repeat_with(|| ark_bls12_381::Fr::rand(rng)).take(poly.num_vars()).collect();
+
+                let straight_eval = evaluate_exact(&mut flat.clone(), &point);
+                let nested_eval = poly.evaluate(&point);
+                let dense_eval = dense.evaluate(&point);
+                assert_eq!(straight_eval, nested_eval);
+                assert_eq!(straight_eval, dense_eval);
+            }
+        }
     }
 }

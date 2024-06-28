@@ -13,20 +13,20 @@ pub struct PolynomialMapping<F> {
 }
 
 // Claim
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct Claim<F: PrimeField> {
     pub point: Vec<F>,
     pub value: F,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MultiEvalClaim<F: PrimeField> {
     pub points: Vec<Vec<F>>,
     pub evs: Vec<Vec<(usize, F)>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EvalClaim<F: PrimeField> {
     pub point: Vec<F>,
     pub evs: Vec<F>,

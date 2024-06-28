@@ -61,6 +61,7 @@ impl<F: PrimeField> Layer<F> {
 }
 
 
+#[derive(Debug)]
 pub enum LayerProof<F: PrimeField> {
     Mapping(SumcheckPolyMapProof<F>),
     Split,

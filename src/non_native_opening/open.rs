@@ -17,13 +17,6 @@ pub struct MSMProof<G: CurveGroup> {
     output: Vec<G::ScalarField>,
 }
 
-// This function takes a bit and a point, parsed as b, p.x, p.y, and returns b ? p : zero_point
-
-fn pt_bit_choice<F: PrimeField>(args: &[F]) -> Vec<F> {
-    vec![args[0] * args[1], args[0] * (args[2] - F::one()) + F::one()]
-}
-
-
 
 fn powers_of_t<F: PrimeField>(
     t: F, 
@@ -31,7 +24,7 @@ fn powers_of_t<F: PrimeField>(
 ) -> Vec<F> {
     let mut ans = vec![F::one()];
     let mut curr_pow = t;
-    for _ in (0..log_len){
+    for _ in 0..log_len{
         let clone_ans = ans.clone();
         let mut clone_ans: Vec<_> = clone_ans.iter()
                                     .map(|&x| x*curr_pow)
@@ -42,7 +35,9 @@ fn powers_of_t<F: PrimeField>(
     ans
 }
 
-fn tensor_product_of_vecs<F: PrimeField>(
+// in: [a, b, c, d], [x, y]
+// out [ax, bx, cx, dx, ay, by, cy, dy]
+pub fn tensor_product_of_vecs<F: PrimeField>(
     vec1: Vec<F>,
     vec2: Vec<F>,
 ) -> Vec<F> {
@@ -56,7 +51,7 @@ fn tensor_product_of_vecs<F: PrimeField>(
 }
 
 
-fn tensor_product<F: PrimeField>(
+pub fn tensor_product<F: PrimeField>(
     poly1: DensePolynomial<F>,
     poly2: DensePolynomial<F>,
 ) -> DensePolynomial<F> {
@@ -78,9 +73,9 @@ fn tensor_product<F: PrimeField>(
 }
 
 
-//computes the equalizer (x_position * value) + (1 - x_position)(1 - value)
+//computes the factor in the equalizer polynomial (x_position * value) + (1 - x_position)(1 - value)
 // only returns evals, not the polynoial
-fn elemenary_equalizer_poly<F: PrimeField>(
+pub fn elemenary_equalizer_poly<F: PrimeField>(
     value: F,
     position: usize,
     num_vars: usize
@@ -91,7 +86,7 @@ fn elemenary_equalizer_poly<F: PrimeField>(
                                     {
                                         let x_position = (i / (1 << position) ) % 2;
                                         let x_position = F::from(x_position as u64);
-                                        (x_position * value) + (1 - x_position)*(1 - value)
+                                        (x_position * value) + (F::one() - x_position)*(F::one() - value)
                                     })
                                 .collect();
     
@@ -99,31 +94,34 @@ fn elemenary_equalizer_poly<F: PrimeField>(
 }
 
 
-fn equalizer_poly<F: PrimeField>(
+//computes the equalizer sum_{position} (x_position * value) + (1 - x_position)(1 - value)
+// only returns evals, not the polynoial
+pub fn equalizer_poly<F: PrimeField>(
     point: Vec<F>,
     num_vars: usize
-) -> DensePolynomial<F> {
+) -> Vec<F> {
     assert_eq!(point.len(), num_vars);
     let len = 1 << num_vars;
 
-    let Z = vec![F::one(); len];
+    let mut Z = vec![F::one(); len];
 
     for i in 0..num_vars{
         let other_Z = elemenary_equalizer_poly(point[i], i, num_vars);
-        let Z: Vec<_> = Z.iter()
+        Z = Z.iter()
             .zip(other_Z)
             .map(|(&x, y)| x*y)
             .collect();
     }
+    Z
     
-
-    DensePolynomial{
-        num_vars,
-        len,
-        Z
-    }
 }
 
+
+// This function takes a bit and a point, parsed as b, p.x, p.y, and returns b ? p : zero_point
+
+fn pt_bit_choice<F: PrimeField>(args: &[F]) -> Vec<F> {
+    vec![args[0] * args[1], args[0] * (args[2] - F::one()) + F::one()]
+}
 
 
 pub fn layer_op <F: PrimeField>(arr: &[F]) -> Vec<F>  {
@@ -138,66 +136,25 @@ pub fn mini_msm<
     T: TranscriptReceiver::<F> + TranscriptSender::<F>,
 >(
     scalars: Vec<Vec<bool>>,
-    points: Vec<(F, F)>,
-    log_num_points: usize,
+    //points: Vec<(F, F)>,
     transcript: &mut T,
 ){
-    #[cfg(feature = "prof")]
-    let mut guard = prof_guard!("gkr_msm_prove[bit_prep]");
+    let num_vars = 10;
 
-    #[cfg(feature = "memprof")]
-    memprof(&"gkr_msm_prove start");
 
-    let num_points = 1 << log_num_points;
-    let num_scalar_bits = 384;
-    let num_vars = log_num_points + 9;
-
-    assert_eq!(points.len(), num_points);
-    assert_eq!(scalars.len(), num_points);
-
-    scalars
-        .iter()
-        .map(|s| assert!(s.len() == num_scalar_bits))
-        .count();
-
-    // COMMIT TO OUR STUFF AND ADD IT TO TRANSCRIPT
-    let bits_flatten: Vec<_> = scalars.into_par_iter().flatten().collect();
+    let bits_flatten: Vec<_> = scalars.iter().flatten().collect();
 
     let bits_poly = NestedPolynomial::from_values(
         bits_flatten
             .par_iter()
-            .map(|x| F::from(*x as u64))
+            .map(|x| F::from(**x as u64))
             .collect(),
         bits_flatten.len().log_2(),
         F::zero(),
     );
 
-    let _points_table_poly: (Vec<_>, Vec<_>) = points
-        .par_iter()
-        .map(|p| repeatn(*p, num_scalar_bits))
-        .flatten()
-        .unzip();
 
-
-    let tmp = _points_table_poly.0.len().log_2();
-    let points_table_poly = (
-        NestedPolynomial::from_values(
-            _points_table_poly.0,
-            tmp,
-            F::zero(),
-        ),
-        NestedPolynomial::from_values(
-            _points_table_poly.1,
-            tmp,
-            F::zero(),
-        ),
-    );
-
-    // layer0
-    // bits_poly
-    // points_table_poly
-
-    let base_layer = vec![bits_poly, points_table_poly.0, points_table_poly.1];
+    let base_layer = vec![bits_poly.clone(), bits_poly.clone(), bits_poly.clone()];//, points_table_poly.0, points_table_poly.1];
 
     let f_base = PolynomialMapping {
         exec: Arc::new(pt_bit_choice),
@@ -206,7 +163,6 @@ pub fn mini_msm<
         num_o: 2,
     };
 
-    // Now, we will compute GKR witness.
 
     let f_deg2 = PolynomialMapping {
         exec: Arc::new(layer_op::<F>),
@@ -215,41 +171,20 @@ pub fn mini_msm<
         num_o: 4,
     };
 
-    let f_deg2_clone = PolynomialMapping {
-        exec: Arc::new(layer_op::<F>),
-        degree: 2,
-        num_i: 4,
-        num_o: 4,
-    };
-
-    let num_inner_layers = log_num_points - 1;
-
     let layers = vec![
         Layer::Mapping(f_base),
-        Layer::new_split(2),
-        Layer::Mapping(f_deg2),];
-    // ]
-    // .into_iter()
-    // .chain(
-    //     repeat(
-    //         vec![
-    //             Layer::new_split(3),
-    //             Layer::Mapping(f_deg2_clone.clone()),
-    //         ]
-    //         .into_iter(),
-    //     )
-    //     .take(num_inner_layers)
-    //     .flatten(),
-    // )
-    // .collect_vec();
+        // Layer::new_split(2),
+        // Layer::Mapping(f_deg2.clone()),
+        // Layer::Mapping(f_deg2.clone()),];
+    ];
 
     let params = BintreeParams::new(layers, num_vars);
 
     let (trace, output) = Bintree::witness(base_layer, &params);
 
 
-    let claim_point = (0..7)
-        .map(|_| F::from(2u64))
+    let claim_point = (0..num_vars - 1)
+        .map(|_| F::one())
         .collect_vec();
 
     let claim_evals = output
@@ -267,11 +202,14 @@ pub fn mini_msm<
 
     let mut res = None;
     while res.is_none() {
-        let challenge = transcript.challenge_scalar(b"challenge_nextround");
+        //let challenge = transcript.challenge_scalar(b"challenge_nextround");
+        let challenge = Challenge{value:  F::one()};
         res = prover.round(challenge, transcript);
     }
 
-    let (gkr_evals, gkr_proof) = res.unwrap();
+    let (gkr_evals, _) = res.unwrap();
+
+    println!("{:?}", gkr_evals);
 }
 
 
@@ -316,72 +254,3 @@ pub fn opening<
     
 }
 
-#[cfg(test)]
-mod tests {    
-    use ark_bls12_381::Fq as Fq;
-    use ark_ff::{MontBackend};
-    use ark_std::{test_rng, UniformRand};
-    use ark_std::rand::Rng;
-    use super::*;
-
-
-
-    #[test]
-    fn field_size(){
-        let mut rng = test_rng();
-        let evals: Vec<_> = (0..4).map(|_| Fq::rand(&mut rng))
-                                    .collect();
-        let eval_bits: Vec<_> = evals.iter()
-                                    .map( |&x|prime_field_element_to_bool_bits(x))
-                                    .collect();
-
-        let point: Vec<_> = (0..2).map(|_|Fq::rand(&mut rng))
-                                    .collect(); 
-
-        let point_bits: Vec<_> = point.iter()
-                                    .map( |&x|prime_field_element_to_bool_bits(x))
-                                    .collect();
-        
-        let the_eval = evals[0] 
-                    + (evals[1] - evals[0])*point[0]
-                    + (evals[2] - evals[0])*point[1]
-                    + (evals[3] - evals[2] - evals[1] + evals[0])*point[0]*point[1]; 
-
-        let eval_claim = to_multieval(
-            EvalClaim{
-            point,
-            evs: vec![the_eval],
-
-        });
-
-        let challenge_t = Fq::rand(&mut rng);
-
-        opening::<Fq>(eval_bits, point_bits, eval_claim, 2, MY_FAVORITE_LIMB_SIZE, Fq::rand(&mut rng));
-    }
-
-
-    
-
-    #[test]
-    fn test_mini_msm(){
-        use merlin::Transcript;
-
-        let mut rng = test_rng();
-        let evals: Vec<_> = (0..2).map(|_| Fq::rand(&mut rng))
-                                    .collect();
-        let eval_bits: Vec<_> = evals.iter()
-                                    .map( |&x|prime_field_element_to_bool_bits(x))
-                                    .collect();
-
-        let points: Vec<_> = (0..2).map(|_| (Fq::rand(&mut rng), Fq::rand(&mut rng)))
-                                    .collect(); 
-
-        
-
-        let challenge_t = Fq::rand(&mut rng);
-        
-        let mut p_transcript = Transcript::new(b"test");
-
-        mini_msm(eval_bits, points, 1,  &mut p_transcript);
-    }
-}

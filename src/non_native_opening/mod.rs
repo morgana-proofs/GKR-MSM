@@ -38,6 +38,10 @@ pub mod open;
 pub mod bit_utils;
 
 
+#[cfg(test)]
+mod tests;
+
+
 
 // impl<G: CurveGroup> CommitmentKey<G> {
 //     pub fn new() -> Self {

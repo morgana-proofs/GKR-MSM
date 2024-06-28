@@ -17,6 +17,7 @@ use super::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, Pr
 
 // Impls
 
+#[derive(Clone, Debug)]
 pub struct SumcheckPolyMap<F: PrimeField> {
     _marker: PhantomData<F>,
 }
@@ -44,6 +45,8 @@ pub struct SumcheckPolyMapVerifier<F: PrimeField> {
     rs: Vec<F>,
 }
 
+
+#[derive(Debug)]
 pub struct SumcheckPolyMapProof<F: PrimeField> {
     round_polys : Vec<CompressedUniPoly<F>>,
     final_evaluations: Vec<F>,

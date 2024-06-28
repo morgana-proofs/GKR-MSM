@@ -1,6 +1,6 @@
-use std::cmp::max;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
+use std::mem::MaybeUninit;
 use std::ops::{Add, AddAssign, Mul, Sub};
 use std::sync::{Arc, OnceLock};
 use ark_ff::Field;
@@ -23,16 +23,16 @@ pub enum FragmentContent {
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Fragment {
-    idx: usize,
-    len: usize,
-    content: FragmentContent,
-    start: usize,
+    pub mem_idx: usize,
+    pub len: usize,
+    pub content: FragmentContent,
+    pub start: usize,
 }
 
 impl Fragment {
     pub fn new_of(content: FragmentContent) -> Self {
         Self {
-            idx: 0,
+            mem_idx: 0,
             len: 0,
             content,
             start: 0,
@@ -40,117 +40,183 @@ impl Fragment {
     }
 }
 
-#[derive(Default, Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Shape {
-    pub shape: Vec<Fragment>,
+    pub fragments: Vec<Fragment>,
     pub data_len: usize,
-    pub consts_len: usize,
-    
-    pub split: Arc<OnceLock<Shape>>
+    pub num_consts: usize,
+    pub dedup_consts_len: usize,
+    pub split: Arc<OnceLock<Shape>>,
 }
 
-/// Merges last and one before last fragments of given poly
-/// Assumes that they can be merged and are correct
-fn merge_last_fragments(shape: &mut Vec<Fragment>, last: Fragment) {
-    let prev = shape.last_mut().unwrap();
-    match (&prev.content, last.content) {
-        (Data, Data) => {
-            prev.len += last.len;
-        }
-        (Data, Consts) => {
-            prev.len += last.len;
-        }
-        (Consts, Data) => {
-            unreachable!()
-        }
-        (Consts, Consts) => {
-            prev.len += last.len;
-        }
-    }
-}
 
-const const_merge_thresh: usize = 2;
+const MERGE_THRESH: usize = 2;
 
 fn should_merge(f1: &Fragment, f2: &Fragment) -> bool {
     match (&f1.content, &f2.content) {
         (Data, Data) => true,
         (Data, Consts) => {
-            f2.len < const_merge_thresh
+            f2.len < MERGE_THRESH
         },
         (Consts, Data) => false,
         (Consts, Consts) => {
-            f1.idx == f2.idx
+            f1.mem_idx == f2.mem_idx
         },
     }
 }
 
 impl Shape {
-    pub fn new(shape: Vec<Fragment>) -> Self {
-        let mut new = Self::default();
-        new.shape = shape;
-        new.finish();
+    pub fn empty(num_consts: usize) -> Self {
+        Self { fragments: vec![], data_len: 0, num_consts, dedup_consts_len: 0, split: <_>::default() }
+    }
+    
+    /// Derives num_consts automatically.
+    pub fn new(shape: Vec<Fragment>, num_consts: usize) -> Self {
+        let mut new = Self::empty(num_consts);
+        new.fragments = shape;
+        new.finalize();
         new
     }
 
-    fn add(&mut self, fragment: Fragment) {
-        match self.shape.last() {
+    /// Merges last and one before last fragments of given poly
+    /// Assumes that they can be merged and are correct
+    fn merge_in(&mut self, last: Fragment) {
+        let prev = self.fragments.last_mut().unwrap();
+        match (&prev.content, last.content) {
+            (Data, Data) => {
+                prev.len += last.len;
+                self.data_len += last.len;
+            }
+            (Data, Consts) => {
+                prev.len += last.len;
+                self.data_len += last.len;
+            }
+            (Consts, Data) => {
+                unreachable!()
+            }
+            (Consts, Consts) => {
+                prev.len += last.len;
+            }
+        }
+    }
+
+    pub fn add(&mut self, fragment: Fragment) {
+
+        println!("State: {:?}", self);
+        println!("Adding fragment {:?}", fragment);
+        let merge;
+
+        match self.fragments.last() {
             None => {
-                self.shape.push(fragment);
+                merge = false;
             }
             Some(prev) => {
                 if should_merge(&prev, &fragment) {
-                    merge_last_fragments(&mut self.shape, fragment)
+                    merge = true;
                 } else {
-                    self.shape.push(fragment);
+                    merge = false;
                 }
             }
         }
 
+        if merge {
+            self.merge_in(fragment)
+        } else {
+            match &fragment.content {
+                Data => {
+                    assert!(fragment.mem_idx == self.data_len);
+                    self.data_len += fragment.len;
+                },
+                Consts => {
+                    assert!(fragment.mem_idx < self.num_consts);
+                    self.dedup_consts_len += 1;
+                },
+            }
+            self.fragments.push(fragment);
+        }
     }
 
-    fn finish(&mut self) {
+    /// This is only used in new() construction. Adds must preserve all invariants.
+    fn finalize(&mut self) {
         self.data_len = 0;
-        self.consts_len = 0;
-        for frag in self.shape.iter() {
+        self.dedup_consts_len = 0;
+
+        for frag in self.fragments.iter() {
             match frag.content {
-                Data => {self.data_len += frag.len}
-                Consts => {self.consts_len = max(self.consts_len, frag.idx + 1)}
+                Data => {
+                    assert_eq!(frag.mem_idx, self.data_len, "Shape data incorrect at frag.mem_idx = {:?}, self.data_len = {:?}, \nFull shape{:?}", frag.mem_idx, self.data_len, self);
+                    self.data_len += frag.len;
+                }
+                Consts => {
+                    self.dedup_consts_len += 1;
+                    assert!(frag.mem_idx < self.num_consts);
+                }
             }
         }
     }
 
+    /// Does not actually need mutable receiver.
+    pub fn assert_correct(&mut self) {
+        let data_len = self.data_len;
+        let dedup_consts_len = self.dedup_consts_len;
+
+        self.finalize();
+
+        assert_eq!(data_len, self.data_len);
+        assert_eq!(dedup_consts_len, self.dedup_consts_len);
+    }
+
+    /// Slices the data array. Also makes the integrity checks (should eventually be
+    /// moved to shape construction) - namely, it does check that data layout
+    /// used by the shape is contigious. 
+    pub fn slice_data<'a, T>(&self, mut data: &'a mut [T]) -> Vec<&'a mut [T]> {
+        assert_eq!(data.len(), self.data_len);
+        let mut ret = Vec::with_capacity(self.fragments.len());
+        let mut chunk;
+        for fragment in &self.fragments {
+            match fragment.content {
+                Data => {
+                    (chunk, data) = data.split_at_mut(fragment.len);
+                    ret.push(chunk);
+                },
+                Consts => (),
+            }
+        };
+        ret
+    }
+
     pub fn rand<RNG: Rng>(rng: &mut RNG, frag_size: usize, frags: usize) -> Self {
-        let mut rand = Self::new(vec![]);
-        let mut data_idx = 0;
+        println!("rand entry");
+        
+        let mut rand = Self::empty(1);
         let mut const_size = 0;
         let mut start = 0;
         for _ in 0..frags {
             let len = rng.next_u64() as usize % frag_size + 1;
             let content = if rng.next_u32() % 2 == 0 { Data } else { Consts };
-            let idx = match content {
-                Data => data_idx,
+            let mem_idx = match content {
+                Data => rand.data_len,
                 Consts => {rng.next_u64() as usize % (const_size + 1)}
             };
+            println!("Logging fragment addition: mem_idx {:?}, len {:?}, content {:?}, start {:?}", mem_idx, len, content, start);
             rand.add(Fragment {
-                idx,
+                mem_idx,
                 len,
                 content,
                 start,
             });
             start += len;
-            match content {
-                Data => {data_idx += len}
-                Consts => {}
-            }
         }
         let len = (1 << start.log_2()) - start;
         rand.add(Fragment {
-            idx: rng.next_u64() as usize % (const_size + 1),
+            mem_idx: rng.next_u64() as usize % (const_size + 1),
             len,
             content: Consts,
             start,
         });
-        rand.finish();
+
+        rand.assert_correct();
+
         rand
     }
 }
@@ -158,12 +224,11 @@ impl Shape {
 impl Shape {
     pub fn split(&self) -> &Self {
         self.split.get_or_init(|| {
-            let mut l = Self::default();
-            let mut data_idx = 0;
-            for frag in self.shape.iter() {
-                let Fragment { mut len, content, mut start , idx} = frag;
+            let mut l = Self::empty(self.num_consts);
+            for frag in self.fragments.iter() {
+                let Fragment { mut len, content, mut start, mem_idx} = frag;
                 if start % 2 == 1 {
-                    // steal first element into previous frag, push previous frag
+                    // move first element to the previous frag, push previous frag
                     match content {
                         Data => {
                             len += 1;
@@ -173,12 +238,11 @@ impl Shape {
                             len -= 1;
                             start += 1;
                             l.add(Fragment {
-                                idx: data_idx,
+                                mem_idx: l.data_len,
                                 len: 1,
                                 content: Data,
                                 start: (start - 2) / 2,
                             });
-                            data_idx += 1;
                         }
                     }
                 }
@@ -189,25 +253,23 @@ impl Shape {
                     match content {
                         Data => {
                             l.add(Fragment {
-                                idx: data_idx,
+                                mem_idx: l.data_len,
                                 len: len / 2,
                                 content: Data,
                                 start: start / 2,
                             });
-                            data_idx += len / 2;
                         }
                         Consts => {
-                            if len / 2 < const_merge_thresh {
+                            if len / 2 < MERGE_THRESH {
                                 l.add(Fragment {
-                                    idx: data_idx,
+                                    mem_idx: l.data_len,
                                     len: len / 2,
                                     content: Data,
                                     start: start / 2,
                                 });
-                                data_idx += len / 2;
                             } else {
                                 l.add(Fragment {
-                                    idx: *idx,
+                                    mem_idx: *mem_idx,
                                     len: len / 2,
                                     content: Consts,
                                     start: start / 2,
@@ -217,7 +279,7 @@ impl Shape {
                     };
                 }
             }
-            l.finish();
+            l.assert_correct();
             l  
         })
     }
@@ -249,8 +311,8 @@ impl<F> FragmentedPoly<F> {
 
     fn get_by_fragment(&self, frag: &Fragment, idx: usize) -> &F {
         match frag.content {
-            Data => &self.data[frag.idx + idx],
-            Consts => &self.consts[frag.idx],
+            Data => &self.data[frag.mem_idx + idx],
+            Consts => &self.consts[frag.mem_idx],
         }
     }
 }
@@ -261,7 +323,7 @@ impl<F: From<u64>> FragmentedPoly<F> {
         let s = shape.get_or_init(|| Shape::rand(rng, frag_size, frags));
         Self {
             data: (0..s.data_len).map(|_| F::from(rng.next_u64())).collect_vec(),
-            consts: (0..s.consts_len).map(|_| F::from(rng.next_u64())).collect_vec(),
+            consts: (0..s.num_consts).map(|_| F::from(rng.next_u64())).collect_vec(),
             shape,
         }
     }
@@ -306,15 +368,15 @@ impl<F: Clone> FragmentedPoly<F> {
         let source = self.shape.get().unwrap();
         let target = self.shape.get().unwrap().split();
         let split_shape = self.shape.get().unwrap().split.clone();
-        let last_target = target.shape.last().unwrap();
-        let data_size = last_target.idx + match last_target.content {
+        let last_target = target.fragments.last().unwrap();
+        let data_size = last_target.mem_idx + match last_target.content {
             Data => last_target.len,
             Consts => 1,
         };
         let (mut l, mut r) = (Self::new(Vec::with_capacity(data_size), self.consts.clone(), split_shape.clone()), Self::new(Vec::with_capacity(data_size), self.consts.clone(), split_shape));
 
-        let mut source_iter = source.shape.iter();
-        let mut target_iter = target.shape.iter();
+        let mut source_iter = source.fragments.iter();
+        let mut target_iter = target.fragments.iter();
 
         let mut source_frag = source_iter.next();
         let mut source_frag_counter = 0;
@@ -366,7 +428,7 @@ impl<F: AddAssign + Mul<Output=F> + Sub<Output=F> + Send + Sync + Sized + Copy> 
 impl <F: Clone> FragmentedPoly<F> {
     fn into_vec(self, shape: &Shape) -> Vec<F> {
         let mut out = vec![];
-        for fragment in &shape.shape {
+        for fragment in &shape.fragments {
             for idx in 0..fragment.len {
                 out.push(self.get_by_fragment(fragment, idx).clone());
             }
@@ -398,7 +460,7 @@ mod tests {
             let split = shape.split();
             let p = FragmentedPoly::new(
                 (0..shape.data_len).map(|_| Fr::from(rng.next_u64())).collect_vec(),
-                (0..shape.consts_len).map(|_| Fr::from(rng.next_u64())).collect_vec(),
+                (0..shape.num_consts).map(|_| Fr::from(rng.next_u64())).collect_vec(),
                 shape_cell,
             );
             let v = p.clone().into_vec(&shape);
@@ -424,7 +486,7 @@ mod tests {
             let split = shape.split();
             let p = FragmentedPoly::new(
                 (0..shape.data_len).map(|_| rng.next_u64() % 10).collect_vec(),
-                (0..shape.consts_len).map(|_| rng.next_u64() % 10).collect_vec(),
+                (0..shape.num_consts).map(|_| rng.next_u64() % 10).collect_vec(),
                 shape_cell,
             );
             let v = p.clone().into_vec(&shape);
@@ -457,62 +519,62 @@ mod tests {
         ];
         let s = vec![
             Fragment {
-                idx: 0,
+                mem_idx: 0,
                 len: 9,
                 content: Consts,
                 start: 0,
             },
             Fragment {
-                idx: 0,
+                mem_idx: 0,
                 len: 2,
                 content: Consts,
                 start: 9,
             },
             Fragment {
-                idx: 1,
+                mem_idx: 1,
                 len: 1,
                 content: Consts,
                 start: 11,
             },
             Fragment {
-                idx: 0,
+                mem_idx: 0,
                 len: 1,
                 content: Consts,
                 start: 12,
             },
             Fragment {
-                idx: 0,
+                mem_idx: 0,
                 len: 7,
                 content: Consts,
                 start: 13,
             },
             Fragment {
-                idx: 0,
+                mem_idx: 0,
                 len: 3,
                 content: Data,
                 start: 20,
             },
             Fragment {
-                idx: 0,
+                mem_idx: 0,
                 len: 10,
                 content: Consts,
                 start: 23,
             },
             Fragment {
-                idx: 3,
+                mem_idx: 3,
                 len: 8,
                 content: Data,
                 start: 33,
             },
             Fragment {
-                idx: 0,
+                mem_idx: 0,
                 len: 23,
                 content: Consts,
                 start: 41,
             },
         ];
 
-        let shape = Shape::new(s);
+        let shape = Shape::new(s, 2);
         let shape_cell = Arc::new(OnceLock::new());
         shape_cell.set(shape.clone()).unwrap();
         let split = shape.split();
@@ -529,102 +591,105 @@ mod tests {
     fn split_shape() {
         let s = Shape::new(vec![
             Fragment {
-                idx: 0,
+                mem_idx: 0,
                 len: 4,
                 content: Data,
                 start: 0,
             },
             Fragment {
-                idx: 0,
+                mem_idx: 0,
                 len: 4,
                 content: Consts,
                 start: 4,
             },
             Fragment {
-                idx: 4,
+                mem_idx: 4,
                 len: 6,
                 content: Data,
                 start: 8,
             },
             Fragment {
-                idx: 1,
+                mem_idx: 1,
                 len: 2,
                 content: Consts,
                 start: 14,
             },
             Fragment {
-                idx: 2,
+                mem_idx: 2,
                 len: 4,
                 content: Consts,
                 start: 16,
             },
             Fragment {
-                idx: 10,
+                mem_idx: 10,
                 len: 8,
                 content: Data,
                 start: 20,
             },
             Fragment {
-                idx: 3,
+                mem_idx: 3,
                 len: 4,
                 content: Consts,
                 start: 28,
             },
-        ]);
+        ],
+        4
+        );
         let l = s.split();
         let el =  Shape::new(vec![
             Fragment {
-                idx: 0,
+                mem_idx: 0,
                 len: 2,
                 content: Data,
                 start: 0,
             },
             Fragment {
-                idx: 0,
+                mem_idx: 0,
                 len: 2,
                 content: Consts,
                 start: 2,
             },
             Fragment {
-                idx: 2,
+                mem_idx: 2,
                 len: 4,
                 content: Data,
                 start: 4,
             },
             Fragment {
-                idx: 2,
+                mem_idx: 2,
                 len: 2,
                 content: Consts,
                 start: 8,
             },
             Fragment {
-                idx: 6,
+                mem_idx: 6,
                 len: 4,
                 content: Data,
                 start: 10,
             },
             Fragment {
-                idx: 3,
+                mem_idx: 3,
                 len: 2,
                 content: Consts,
                 start: 14,
             },
-        ]);
+        ],
+        4);
         assert_eq!(l, &el);
         let ll = l.split();
         let ell =  Shape::new(vec![
             Fragment {
-                idx: 0,
+                mem_idx: 0,
                 len: 8,
                 content: Data,
                 start: 0,
             },
-        ]);
+        ], 4);
         assert_eq!(ll, &ell);
     }
     
     #[test]
-    fn onceLock() {
+    fn once_lock() {
         let x = OnceLock::new();
         fn initialize(x: &OnceLock<usize>, marker: usize) {
             x.get_or_init(|| {

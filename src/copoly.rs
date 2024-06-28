@@ -2,13 +2,13 @@
 // sums over admissible subset, and evaluation over admissible subset. Example is eq(r, x).
 // Every sumcheck will have degree 1 in copolynomials.
 
-use std::{cmp::min, collections::VecDeque};
+use std::{cmp::min, collections::VecDeque, mem::{transmute, MaybeUninit}, sync::{Arc, OnceLock}};
 
 use ark_ff::{Field, PrimeField};
 use itertools::Itertools;
 use rayon::prelude::*;
 
-use crate::polynomial::fragmented::Fragment;
+use crate::polynomial::fragmented::{Fragment, FragmentContent, Shape};
 
 #[derive(Clone, Copy)]
 /// A segment starting at start and ending at start + 2^loglength, such that 2^loglength | start.
@@ -59,7 +59,7 @@ pub fn log_floor(mut x: usize) -> u8 {
 
 // This is dual to fragments from poly.rs. Probably we should refactor this at some point.
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum QueryContent {
     Data,
     Sum,
@@ -67,46 +67,49 @@ pub enum QueryContent {
 
 #[derive(Clone, Copy)]
 pub struct SegmentQuery {
+    mem_idx: usize,
     start: usize,
     end: usize,
     content: QueryContent,
 }
 
 impl SegmentQuery {
-    pub fn new(start: usize, end: usize, content: QueryContent) -> Self {
+    pub fn new(start: usize, end: usize, mem_idx: usize, content: QueryContent) -> Self {
         assert!(start <= end);
-        Self {start, end, content}
+        Self {start, end, content, mem_idx}
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 
 pub struct StSubQuery {
+    mem_idx: usize,
     start: usize,
     logsize: u8,
     content: QueryContent,
 }
 
 impl StSubQuery {
-    pub fn new_unchecked(start: usize, logsize: u8, content: QueryContent) -> Self {
-        Self {start, logsize, content}        
+    pub fn new_unchecked(start: usize, logsize: u8, mem_idx: usize, content: QueryContent) -> Self {
+        Self {start, logsize, content, mem_idx}        
     }
 
-    pub fn new(start: usize, logsize: u8, content: QueryContent) -> Self {
+    pub fn new(start: usize, logsize: u8, mem_idx: usize, content: QueryContent) -> Self {
         assert!((start >> logsize) << logsize == start);
-        Self::new_unchecked(start, logsize, content)
+        Self::new_unchecked(start, logsize, mem_idx, content)
     }
 }
 
 pub struct StSubIter {
     start: usize,
     end: usize,
+    mem_idx: usize,
     content: QueryContent
 }
 
 impl StSubIter {
     pub fn new(query: SegmentQuery) -> Self {
-        StSubIter { start: query.start, end: query.end, content: query.content }
+        StSubIter { start: query.start, end: query.end, mem_idx: query.mem_idx, content: query.content }
     }
 }
 
@@ -117,7 +120,8 @@ impl Iterator for StSubIter {
         if self.end == self.start {return None}
         let logsize = min(count_trailing_zeros(self.start), log_floor(self.end - self.start));
         self.start += 1 << logsize;
-        Some(Self::Item::new_unchecked(self.start - (1 << logsize), logsize, self.content))
+        self.mem_idx += 1 << logsize;
+        Some(Self::Item::new_unchecked(self.start - (1 << logsize), logsize, self.mem_idx - (1 << logsize), self.content))
     }
 }
 
@@ -132,70 +136,113 @@ pub fn compute_segment_split(mut start: usize, end: usize) -> Vec<StandardSubset
     ret
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct BinTreeNode {
+    parent: usize,
+    is_r_child: bool,
+    leaf_query: Option<(usize, QueryContent)>,
+}
+
+impl BinTreeNode {
+    pub fn new(parent: usize, is_r_child: bool, leaf_query: Option<(usize, QueryContent)>) -> Self {
+        Self { parent, is_r_child, leaf_query }
+    }
+}
+
 
 #[derive(Clone, Debug)]
 pub struct BinTree {
     total_logsize: usize, 
-    nodes: Vec<Vec<(usize, bool, usize)>>, // Points to parent + L/R identifier, ordered from the root.
-    leaves: Vec<(usize, usize)>, // Points to (id, depth).
+    nodes: Vec<Vec<BinTreeNode>>, // Points to parent + L/R identifier, ordered from the root.
+//    leaves: Vec<(usize, usize)>, // <-- not needed
 }
 
+impl BinTree {
+
+    pub fn from_segments(total_logsize: usize, seg_queries: impl Iterator<Item = SegmentQuery>) -> Self {
+        Self::from_stsubs(total_logsize, seg_queries.map(|seg| StSubIter::new(seg)).flatten())
+    }
 
 /// Assumes that queries are non-intersecting and ordered from left to right.
-pub fn standard_subsets_bintree(total_logsize: usize, stsub_queries: impl Iterator<Item = StSubQuery>) -> BinTree {
+    pub fn from_stsubs(total_logsize: usize, stsub_queries: impl Iterator<Item = StSubQuery>) -> Self {
 
-    let mut ret = BinTree {total_logsize, nodes: vec![vec![]; total_logsize + 1], leaves: vec![]};
-    let nodes = &mut ret.nodes;
-    let leaves = &mut ret.leaves;
-    let mut nodes_metadata = vec![vec![]; total_logsize + 1];
+        let mut ret = BinTree {total_logsize, nodes: vec![vec![]; total_logsize + 1]};
+        let nodes = &mut ret.nodes;
+//        let leaves = &mut ret.leaves;
+        let mut nodes_metadata = vec![vec![]; total_logsize + 1];
 
+        let mut prev_right_end = 0;
 
-    let mut prev_right_end = 0;
+        let mut sum_leaf_idx = 0;
 
-    for (i, query) in stsub_queries.enumerate() {
-        assert!(query.start >= prev_right_end, "query sequence is not properly ordered");
-        prev_right_end = query.start + (1 << query.logsize);
+        for (i, query) in stsub_queries.enumerate() {
+            assert!(query.start >= prev_right_end, "query sequence is not properly ordered");
+            prev_right_end = query.start + (1 << query.logsize);
 
-        let mut path = query.start >> query.logsize;
-        let mut depth = total_logsize - (query.logsize as usize);
+            let mut path = query.start >> query.logsize;
+            let mut depth = total_logsize - (query.logsize as usize);
 
-        leaves.push((nodes[depth].len(), depth));
+//            leaves.push((nodes[depth].len(), depth));
 
-        let mut bit;
+            let mut bit;
 
-        while depth > 0 {
-            bit = (path % 2) == 1;
-
-            match nodes_metadata[depth - 1].last() {
-                None => {
-                    nodes[depth].push((0, bit, i));
-                    nodes_metadata[depth].push(path);
-                },
-                Some(parent_path) => {
-                    if path >> 1 == *parent_path {
-                        assert!(bit, "should always happen");
-                        nodes[depth].push((nodes_metadata[depth - 1].len() - 1, bit, i));
-                        nodes_metadata[depth].push(path);
-                        break;
+            while depth > 0 {
+                let leaf_query =
+                    if depth == total_logsize - (query.logsize as usize) {
+                        let leaf_query = match query.content {
+                            QueryContent::Data => (i - sum_leaf_idx, QueryContent::Data),
+                            QueryContent::Sum => (sum_leaf_idx, QueryContent::Sum),
+                        };
+                        Some(leaf_query)
                     } else {
-                        nodes[depth].push((nodes_metadata[depth - 1].len(), bit, i));
+                        None
+                    };
+                bit = (path % 2) == 1;
+
+                match nodes_metadata[depth - 1].last() {
+                    None => {
+                        nodes[depth].push(BinTreeNode::new(0, bit, leaf_query));
                         nodes_metadata[depth].push(path);
-                    }
-                },
-            }
-            path >>= 1;
-            depth -= 1;
-            }
-        // Process initial case - add root.
-        if i == 0 {
-            nodes[0].push((0, false, i)); // root
-            nodes_metadata[0].push(0); // root's path is trivial            
-            if query.logsize as usize == total_logsize {
-                return ret;
+                    },
+                    Some(parent_path) => {
+                        if path >> 1 == *parent_path {
+                            assert!(bit, "should always happen");
+                            nodes[depth].push(
+                                BinTreeNode::new(
+                                    nodes_metadata[depth - 1].len() - 1,
+                                    bit,
+                                    leaf_query
+                                )
+                            );
+                            nodes_metadata[depth].push(path);
+                            break;
+                        } else {
+                            nodes[depth].push(
+                                BinTreeNode::new(
+                                    nodes_metadata[depth - 1].len(), 
+                                    bit,
+                                    leaf_query
+                                )
+                            );
+                            nodes_metadata[depth].push(path);
+                        }
+                    },
+                }
+                path >>= 1;
+                depth -= 1;
+                }
+            // Process initial case - add root.
+            if i == 0 {
+                nodes[0].push(BinTreeNode::new(0, false, None)); // root
+                nodes_metadata[0].push(0); // root's path is trivial            
+                if query.logsize as usize == total_logsize {
+                    nodes[0][0].leaf_query = Some((0, query.content)); // make the root leaf.
+                    return ret;
+                }
             }
         }
+        ret
     }
-    ret
 }
 
 pub struct PrefixFoldIter<T: Iterator, Acc : Clone, F: Fn(&Acc, &T::Item) -> Acc> {
@@ -233,10 +280,39 @@ pub fn compute_subsegments(segments: impl Iterator<Item = SegmentQuery>) -> impl
     segments.map(|x| StSubIter::new(x)).flatten()
 }
 
+/// Dual to the data of a polynomial.
+#[derive(Clone, Debug)]
+pub struct CopolyData<T> {
+    pub values: Vec<T>,
+    pub sums: Vec<T>,
+}
+
 
 pub trait Copolynomial<F: Field> {
     fn num_vars(&self) -> usize;
-    
+
+    /// Evaluates a copolynomial in a point.
+    fn ev(&self, pt: &[F]) -> F;
+
+    /// Binds the first variable to a value.
+    /// Importantly, this is the reverse order to the poly_var_bound from liblasso.
+    fn bound(&mut self, value: F);
+
+    // ----- New multi-query API -----
+
+    /// Prepare to answer queries from the shape (and its splits).
+    /// Binds together with the shape.
+    fn take_shape(&mut self, shape: Arc<OnceLock<Shape>>);
+
+    /// Creates data which adheres to the current shape.
+    /// The "constant" values are interpreted as sums over the corresponding segments.
+    fn materialize(&mut self) -> CopolyData<F>;
+
+    /// Computes the split of this data.
+    fn materialize_split(&mut self) -> (CopolyData<F>, CopolyData<F>);
+
+    // ----- Legacy content - kept for now for testing. -----
+
     /// Computes the sums over even and odd parts of the standard subset.
     fn half_sums_standard_subset(&self, standard_subset: StandardSubset) -> (F, F);
 
@@ -245,13 +321,6 @@ pub trait Copolynomial<F: Field> {
     
     /// Computes the values on a standard subset.
     fn materialize_standard_subset(&self, standard_subset: StandardSubset, target: &mut[F]);
-
-    /// Evaluates a copolynomial in a point.
-    fn ev(&self, pt: &[F]) -> F;
-
-    /// Binds the first variable to a value.
-    /// Importantly, this is the reverse order to the poly_var_bound from liblasso.
-    fn bound(&mut self, value: F);
 
     /// Computes half sums over the segment.
     /// Half sums are determined in terms of external indexation, i.e. even and odd parts are determined
@@ -285,11 +354,12 @@ pub trait Copolynomial<F: Field> {
 pub struct EqPoly<F: Field> {
     multiplier: F,
     point: Vec<F>, // Keeps coordinates in reverse order, so we can pop them normally.
+    shape: Option<Arc<OnceLock<Shape>>>,
 }
 
 impl<F: Field> EqPoly<F> {
     pub fn new(point: Vec<F>) -> Self {
-        EqPoly { multiplier: F::one(), point }
+        EqPoly { multiplier: F::one(), point, shape: None }
     }
 }
 
@@ -297,6 +367,105 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
     fn num_vars(&self) -> usize {
         self.point.len()
     }
+
+    fn ev(&self, pt: &[F]) -> F {
+        let r = &self.point;
+        assert!(r.len() == pt.len());
+        self.multiplier * r.iter().zip(pt.iter()).fold(F::zero(), |acc, (x, y)| acc * (*x * y + (F::one() - x)*(F::one() - y)))
+    }
+    
+    fn bound(&mut self, value: F) {
+        let p0 = self.point.pop().unwrap();
+        self.multiplier *= p0 * value + (F::one() - p0) * (F::one() - value);
+    }
+    
+    fn take_shape(&mut self, shape: Arc<OnceLock<Shape>>) {
+        assert!(self.shape.is_none());
+        self.shape = Some(shape);
+    }
+    
+    fn materialize(&mut self) -> CopolyData<F> {
+        let Shape{
+            fragments,
+            data_len,
+            num_consts,
+            split: _ ,
+            dedup_consts_len,
+        } = self.shape.as_ref().unwrap().get().unwrap();
+        
+        let mut data = vec![MaybeUninit::<F>::uninit(); *data_len];
+        let mut dedup_sums = vec![MaybeUninit::<F>::uninit(); *dedup_consts_len];
+        let mut sums = vec![F::zero(); *num_consts];
+
+        // let bintree = BinTree::from_segments(
+        //     1 << self.num_vars(),
+        //     shape.iter().map(|Fragment{idx, len, content, start}| {
+        //         SegmentQuery {
+        //             mem_idx: *idx,
+        //             start: *start,
+        //             end: start + len,
+        //             content : match content {
+        //                 FragmentContent::Data => QueryContent::Data,
+        //                 FragmentContent::Consts => QueryContent::Sum
+        //             }
+        //         }
+        //     }));
+
+
+        // let mut multipliers : &mut Vec<(F, Option<F>)> = &mut vec![(self.multiplier, None)];
+
+        // match bintree.nodes[0][0].leaf_query {
+        //     None => {multipliers[0].1 = Some(multipliers[0].0 * self.point[0])},
+        //     Some(query) => {todo!()}
+        // }
+
+        // for i in 1 .. bintree.total_logsize + 1 {
+        //     let j = bintree.nodes[i].len();
+        //     *multipliers = (0..j).into_par_iter().map(|idx| {
+        //         let BinTreeNode { parent, is_r_child, leaf_query } = bintree.nodes[i][idx];
+        //         let m = if is_r_child {
+        //             multipliers[parent].0 - multipliers[parent].1.unwrap()
+        //         } else {
+        //             multipliers[parent].1.unwrap()
+        //         };
+
+        //         match leaf_query {
+        //             None => {(m, Some(self.point[i] * m))},
+        //             Some(StSubQuery { mem_idx, start, logsize, content }) => {
+        //                 match content {
+        //                     QueryContent::Data => {
+        //                         let ptr = transmute::<usize, *mut F>(ptr + mem_idx);
+        //                         ptr.write(m);
+        //                         for s in 0..i {
+                                    
+        //                         }
+        //                     },
+        //                     QueryContent::Sum => {transmute::<usize, *mut F>(ptr + mem_idx).write(m)},
+        //                 }
+        //                 (m, None)
+        //             },
+        //         }
+
+        //     }).collect();
+        
+        //}
+        //     (0..j).into_par_iter().map(|idx| {
+        //         let (parent_idx, is_r_child) = bintree.nodes[i][idx];
+        //         if !is_r_child {
+        //             multipliers[i][idx] = 
+        //         }
+        //     }).count();
+        // }
+
+        todo!();
+
+    }
+    
+    fn materialize_split(&mut self) -> (CopolyData<F>, CopolyData<F>) {
+        todo!()
+    }
+
+    // -------- snip ----------
 
     fn half_sums_standard_subset(&self, standard_subset: StandardSubset) -> (F, F) {
         let loglength = standard_subset.loglength() as usize;
@@ -358,16 +527,6 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
     
     }
 
-    fn ev(&self, pt: &[F]) -> F {
-        let r = &self.point;
-        assert!(r.len() == pt.len());
-        self.multiplier * r.iter().zip(pt.iter()).fold(F::zero(), |acc, (x, y)| acc * (*x * y + (F::one() - x)*(F::one() - y)))
-    }
-    
-    fn bound(&mut self, value: F) {
-        let p0 = self.point.pop().unwrap();
-        self.multiplier *= p0 * value + (F::one() - p0) * (F::one() - value);
-    }
 }
 
 
@@ -409,6 +568,35 @@ impl<F: Field> RotPoly<F> {
 impl<F: Field> Copolynomial<F> for RotPoly<F> {
     fn num_vars(&self) -> usize {
         self.point.len()
+    }
+
+    fn ev(&self, pt: &[F]) -> F {
+        assert!(pt.len() == self.num_vars());
+        let mut poly = self.clone();
+        for &x in pt.iter().rev() {
+            poly.bound(x);
+        }
+        poly.eq_multiplier + poly.rot_multiplier
+    }
+
+    fn bound(&mut self, x0: F) {
+        let y0 = self.point.pop().unwrap();
+        let y0x0 = y0 * x0;
+        self.eq_multiplier *= F::one() - y0 - x0 + y0x0.double(); // Multiply by eq(x0, y0)
+        self.eq_multiplier += (y0 - y0x0) * self.rot_multiplier; // Add the component from Rot.
+        self.rot_multiplier *= x0 - y0x0;
+    }
+    
+    fn take_shape(&mut self, shape: Arc<OnceLock<Shape>>) {
+        todo!()
+    }
+    
+    fn materialize(&mut self) -> CopolyData<F> {
+        todo!()
+    }
+    
+    fn materialize_split(&mut self) -> (CopolyData<F>, CopolyData<F>) {
+        todo!()
     }
 
     fn half_sums_standard_subset(&self, standard_subset: StandardSubset) -> (F, F) {
@@ -474,22 +662,6 @@ impl<F: Field> Copolynomial<F> for RotPoly<F> {
         
     }
 
-    fn ev(&self, pt: &[F]) -> F {
-        assert!(pt.len() == self.num_vars());
-        let mut poly = self.clone();
-        for &x in pt.iter().rev() {
-            poly.bound(x);
-        }
-        poly.eq_multiplier + poly.rot_multiplier
-    }
-
-    fn bound(&mut self, x0: F) {
-        let y0 = self.point.pop().unwrap();
-        let y0x0 = y0 * x0;
-        self.eq_multiplier *= F::one() - y0 - x0 + y0x0.double(); // Multiply by eq(x0, y0)
-        self.eq_multiplier += (y0 - y0x0) * self.rot_multiplier; // Add the component from Rot.
-        self.rot_multiplier *= x0 - y0x0;
-    }
 }
 
 
@@ -734,8 +906,9 @@ mod tests {
     fn test_bintree() {
         let sizes = vec![13, 8, 7, 4];
         let mut acc = 0;
-        let queries = sizes.into_iter().map(|size| {acc += size; SegmentQuery::new(acc - size, acc, QueryContent::Data)});
-        let bintree = standard_subsets_bintree(5, compute_subsegments(queries));
+        let queries = sizes.into_iter().map(|size| {acc += size; SegmentQuery::new(acc - size, acc, acc - size, QueryContent::Data)});
+        let bintree = BinTree::from_stsubs(5, compute_subsegments(queries));
+
         println!("{:?}", bintree);
     }
 }

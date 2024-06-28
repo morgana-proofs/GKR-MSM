@@ -539,8 +539,11 @@ mod test {
 
         println!("{:?}", v_transcript.transcript.log);
 
+        v_transcript.transcript.assert_end();
+
         let EvalClaim{point: proof_point, evs} = res.unwrap();
         assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+
     }
 
     #[test]
@@ -629,6 +632,8 @@ mod test {
         }
 
         println!("{:?}", v_transcript.transcript.log);
+
+        v_transcript.transcript.assert_end();
 
         let EvalClaim{point: proof_point, evs} = res.unwrap();
         assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());

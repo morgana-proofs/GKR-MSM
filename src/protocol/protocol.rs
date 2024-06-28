@@ -20,6 +20,9 @@ pub struct Claim<F: PrimeField> {
     pub value: F,
 }
 
+//evaluations of several polynomials in several points;
+//points : list of points
+//evs[i][_] = (k, y) means that i-th polynomial at points[k] is equal to y
 #[derive(Clone, Debug)]
 pub struct MultiEvalClaim<F: PrimeField> {
     pub points: Vec<Vec<F>>,

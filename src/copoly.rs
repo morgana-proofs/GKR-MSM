@@ -140,12 +140,12 @@ pub fn compute_segment_split(mut start: usize, end: usize) -> Vec<StandardSubset
 pub struct BinTreeNode {
     parent: usize,
     is_r_child: bool,
-    leaf_query: Option<(usize, QueryContent)>,
+    is_leaf: bool,
 }
 
 impl BinTreeNode {
-    pub fn new(parent: usize, is_r_child: bool, leaf_query: Option<(usize, QueryContent)>) -> Self {
-        Self { parent, is_r_child, leaf_query }
+    pub fn new(parent: usize, is_r_child: bool, is_leaf: bool) -> Self {
+        Self { parent, is_r_child, is_leaf }
     }
 }
 
@@ -154,7 +154,8 @@ impl BinTreeNode {
 pub struct BinTree {
     total_logsize: usize, 
     nodes: Vec<Vec<BinTreeNode>>, // Points to parent + L/R identifier, ordered from the root.
-//    leaves: Vec<(usize, usize)>, // <-- not needed
+    sum_leaves: Vec<(usize, usize, usize)>, // Points to (depth, i, mem_idx)
+    data_leaves: Vec<(usize, usize, usize)>,
 }
 
 impl BinTree {
@@ -166,7 +167,13 @@ impl BinTree {
 /// Assumes that queries are non-intersecting and ordered from left to right.
     pub fn from_stsubs(total_logsize: usize, stsub_queries: impl Iterator<Item = StSubQuery>) -> Self {
 
-        let mut ret = BinTree {total_logsize, nodes: vec![vec![]; total_logsize + 1]};
+        let mut ret = BinTree {
+            total_logsize,
+            nodes: vec![vec![]; total_logsize + 1],
+            data_leaves: vec![],
+            sum_leaves: vec![]
+        };
+
         let nodes = &mut ret.nodes;
 //        let leaves = &mut ret.leaves;
         let mut nodes_metadata = vec![vec![]; total_logsize + 1];
@@ -182,26 +189,30 @@ impl BinTree {
             let mut path = query.start >> query.logsize;
             let mut depth = total_logsize - (query.logsize as usize);
 
-//            leaves.push((nodes[depth].len(), depth));
+            match query.content {
+                QueryContent::Data => {ret.data_leaves.push((depth, nodes[depth].len(), query.mem_idx))},
+                QueryContent::Sum => {ret.sum_leaves.push((depth, nodes[depth].len(), query.mem_idx))},
+            }
 
             let mut bit;
 
             while depth > 0 {
-                let leaf_query =
-                    if depth == total_logsize - (query.logsize as usize) {
-                        let leaf_query = match query.content {
-                            QueryContent::Data => (i - sum_leaf_idx, QueryContent::Data),
-                            QueryContent::Sum => (sum_leaf_idx, QueryContent::Sum),
-                        };
-                        Some(leaf_query)
-                    } else {
-                        None
-                    };
+                // let leaf_query =
+                //     if depth == total_logsize - (query.logsize as usize) {
+                //         let leaf_query = match query.content {
+                //             QueryContent::Data => (i - sum_leaf_idx, QueryContent::Data),
+                //             QueryContent::Sum => (sum_leaf_idx, QueryContent::Sum),
+                //         };
+                //         Some(leaf_query)
+                //     } else {
+                //         None
+                //     };
+                let is_leaf = (depth == total_logsize - (query.logsize as usize));
                 bit = (path % 2) == 1;
 
                 match nodes_metadata[depth - 1].last() {
                     None => {
-                        nodes[depth].push(BinTreeNode::new(0, bit, leaf_query));
+                        nodes[depth].push(BinTreeNode::new(0, bit, is_leaf));
                         nodes_metadata[depth].push(path);
                     },
                     Some(parent_path) => {
@@ -211,7 +222,7 @@ impl BinTree {
                                 BinTreeNode::new(
                                     nodes_metadata[depth - 1].len() - 1,
                                     bit,
-                                    leaf_query
+                                    is_leaf
                                 )
                             );
                             nodes_metadata[depth].push(path);
@@ -221,22 +232,23 @@ impl BinTree {
                                 BinTreeNode::new(
                                     nodes_metadata[depth - 1].len(), 
                                     bit,
-                                    leaf_query
+                                    is_leaf
                                 )
                             );
                             nodes_metadata[depth].push(path);
                         }
                     },
                 }
+
                 path >>= 1;
                 depth -= 1;
-                }
+            }
             // Process initial case - add root.
             if i == 0 {
-                nodes[0].push(BinTreeNode::new(0, false, None)); // root
+                nodes[0].push(BinTreeNode::new(0, false, false)); // root
                 nodes_metadata[0].push(0); // root's path is trivial            
                 if query.logsize as usize == total_logsize {
-                    nodes[0][0].leaf_query = Some((0, query.content)); // make the root leaf.
+                    nodes[0][0].is_leaf = true; // make the root leaf.
                     return ret;
                 }
             }
@@ -363,6 +375,27 @@ impl<F: Field> EqPoly<F> {
     }
 }
 
+pub fn materialize_eq_slice<F: Field>(multiplier: F, point: &[F], slice: &mut [MaybeUninit<F>]) {
+    let n = point.len();
+    assert!(1 << n == slice.len());
+    slice[0] = MaybeUninit::new(multiplier);
+    for i in 0..n {
+        let half = 1 << i;
+        let pt_idx = n - i - 1;
+        let (a, b) = slice[0..2*half].split_at_mut(half);
+
+        b
+            .par_iter_mut()
+            .enumerate()
+            .map(|(j, x)| *x = MaybeUninit::new(unsafe{a[j].assume_init()} * point[pt_idx])).count();
+        a
+            .par_iter_mut()
+            .enumerate()
+            .map(|(j, x)| *x = MaybeUninit::new(unsafe{x.assume_init() - b[j].assume_init()})).count();
+    }
+}
+
+
 impl<F: Field> Copolynomial<F> for EqPoly<F> {
     fn num_vars(&self) -> usize {
         self.point.len()
@@ -385,79 +418,75 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
     }
     
     fn materialize(&mut self) -> CopolyData<F> {
+        let shape = self.shape.as_ref().unwrap().get().unwrap();
         let Shape{
             fragments,
             data_len,
             num_consts,
             split: _ ,
             dedup_consts_len,
-        } = self.shape.as_ref().unwrap().get().unwrap();
-        
+        } = shape;
+
         let mut data = vec![MaybeUninit::<F>::uninit(); *data_len];
-        let mut dedup_sums = vec![MaybeUninit::<F>::uninit(); *dedup_consts_len];
         let mut sums = vec![F::zero(); *num_consts];
+        let mut sum_initialized = vec![false; *num_consts];
 
-        // let bintree = BinTree::from_segments(
-        //     1 << self.num_vars(),
-        //     shape.iter().map(|Fragment{idx, len, content, start}| {
-        //         SegmentQuery {
-        //             mem_idx: *idx,
-        //             start: *start,
-        //             end: start + len,
-        //             content : match content {
-        //                 FragmentContent::Data => QueryContent::Data,
-        //                 FragmentContent::Consts => QueryContent::Sum
-        //             }
-        //         }
-        //     }));
+        let bintree = BinTree::from_segments(
+            self.num_vars(),
+            fragments.iter().map(|Fragment{mem_idx, len, content, start}| {
+                SegmentQuery {
+                    mem_idx: *mem_idx,
+                    start: *start,
+                    end: start + len,
+                    content : match content {
+                        FragmentContent::Data => QueryContent::Data,
+                        FragmentContent::Consts => QueryContent::Sum
+                    }
+                }
+            }));
 
+        let multipliers : &mut Vec<Vec<(F, Option<F>)>> = &mut vec![vec![(self.multiplier, None)]];
 
-        // let mut multipliers : &mut Vec<(F, Option<F>)> = &mut vec![(self.multiplier, None)];
+        if !bintree.nodes[0][0].is_leaf {
+            multipliers[0][0].1 = Some(multipliers[0][0].0 * self.point[0])
+        }
 
-        // match bintree.nodes[0][0].leaf_query {
-        //     None => {multipliers[0].1 = Some(multipliers[0].0 * self.point[0])},
-        //     Some(query) => {todo!()}
-        // }
+        for i in 1 .. self.num_vars() {
+            let j = bintree.nodes[i].len();
+            multipliers.push((0..j).into_par_iter().map(|idx| {
+                let BinTreeNode { parent, is_r_child, is_leaf } = bintree.nodes[i][idx];
+                let m = if is_r_child {
+                    multipliers[i-1][parent].0 - multipliers[i-1][parent].1.unwrap()
+                } else {
+                    multipliers[i-1][parent].1.unwrap()
+                };
+                match is_leaf {
+                    false => (m, Some(self.point[i] * m)),
+                    true => (m, None),
+                }
+            }).collect());
+        }
 
-        // for i in 1 .. bintree.total_logsize + 1 {
-        //     let j = bintree.nodes[i].len();
-        //     *multipliers = (0..j).into_par_iter().map(|idx| {
-        //         let BinTreeNode { parent, is_r_child, leaf_query } = bintree.nodes[i][idx];
-        //         let m = if is_r_child {
-        //             multipliers[parent].0 - multipliers[parent].1.unwrap()
-        //         } else {
-        //             multipliers[parent].1.unwrap()
-        //         };
+        println!("Bintree: {:?}", bintree);
 
-        //         match leaf_query {
-        //             None => {(m, Some(self.point[i] * m))},
-        //             Some(StSubQuery { mem_idx, start, logsize, content }) => {
-        //                 match content {
-        //                     QueryContent::Data => {
-        //                         let ptr = transmute::<usize, *mut F>(ptr + mem_idx);
-        //                         ptr.write(m);
-        //                         for s in 0..i {
-                                    
-        //                         }
-        //                     },
-        //                     QueryContent::Sum => {transmute::<usize, *mut F>(ptr + mem_idx).write(m)},
-        //                 }
-        //                 (m, None)
-        //             },
-        //         }
+        bintree.sum_leaves.iter().map(|&(depth, idx, mem_idx)| {
+            sums[mem_idx] = if sum_initialized[mem_idx] {
+                sums[mem_idx] + multipliers[depth][idx].0
+            } else {
+                multipliers[depth][idx].0
+            };
+            sum_initialized[mem_idx] = true;
+        }).count();
 
-        //     }).collect();
-        
-        //}
-        //     (0..j).into_par_iter().map(|idx| {
-        //         let (parent_idx, is_r_child) = bintree.nodes[i][idx];
-        //         if !is_r_child {
-        //             multipliers[i][idx] = 
-        //         }
-        //     }).count();
-        // }
+        shape.slice_data(&mut data)
+            .into_par_iter()
+            .zip(
+                bintree.data_leaves.par_iter()
+            ).map(|(slice, (depth, idx, _))|{
+            materialize_eq_slice(multipliers[*depth][*idx].0, &self.point[*depth ..], slice)
+        }).count();
 
-        todo!();
+        CopolyData{values: unsafe{ transmute(data) }, sums}
 
     }
     
@@ -676,6 +705,8 @@ mod tests {
     use ark_std::UniformRand;
     use liblasso::poly::dense_mlpoly::DensePolynomial;
     use liblasso::poly::eq_poly;
+    use liblasso::poly::eq_poly::EqPolynomial;
+    use liblasso::utils::math::Math;
 
     use super::*;
 
@@ -911,4 +942,40 @@ mod tests {
 
         println!("{:?}", bintree);
     }
+
+    #[test]
+
+    fn test_eq_unsafe_materialize() {
+        let rng = &mut test_rng();
+
+        for i in 0..30 {
+
+            let _shape = Shape::rand(rng, 10, 10);
+            let lf = _shape.fragments.last().unwrap();
+            let num_vars = (lf.start + lf.len).log_2();
+            let point : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(num_vars).collect();
+            let lhs = EqPolynomial::new(point.clone()).evals();
+
+            let mut eq = EqPoly::new(point);
+            let mut shape = Arc::new(OnceLock::new());
+            shape.get_or_init(||{_shape});
+            eq.take_shape(shape);
+
+            let materialized = eq.materialize();
+
+            for fragment in eq.shape.unwrap().get().unwrap().fragments.iter() {
+                match fragment.content {
+                    FragmentContent::Data => {
+                        assert_eq!(
+                            lhs[fragment.start .. fragment.start + fragment.len],
+                            materialized.values[fragment.mem_idx .. fragment.mem_idx + fragment.len]
+                        )
+                    },
+                    FragmentContent::Consts => {},
+                }
+            }
+
+            }
+    }
+
 }

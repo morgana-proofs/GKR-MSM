@@ -21,7 +21,7 @@ use crate::{
     utils::TwistedEdwardsConfig,
 };
 use crate::polynomial::nested_poly::NestedPolynomial;
-use crate::protocol::bintree::{Bintree, BintreeParams, BintreeProof, BintreeProver, Layer};
+use crate::protocol::bintree::{BintreeProtocol, BintreeParams, BintreeProof, BintreeProver, Layer};
 use crate::protocol::protocol::{EvalClaim, ProtocolProver};
 use crate::protocol::sumcheck::to_multieval;
 #[cfg(feature = "memprof")]
@@ -268,7 +268,7 @@ pub fn gkr_msm_prove<
 
     let params = BintreeParams::new(layers, num_vars);
 
-    let (trace, output) = Bintree::witness(base_layer, &params);
+    let (trace, output) = BintreeProtocol::witness(base_layer, &params);
 
     #[cfg(feature = "prof")]
     drop(guard);

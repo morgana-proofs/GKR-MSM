@@ -11,7 +11,7 @@ use merlin::Transcript;
 
 use GKR_MSM::grand_add::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
 use GKR_MSM::Polynomial;;
-use GKR_MSM::protocol::bintree::{Bintree, BintreeParams, BintreeProver, Layer};
+use GKR_MSM::protocol::bintree::{BintreeProtocol, BintreeParams, BintreeProver, Layer};
 use GKR_MSM::protocol::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver};
 use GKR_MSM::protocol::sumcheck::to_multieval;
 use GKR_MSM::transcript::TranscriptSender;
@@ -115,7 +115,7 @@ fn prepare_witness((
     Vec<Polynomial<Fr>>,
     &BintreeParams<Fr>,
 )) -> (MultiEvalClaim<Fr>, Vec<Vec<Polynomial<Fr>>>) {
-    let (trace, output) = Bintree::witness(points_table_poly, &params);
+    let (trace, output) = BintreeProtocol::witness(points_table_poly, &params);
 
     let claims_to_reduce = to_multieval(EvalClaim {
         evs: output.iter().map(|p| p.evaluate(&point)).collect(),

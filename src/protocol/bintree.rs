@@ -123,7 +123,7 @@ impl<F: PrimeField> BintreeParams<F> {
 }
 
 
-pub struct Bintree<F: PrimeField> {
+pub struct BintreeProtocol<F: PrimeField> {
     _marker: PhantomData<F>,
 }
 
@@ -144,7 +144,7 @@ pub struct BintreeVerifier<F: PrimeField> {
 
 pub type BintreeProof<F> = VecDeque<LayerProof<F>>;
 
-impl<F: PrimeField> Protocol<F> for Bintree<F> {
+impl<F: PrimeField> Protocol<F> for BintreeProtocol<F> {
     type Prover = BintreeProver<F>;
 
     type Verifier = BintreeVerifier<F>;
@@ -489,7 +489,7 @@ mod test {
             5,
         );
 
-        let (trace, output) = Bintree::witness(input.clone(), &params);
+        let (trace, output) = BintreeProtocol::witness(input.clone(), &params);
         let mut i = 0;
         trace[i].iter().zip_eq(input.iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last();
         trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
@@ -537,7 +537,7 @@ mod test {
             5,
         );
 
-        let (trace, output) = Bintree::witness(input.clone(), &params);
+        let (trace, output) = BintreeProtocol::witness(input.clone(), &params);
 
 
         let claims_to_reduce = to_multieval(EvalClaim {

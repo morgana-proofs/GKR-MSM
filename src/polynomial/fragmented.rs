@@ -171,7 +171,7 @@ impl Shape {
     /// used by the shape is contigious. 
     pub fn slice_data<'a, T>(&self, mut data: &'a mut [T]) -> Vec<&'a mut [T]> {
         assert_eq!(data.len(), self.data_len);
-        let mut ret = Vec::with_capacity(self.fragments.len());
+        let mut ret = vec![];
         let mut chunk;
         for fragment in &self.fragments {
             match fragment.content {
@@ -186,7 +186,6 @@ impl Shape {
     }
 
     pub fn rand<RNG: Rng>(rng: &mut RNG, frag_size: usize, frags: usize) -> Self {
-        println!("rand entry");
         
         let mut rand = Self::empty(1);
         let mut const_size = 0;
@@ -198,7 +197,6 @@ impl Shape {
                 Data => rand.data_len,
                 Consts => {rng.next_u64() as usize % (const_size + 1)}
             };
-            println!("Logging fragment addition: mem_idx {:?}, len {:?}, content {:?}, start {:?}", mem_idx, len, content, start);
             rand.add(Fragment {
                 mem_idx,
                 len,

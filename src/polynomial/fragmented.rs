@@ -102,8 +102,6 @@ impl Shape {
 
     pub fn add(&mut self, fragment: Fragment) {
 
-        println!("State: {:?}", self);
-        println!("Adding fragment {:?}", fragment);
         let merge;
 
         match self.fragments.last() {
@@ -156,46 +154,37 @@ impl Shape {
     }
 
     /// Does not actually need mutable receiver.
-    pub fn assert_correct(&mut self) {
-        let data_len = self.data_len;
-        let dedup_consts_len = self.dedup_consts_len;
+    pub fn assert_correct(&self) {
+        let mut data_len = 0;
+        let mut dedup_consts_len = 0;
 
-        self.finalize();
-
-        assert_eq!(data_len, self.data_len);
-        assert_eq!(dedup_consts_len, self.dedup_consts_len);
-    }
-
-    /// Slices the data array. Also makes the integrity checks (should eventually be
-    /// moved to shape construction) - namely, it does check that data layout
-    /// used by the shape is contigious. 
-    pub fn slice_data<'a, T>(&self, mut data: &'a mut [T]) -> Vec<&'a mut [T]> {
-        assert_eq!(data.len(), self.data_len);
-        let mut ret = vec![];
-        let mut chunk;
-        for fragment in &self.fragments {
-            match fragment.content {
+        for frag in self.fragments.iter() {
+            match frag.content {
                 Data => {
-                    (chunk, data) = data.split_at_mut(fragment.len);
-                    ret.push(chunk);
-                },
-                Consts => (),
+                    assert_eq!(frag.mem_idx, data_len, "Shape data incorrect at frag.mem_idx = {:?}, self.data_len = {:?}, \nFull shape{:?}", frag.mem_idx, self.data_len, self);
+                    data_len += frag.len;
+                }
+                Consts => {
+                    dedup_consts_len += 1;
+                    assert!(frag.mem_idx < self.num_consts);
+                }
             }
-        };
-        ret
+        }
+        
+        assert!(self.data_len == data_len);
+        assert!(self.dedup_consts_len == dedup_consts_len);
     }
 
-    pub fn rand<RNG: Rng>(rng: &mut RNG, frag_size: usize, frags: usize) -> Self {
+    pub fn rand<RNG: Rng>(rng: &mut RNG, frag_size: usize, frags: usize, num_consts: usize) -> Self {
         
-        let mut rand = Self::empty(1);
-        let mut const_size = 0;
+        let mut rand = Self::empty(num_consts);
         let mut start = 0;
         for _ in 0..frags {
             let len = rng.next_u64() as usize % frag_size + 1;
             let content = if rng.next_u32() % 2 == 0 { Data } else { Consts };
             let mem_idx = match content {
                 Data => rand.data_len,
-                Consts => {rng.next_u64() as usize % (const_size + 1)}
+                Consts => {rng.next_u64() as usize % (num_consts)}
             };
             rand.add(Fragment {
                 mem_idx,
@@ -207,7 +196,7 @@ impl Shape {
         }
         let len = (1 << start.log_2()) - start;
         rand.add(Fragment {
-            mem_idx: rng.next_u64() as usize % (const_size + 1),
+            mem_idx: rng.next_u64() as usize % (num_consts),
             len,
             content: Consts,
             start,
@@ -315,9 +304,9 @@ impl<F> FragmentedPoly<F> {
 }
 
 impl<F: From<u64>> FragmentedPoly<F> {
-    pub fn rand<RNG: Rng>(rng: &mut RNG, frag_size: usize, frags: usize) -> Self {
+    pub fn rand<RNG: Rng>(rng: &mut RNG, frag_size: usize, frags: usize, num_consts: usize) -> Self {
         let shape = Arc::new(OnceLock::new());
-        let s = shape.get_or_init(|| Shape::rand(rng, frag_size, frags));
+        let s = shape.get_or_init(|| Shape::rand(rng, frag_size, frags, num_consts));
         Self {
             data: (0..s.data_len).map(|_| F::from(rng.next_u64())).collect_vec(),
             consts: (0..s.num_consts).map(|_| F::from(rng.next_u64())).collect_vec(),
@@ -468,7 +457,7 @@ mod tests {
         let rng = &mut test_rng();
         for _ in 0..100 {
             let shape_cell = Arc::new(OnceLock::new());
-            let shape = Shape::rand(rng, 10, 10);
+            let shape = Shape::rand(rng, 10, 10, 1);
             shape_cell.set(shape.clone()).unwrap();
             let split = shape.split();
             let p = FragmentedPoly::new(
@@ -494,7 +483,7 @@ mod tests {
         let rng = &mut test_rng();
         for _ in 0..100 {
             let shape_cell = Arc::new(OnceLock::new());
-            let shape = Shape::rand(rng, 10, 10);
+            let shape = Shape::rand(rng, 10, 10, 1);
             shape_cell.set(shape.clone()).unwrap();
             let split = shape.split();
             let p = FragmentedPoly::new(
@@ -706,7 +695,7 @@ mod tests {
         let mut rng = &mut test_rng();
 
         for _ in 0..10 {
-            let poly = FragmentedPoly::rand(rng, 10, 10);
+            let poly = FragmentedPoly::rand(rng, 10, 10, 1);
             let flat = poly.clone().into_vec();
             let dense = DensePolynomial::new(flat.clone());
             for _ in 0..10 {

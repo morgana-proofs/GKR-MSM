@@ -120,8 +120,11 @@ impl Iterator for StSubIter {
         if self.end == self.start {return None}
         let logsize = min(count_trailing_zeros(self.start), log_floor(self.end - self.start));
         self.start += 1 << logsize;
-        self.mem_idx += 1 << logsize;
-        Some(Self::Item::new_unchecked(self.start - (1 << logsize), logsize, self.mem_idx - (1 << logsize), self.content))
+        let prev_mem_idx = self.mem_idx;
+        if let QueryContent::Data = self.content {
+            self.mem_idx += 1 << logsize;
+        } else {}
+        Some(Self::Item::new_unchecked(self.start - (1 << logsize), logsize, prev_mem_idx, self.content))
     }
 }
 
@@ -175,12 +178,10 @@ impl BinTree {
         };
 
         let nodes = &mut ret.nodes;
-//        let leaves = &mut ret.leaves;
+
         let mut nodes_metadata = vec![vec![]; total_logsize + 1];
 
         let mut prev_right_end = 0;
-
-        let mut sum_leaf_idx = 0;
 
         for (i, query) in stsub_queries.enumerate() {
             assert!(query.start >= prev_right_end, "query sequence is not properly ordered");
@@ -197,16 +198,6 @@ impl BinTree {
             let mut bit;
 
             while depth > 0 {
-                // let leaf_query =
-                //     if depth == total_logsize - (query.logsize as usize) {
-                //         let leaf_query = match query.content {
-                //             QueryContent::Data => (i - sum_leaf_idx, QueryContent::Data),
-                //             QueryContent::Sum => (sum_leaf_idx, QueryContent::Sum),
-                //         };
-                //         Some(leaf_query)
-                //     } else {
-                //         None
-                //     };
                 let is_leaf = (depth == total_logsize - (query.logsize as usize));
                 bit = (path % 2) == 1;
 
@@ -290,6 +281,22 @@ impl<T: Iterator> PrefixFold for T {}
 
 pub fn compute_subsegments(segments: impl Iterator<Item = SegmentQuery>) -> impl Iterator<Item = StSubQuery> {
     segments.map(|x| StSubIter::new(x)).flatten()
+}
+
+/// Slices the data array. 
+pub fn slice_data<'a, T>(segments: impl Iterator<Item = SegmentQuery>, mut data: &'a mut [T]) -> Vec<&'a mut [T]> {
+    let mut ret = vec![];
+    let mut chunk;
+    for segment in compute_subsegments(segments) {
+        match segment.content {
+            QueryContent::Data => {
+                (chunk, data) = data.split_at_mut(1 << segment.logsize);
+                ret.push(chunk);
+            },
+            QueryContent::Sum => (),
+        }
+    };
+    ret
 }
 
 /// Dual to the data of a polynomial.
@@ -451,14 +458,14 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
             multipliers[0][0].1 = Some(multipliers[0][0].0 * self.point[0])
         }
 
-        for i in 1 .. self.num_vars() {
+        for i in 1 .. self.num_vars() + 1 {
             let j = bintree.nodes[i].len();
             multipliers.push((0..j).into_par_iter().map(|idx| {
                 let BinTreeNode { parent, is_r_child, is_leaf } = bintree.nodes[i][idx];
                 let m = if is_r_child {
-                    multipliers[i-1][parent].0 - multipliers[i-1][parent].1.unwrap()
-                } else {
                     multipliers[i-1][parent].1.unwrap()
+                } else {
+                    multipliers[i-1][parent].0 - multipliers[i-1][parent].1.unwrap()
                 };
                 match is_leaf {
                     false => (m, Some(self.point[i] * m)),
@@ -466,8 +473,6 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
                 }
             }).collect());
         }
-
-        println!("Bintree: {:?}", bintree);
 
         bintree.sum_leaves.iter().map(|&(depth, idx, mem_idx)| {
             sums[mem_idx] = if sum_initialized[mem_idx] {
@@ -478,9 +483,15 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
             sum_initialized[mem_idx] = true;
         }).count();
 
-        shape.slice_data(&mut data)
+        slice_data(shape.fragments.iter().map(|&Fragment { mem_idx, len, content, start }|{
+            let content = match content {
+                FragmentContent::Data => QueryContent::Data,
+                FragmentContent::Consts => QueryContent::Sum,
+            };
+            SegmentQuery{ mem_idx, start, end: (start+len), content }
+        }), &mut data)
             .into_par_iter()
-            .zip(
+            .zip_eq(
                 bintree.data_leaves.par_iter()
             ).map(|(slice, (depth, idx, _))|{
             materialize_eq_slice(multipliers[*depth][*idx].0, &self.point[*depth ..], slice)
@@ -707,6 +718,7 @@ mod tests {
     use liblasso::poly::eq_poly;
     use liblasso::poly::eq_poly::EqPolynomial;
     use liblasso::utils::math::Math;
+    use ark_ff::Field;
 
     use super::*;
 
@@ -945,37 +957,42 @@ mod tests {
 
     #[test]
 
-    fn test_eq_unsafe_materialize() {
+    fn test_eq_new_materialize() {
         let rng = &mut test_rng();
 
-        for i in 0..30 {
+        let num_consts = 3;
+        let _shape = Shape::rand(rng, 10, 10, num_consts);
 
-            let _shape = Shape::rand(rng, 10, 10);
-            let lf = _shape.fragments.last().unwrap();
-            let num_vars = (lf.start + lf.len).log_2();
-            let point : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(num_vars).collect();
-            let lhs = EqPolynomial::new(point.clone()).evals();
+        let lf = _shape.fragments.last().unwrap();
+        let num_vars = (lf.start + lf.len).log_2();
+        let point : Vec<Fr> = repeat_with(|| Fr::rand(rng)).take(num_vars).collect();
+        let lhs = EqPolynomial::new(point.clone()).evals();
 
-            let mut eq = EqPoly::new(point);
-            let mut shape = Arc::new(OnceLock::new());
-            shape.get_or_init(||{_shape});
-            eq.take_shape(shape);
+        let mut eq = EqPoly::new(point);
+        let mut shape = Arc::new(OnceLock::new());
+        shape.get_or_init(||{_shape});
+        eq.take_shape(shape);
 
-            let materialized = eq.materialize();
+        let mut lhs_sums = vec![Fr::ZERO; num_consts];
 
-            for fragment in eq.shape.unwrap().get().unwrap().fragments.iter() {
-                match fragment.content {
-                    FragmentContent::Data => {
-                        assert_eq!(
-                            lhs[fragment.start .. fragment.start + fragment.len],
-                            materialized.values[fragment.mem_idx .. fragment.mem_idx + fragment.len]
-                        )
-                    },
-                    FragmentContent::Consts => {},
-                }
+        let materialized : CopolyData<Fr> = eq.materialize();
+
+        for fragment in eq.shape.unwrap().get().unwrap().fragments.iter() {
+            match fragment.content {
+                FragmentContent::Data => {
+                    assert_eq!(
+                        lhs[fragment.start .. fragment.start + fragment.len],
+                        materialized.values[fragment.mem_idx .. fragment.mem_idx + fragment.len]
+                    )
+                },
+                FragmentContent::Consts => {
+                    lhs_sums[fragment.mem_idx] += lhs[fragment.start .. fragment.start + fragment.len].iter().sum::<Fr>();
+                },
             }
+        }
 
-            }
+        assert_eq!(lhs_sums, materialized.sums);
+
     }
 
 }

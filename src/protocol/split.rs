@@ -3,7 +3,6 @@ use std::marker::PhantomData;
 use ark_ff::PrimeField;
 use itertools::Itertools;
 use crate::polynomial::fragmented::FragmentedPoly;
-use crate::polynomial::nested_poly::{NestedPolynomial, SplitablePoly};
 use crate::protocol::protocol::{EvalClaim, Protocol, ProtocolProver, ProtocolVerifier};
 use crate::transcript::{Challenge, TranscriptReceiver};
 use crate::utils::{fix_var_bot, fix_var_top};
@@ -29,8 +28,8 @@ impl<F: PrimeField> Protocol<F> for Split<F> {
     type Verifier = SplitVerifier<F>;
     type ClaimsToReduce = EvalClaim<F>;
     type ClaimsNew = EvalClaim<F>;
-    type WitnessInput = Vec<NestedPolynomial<F>>;
-    type Trace = Vec<Vec<NestedPolynomial<F>>>;
+    type WitnessInput = Vec<FragmentedPoly<F>>;
+    type Trace = Vec<Vec<FragmentedPoly<F>>>;
     type WitnessOutput = Self::WitnessInput;
     type Proof = ();
     type Params = ();
@@ -42,7 +41,7 @@ impl<F: PrimeField> Protocol<F> for Split<F> {
             assert_eq!(arg.num_vars(), num_vars);
         }
 
-        let (mut l, r): (Vec<NestedPolynomial<F>>, Vec<NestedPolynomial<F>>) = args.iter().map(|p| p.split_bot()).unzip();
+        let (mut l, r): (Vec<FragmentedPoly<F>>, Vec<FragmentedPoly<F>>) = args.iter().map(|p| p.split()).unzip();
         l.extend(r);
 
         (vec![args], l)
@@ -54,7 +53,7 @@ impl<F: PrimeField> ProtocolProver<F> for SplitProver<F> {
     type ClaimsNew = EvalClaim<F>;
     type Proof = ();
     type Params = ();
-    type Trace = Vec<Vec<NestedPolynomial<F>>>;
+    type Trace = Vec<Vec<FragmentedPoly<F>>>;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
@@ -135,12 +134,13 @@ mod tests {
     }
     #[test]
     fn split_protocol() -> () {
-        let num_vars: usize = 5;
         let rng = &mut ark_std::test_rng();
+        let num_vars = 5;
 
-        let polys: Vec<NestedPolynomial<Fr>> = (0..3).map(|_| {
-            NestedPolynomial::rand(rng, num_vars)
+        let polys: Vec<FragmentedPoly<Fr>> = (0..3).map(|_| {
+            FragmentedPoly::rand(rng, num_vars)
         }).collect();
+
         let point: Vec<Fr> = gen_random_vec(rng, num_vars - 1);
 
         let (trace, out) = Split::witness(polys.clone(), &());

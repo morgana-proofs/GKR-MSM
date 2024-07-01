@@ -10,7 +10,7 @@ use profi::{prof, prof_guard};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 
 use crate::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows, map_over_poly_legacy}};
-use crate::polynomial::nested_poly::NestedPolynomial;
+use crate::polynomial::fragmented::{FragmentedPoly, InterOp};
 use crate::utils::{fix_var_bot};
 
 use super::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier};
@@ -69,19 +69,19 @@ impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
 
     type ClaimsNew = EvalClaim<F>;
 
-    type WitnessInput = Vec<NestedPolynomial<F>>;
+    type WitnessInput = Vec<FragmentedPoly<F>>;
 
-    type Trace = Vec<Vec<NestedPolynomial<F>>>;
+    type Trace = Vec<Vec<FragmentedPoly<F>>>;
 
-    type WitnessOutput = Vec<NestedPolynomial<F>>;
+    type WitnessOutput = Vec<FragmentedPoly<F>>;
 
     type Proof = SumcheckPolyMapProof<F>;
 
     type Params = SumcheckPolyMapParams<F>;
 
     fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
-        let _args = args.iter().map(|p| p.into()).collect_vec();
-        let out = map_over_poly_legacy(&_args, |x|(params.f.exec)(x)).iter().map(|p| NestedPolynomial::from(p)).collect_vec();
+        let _args = Vec::<_>::interop_into(args.clone());
+        let out = Vec::<_>::interop_from(map_over_poly_legacy(&_args, |x|(params.f.exec)(x)));
         (vec![args], out)
     }
 }
@@ -95,7 +95,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
     type Params = SumcheckPolyMapParams<F>;
 
-    type Trace = Vec<Vec<NestedPolynomial<F>>>;
+    type Trace = Vec<Vec<FragmentedPoly<F>>>;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
@@ -103,7 +103,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
         params: &Self::Params,
     ) -> Self {
         assert_eq!(args[0].len(), params.f.num_i);
-        let mut args = args.iter().map(|v| v.iter().map(|p| p.into()).collect_vec()).collect_vec();
+        let mut args = Vec::<_>::interop_into(args);
 
         let eqs_iter = claims_to_reduce
             .points
@@ -458,13 +458,14 @@ fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f:
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use std::sync::{Arc, OnceLock};
     use ark_bls12_381::G1Projective;
     use ark_bls12_381::Fr;
     use ark_std::test_rng;
     use itertools::Itertools;
 
     use liblasso::utils::test_lib::TestTranscript;
+    use crate::polynomial::fragmented::{FragmentedPoly, Shape};
 
     use crate::transcript::{IndexedProofTranscript, TranscriptSender};
 
@@ -475,7 +476,9 @@ mod test {
         let gen = &mut test_rng();
 
         let num_vars: usize = 5;
-        let polys: Vec<NestedPolynomial<Fr>> = (0..3).map(|_| NestedPolynomial::rand(gen, 5)).collect();
+        let shape = Arc::new(OnceLock::new());
+        shape.get_or_init(||Shape::rand(gen, num_vars));
+        let polys: Vec<FragmentedPoly<Fr>> = (0..3).map(|_| FragmentedPoly::rand_with_shape(gen, shape.clone())).collect();
 
         fn combfunc(i: &[Fr]) -> Vec<Fr> {
             vec![i[0], i[1], i[2] * i[2] * i[0], i[2] * i[2] * i[0]]
@@ -558,7 +561,9 @@ mod test {
             vec![1, 0, 1, 1, 0],
             vec![1, 1, 0, 0, 1],
         ];
-        let polys: Vec<NestedPolynomial<Fr>> = (0..num_polys).map(|j| NestedPolynomial::rand(gen, 5)).collect();
+        let shape = Arc::new(OnceLock::new());
+        shape.get_or_init(||Shape::rand(gen, num_vars));
+        let polys: Vec<FragmentedPoly<Fr>> = (0..num_polys).map(|j| FragmentedPoly::rand_with_shape(gen, shape.clone())).collect();
 
         fn combfunc(i: &[Fr]) -> Vec<Fr> {
             vec![

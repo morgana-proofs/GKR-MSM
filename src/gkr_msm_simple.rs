@@ -20,6 +20,7 @@ use crate::{
     transcript::{TranscriptReceiver, TranscriptSender},
     utils::TwistedEdwardsConfig,
 };
+use crate::polynomial::fragmented::{FragmentedPoly, InterOp};
 use crate::polynomial::nested_poly::NestedPolynomial;
 use crate::protocol::bintree::{BintreeProtocol, BintreeParams, BintreeProof, BintreeProver, Layer};
 use crate::protocol::protocol::{EvalClaim, ProtocolProver};
@@ -147,14 +148,14 @@ pub fn gkr_msm_prove<
     let pts_comm: G = ck.commit_vec(&pts_prep);
     transcript.append_point::<G>(b"point column", pts_comm);
 
-    let bits_poly = NestedPolynomial::from_values(
+    let bits_poly = FragmentedPoly::interop_from(NestedPolynomial::from_values(
         bits_flatten
             .par_iter()
             .map(|x| F::from(*x as u64))
             .collect(),
         bits_flatten.len().log_2(),
         F::zero(),
-    );
+    ));
 
     let _points_table_poly: (Vec<_>, Vec<_>) = points
         .par_iter()
@@ -164,7 +165,7 @@ pub fn gkr_msm_prove<
 
 
     let tmp = _points_table_poly.0.len().log_2();
-    let points_table_poly = (
+    let points_table_poly = <(FragmentedPoly<F>, FragmentedPoly<F>)>::interop_from((
         NestedPolynomial::from_values(
             _points_table_poly.0,
             tmp,
@@ -175,7 +176,7 @@ pub fn gkr_msm_prove<
             tmp,
             F::zero(),
         ),
-    );
+    ));
 
     // layer0
     // bits_poly

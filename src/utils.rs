@@ -60,13 +60,22 @@ pub fn map_over_poly_legacy<F: PrimeField>(
         }).collect::<Vec<DensePolynomial::<F>>>().try_into().unwrap()
 }
 
-pub fn map_over_poly<F: PrimeField>(
-    ins: &[NestedPolynomial<F>],
+pub fn map_over_poly<F: Field>(
+    ins: &[&[F]],
     f: PolynomialMapping<F>,
-) -> Vec<NestedPolynomial<F>> {
+) -> Vec<Vec<F>> {
     #[cfg(feature = "prof")]
     prof!("map_over_poly");
-    NestedPolynomial::map_over_poly(ins, f)
+    let applications: Vec<Vec<F>> = (0..ins[0].len()).into_par_iter()
+        .map(|idx| {
+            (f.exec)(&ins.iter().map(|p| p[idx]).collect_vec())
+        }).collect();
+
+    (0..applications.first().unwrap().len()).into_par_iter()
+        .map(|idx| {
+            applications.iter().map(|v| v[idx]).collect()
+        })
+        .collect::<Vec<Vec<F>>>()
 }
 
 

@@ -1,12 +1,14 @@
 use std::{collections::VecDeque, marker::PhantomData, sync::Arc};
+use std::sync::OnceLock;
 
 use ark_ff::PrimeField;
+use ark_std::iterable::Iterable;
 use itertools::{Either, Itertools};
 #[cfg(feature = "prof")]
 use profi::prof;
 
 use crate::{protocol::{protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck::{SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier, to_multieval}, split::{Split, SplitProver, SplitVerifier}}, transcript::{Challenge, TranscriptReceiver}};
-use crate::polynomial::nested_poly::NestedPolynomial;
+use crate::polynomial::fragmented::{FragmentedPoly, InterOp};
 
 #[derive(Clone)]
 pub enum Layer<F: PrimeField> {
@@ -44,7 +46,7 @@ impl<F: PrimeField> Layer<F> {
         }
     }
 
-    pub fn layer_wtns(&self, num_vars: usize, input: Vec<NestedPolynomial<F>>) -> (Vec<Vec<NestedPolynomial<F>>>, Vec<NestedPolynomial<F>>) {
+    pub fn layer_wtns(&self, num_vars: usize, input: Vec<FragmentedPoly<F>>) -> (Vec<Vec<FragmentedPoly<F>>>, Vec<FragmentedPoly<F>>) {
         match self {
             Self::Mapping(f) => {
                 SumcheckPolyMap::witness(
@@ -129,7 +131,7 @@ pub struct BintreeProtocol<F: PrimeField> {
 
 pub struct BintreeProver<F: PrimeField> {
     proofs: Option<VecDeque<LayerProof<F>>>,
-    trace: Vec<Vec<NestedPolynomial<F>>>,
+    trace: Vec<Vec<FragmentedPoly<F>>>,
     params: Vec<(Layer<F>, usize)>,
     current_claims: Option<Either<MultiEvalClaim<F>, EvalClaim<F>>>,
     current_prover: Option<Either<SumcheckPolyMapProver<F>, SplitProver<F>>>,
@@ -153,11 +155,11 @@ impl<F: PrimeField> Protocol<F> for BintreeProtocol<F> {
 
     type ClaimsNew = EvalClaim<F>;
 
-    type WitnessInput = Vec<NestedPolynomial<F>>;
+    type WitnessInput = Vec<FragmentedPoly<F>>;
 
-    type Trace = Vec<Vec<NestedPolynomial<F>>>;
+    type Trace = Vec<Vec<FragmentedPoly<F>>>;
 
-    type WitnessOutput = Vec<NestedPolynomial<F>>;
+    type WitnessOutput = Vec<FragmentedPoly<F>>;
 
     type Proof = BintreeProof<F>;
 
@@ -191,7 +193,7 @@ impl<F: PrimeField> ProtocolProver<F> for BintreeProver<F> {
 
     type Params = BintreeParams<F>;
 
-    type Trace = Vec<Vec<NestedPolynomial<F>>>;
+    type Trace = Vec<Vec<FragmentedPoly<F>>>;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
@@ -400,6 +402,7 @@ mod test {
     use ark_std::{test_rng, UniformRand};
     use itertools::Itertools;
     use liblasso::utils::test_lib::TestTranscript;
+    use crate::polynomial::fragmented::Shape;
 
     use crate::transcript::{IndexedProofTranscript, TranscriptSender};
     use crate::utils::{map_over_poly_legacy, split_vecs};
@@ -466,8 +469,10 @@ mod test {
         let gen = &mut test_rng();
 
         let num_vars = 5;
+        let shape = Arc::new(OnceLock::new());
+        shape.get_or_init(||Shape::rand(gen, num_vars));
         let input = (0..3).map(|_|
-            NestedPolynomial::rand(gen, num_vars)
+            FragmentedPoly::rand_with_shape(gen, shape.clone())
         ).collect_vec();
 
         let params = BintreeParams::new(
@@ -492,19 +497,19 @@ mod test {
         let (trace, output) = BintreeProtocol::witness(input.clone(), &params);
         let mut i = 0;
         trace[i].iter().zip_eq(input.iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last();
-        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f63).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f34).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f45).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f53).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f62).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f23).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f62).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f23).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        trace[i + 1].iter().zip_eq(split_vecs(&trace[i]).iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
-        output.iter().zip_eq(map_over_poly_legacy(&(trace[i].iter().map(|p| p.into()).collect_vec()), f61).iter().map(|p| NestedPolynomial::from(p))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(split_vecs(&Vec::<FragmentedPoly<Fr>>::interop_into(trace[i].clone())).iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&Vec::<FragmentedPoly<Fr>>::interop_into(trace[i].clone()), f63).iter().map(|p| FragmentedPoly::<Fr>::interop_from(p.clone()))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&Vec::<FragmentedPoly<Fr>>::interop_into(trace[i].clone()), f34).iter().map(|p| FragmentedPoly::<Fr>::interop_from(p.clone()))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&Vec::<FragmentedPoly<Fr>>::interop_into(trace[i].clone()), f45).iter().map(|p| FragmentedPoly::<Fr>::interop_from(p.clone()))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&Vec::<FragmentedPoly<Fr>>::interop_into(trace[i].clone()), f53).iter().map(|p| FragmentedPoly::<Fr>::interop_from(p.clone()))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(split_vecs(&Vec::<FragmentedPoly<Fr>>::interop_into(trace[i].clone())).iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&Vec::<FragmentedPoly<Fr>>::interop_into(trace[i].clone()), f62).iter().map(|p| FragmentedPoly::<Fr>::interop_from(p.clone()))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&Vec::<FragmentedPoly<Fr>>::interop_into(trace[i].clone()), f23).iter().map(|p| FragmentedPoly::<Fr>::interop_from(p.clone()))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(split_vecs(&Vec::<FragmentedPoly<Fr>>::interop_into(trace[i].clone())).iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&Vec::<FragmentedPoly<Fr>>::interop_into(trace[i].clone()), f62).iter().map(|p| FragmentedPoly::<Fr>::interop_from(p.clone()))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(map_over_poly_legacy(&Vec::<FragmentedPoly<Fr>>::interop_into(trace[i].clone()), f23).iter().map(|p| FragmentedPoly::<Fr>::interop_from(p.clone()))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        trace[i + 1].iter().zip_eq(split_vecs(&Vec::<FragmentedPoly<Fr>>::interop_into(trace[i].clone())).iter()).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
+        output.iter().zip_eq(map_over_poly_legacy(&Vec::<FragmentedPoly<Fr>>::interop_into(trace[i].clone()), f61).iter().map(|p| FragmentedPoly::<Fr>::interop_from(p.clone()))).map(|(r, e)| assert_eq!(r.vec(), e.vec())).last(); i += 1;
         assert_eq!(i, trace.len());
     }
 
@@ -514,7 +519,7 @@ mod test {
 
         let num_vars = 5;
         let input = (0..3).map(|_|
-            NestedPolynomial::rand(gen, num_vars)
+            FragmentedPoly::rand(gen, num_vars)
         ).collect_vec();
         let point = (0..1).map(|_| Fr::rand(gen)).collect_vec();
 

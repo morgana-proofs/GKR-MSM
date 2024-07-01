@@ -97,13 +97,13 @@ pub enum NestedValues<F: Field> {
 
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct NestedPoly<F: Field> {
-    values: NestedValues<F>,
-    continuation: Option<F>,
+    pub values: NestedValues<F>,
+    pub continuation: Option<F>,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub struct NestedPolynomial<F: Field> {
-    values: NestedPoly<F>,
+    pub values: NestedPoly<F>,
     pub layer_num_vars: Vec<usize>,
 }
 

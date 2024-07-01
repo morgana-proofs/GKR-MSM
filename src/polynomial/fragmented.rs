@@ -1,15 +1,21 @@
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::mem::MaybeUninit;
-use std::ops::{Add, AddAssign, Mul, Sub};
+use std::ops::{Add, AddAssign, Index, IndexMut, Mul, Sub};
 use std::sync::{Arc, OnceLock};
-use ark_ff::Field;
+use ark_ed_on_bls12_381_bandersnatch::Fr;
+use ark_ff::{Field, PrimeField};
 use ark_std::iterable::Iterable;
 use ark_std::rand::{Rng, RngCore};
-use itertools::Itertools;
+use itertools::{Itertools, repeat_n};
+use liblasso::poly::dense_mlpoly::DensePolynomial;
 use liblasso::utils::math::Math;
 use rayon::prelude::*;
 use crate::polynomial::fragmented::FragmentContent::{Consts, Data};
+use crate::polynomial::nested_poly::{NestedPoly, NestedPolynomial, NestedValues};
+use crate::protocol::protocol::PolynomialMapping;
+use crate::utils::map_over_poly;
 
 pub trait Split: Sized {
     fn split(&self) -> (Self, Self);
@@ -67,7 +73,7 @@ fn should_merge(f1: &Fragment, f2: &Fragment) -> bool {
 
 impl Shape {
     pub fn empty(num_consts: usize) -> Self {
-        Self { fragments: vec![], data_len: 0, num_consts, dedup_consts_len: 0, split: <_>::default() }
+        Self { fragments: vec![], data_len: 0, num_consts, dedup_consts_len: 0, split: Arc::default() }
     }
     
     /// Derives num_consts automatically.
@@ -175,7 +181,7 @@ impl Shape {
         assert!(self.dedup_consts_len == dedup_consts_len);
     }
 
-    pub fn rand<RNG: Rng>(rng: &mut RNG, frag_size: usize, frags: usize, num_consts: usize) -> Self {
+    pub fn rand_by_frag_spec<RNG: Rng>(rng: &mut RNG, frag_size: usize, frags: usize, num_consts: usize) -> Self {
         
         let mut rand = Self::empty(num_consts);
         let mut start = 0;
@@ -201,6 +207,43 @@ impl Shape {
             content: Consts,
             start,
         });
+
+        rand.assert_correct();
+
+        rand
+    }
+
+    pub fn rand<RNG: Rng>(rng: &mut RNG, num_vars: usize) -> Self {
+        let num_frags = (rng.next_u64() % (1 << (num_vars - 2))) as usize;
+        let mut frag_ends = select_m_divs_of_n(rng, 1 << num_vars, num_frags - 1);
+        frag_ends.push(1 << num_vars);
+        let mut num_consts = 0;
+        let mut prev_data = false;
+        let frags = frag_ends.iter().zip(repeat_n(&0, 1).chain(frag_ends.iter())).map(|(e, s)| {
+            prev_data = if prev_data {false} else {rng.next_u32() % 2 == 0};
+            num_consts += if prev_data { 0 } else { 1 };
+            (*s, *e, !prev_data)
+        }).collect_vec();
+
+        let mut rand = Self::empty(num_consts);
+        for (start, end, is_const) in frags.into_iter() {
+            println!("{:?}", (start, end, match is_const {
+                true => {Consts}
+                false => {Data}
+            }));
+            let len = end - start;
+            let content = if is_const { Consts } else { Data };
+            let mem_idx = match content {
+                Data => rand.data_len,
+                Consts => {rng.next_u64() as usize % (num_consts)}
+            };
+            rand.add(Fragment {
+                mem_idx,
+                len,
+                content,
+                start,
+            });
+        }
 
         rand.assert_correct();
 
@@ -272,6 +315,21 @@ impl Shape {
     }
 }
 
+fn select_m_divs_of_n<RNG: Rng>(rng: &mut RNG, mut n: usize, m: usize) -> Vec<usize> {
+    let mut set = HashMap::new();
+    let mut out = Vec::with_capacity(m);
+    for _ in 0..m {
+        let j = rng.next_u64() as usize % n;
+        let l = set.get(&j).cloned().unwrap_or(j);
+        let r = set.get(&n).cloned().unwrap_or(n);
+        set.insert(j, r.clone());
+        out.push(l.clone());
+        n -= 1;
+    }
+    out.sort();
+    out
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FragmentedPoly<F> {
     pub data: Vec<F>,
@@ -304,14 +362,31 @@ impl<F> FragmentedPoly<F> {
 }
 
 impl<F: From<u64>> FragmentedPoly<F> {
-    pub fn rand<RNG: Rng>(rng: &mut RNG, frag_size: usize, frags: usize, num_consts: usize) -> Self {
+    pub fn rand_by_frag_spec<RNG: Rng>(rng: &mut RNG, frag_size: usize, frags: usize, num_consts: usize) -> Self {
         let shape = Arc::new(OnceLock::new());
-        let s = shape.get_or_init(|| Shape::rand(rng, frag_size, frags, num_consts));
+        let s = shape.get_or_init(|| Shape::rand_by_frag_spec(rng, frag_size, frags, num_consts));
         Self {
             data: (0..s.data_len).map(|_| F::from(rng.next_u64())).collect_vec(),
             consts: (0..s.num_consts).map(|_| F::from(rng.next_u64())).collect_vec(),
             shape,
         }
+    }
+
+    pub fn rand<RNG: Rng>(rng: &mut RNG, num_vars: usize) -> Self {
+        let shape = Arc::new(OnceLock::new());
+        let s = shape.get_or_init(|| Shape::rand(rng, num_vars));
+        Self {
+            data: (0..s.data_len).map(|_| F::from(rng.next_u64())).collect_vec(),
+            consts: (0..s.num_consts).map(|_| F::from(rng.next_u64())).collect_vec(),
+            shape,
+        }
+    }
+
+
+    pub fn rand_with_shape<RNG: Rng>(rng: &mut RNG, shape: Arc<OnceLock<Shape>>) -> Self {
+        let data = (0..shape.get().unwrap().data_len).map(|_| F::from(rng.next_u64())).collect_vec();
+        let consts = (0..shape.get().unwrap().num_consts).map(|_| F::from(rng.next_u64())).collect_vec();
+        Self::new(data, consts, shape)
     }
 }
 
@@ -425,8 +500,22 @@ impl<F: AddAssign + Mul<Output=F> + Sub<Output=F> + Send + Sync + Sized + Copy> 
     }
 }
 
+
+impl<F: Field> FragmentedPoly<F> {
+    pub fn map_over_poly(ins: &[Self], f: PolynomialMapping<F>) -> Vec<Self> {
+        let shape = ins[0].shape.clone();
+        let out_data = map_over_poly(&ins.iter().map(|p| p.data.as_slice()).collect_vec(), f.clone());
+        let out_consts = map_over_poly(&ins.iter().map(|p| p.consts.as_slice()).collect_vec(), f);
+        out_data.into_iter().zip(out_consts.into_iter()).map(|(data, consts)| Self {data, consts, shape: shape.clone()}).collect_vec()
+
+    }
+}
 impl <F: Clone> FragmentedPoly<F> {
-    fn into_vec(self) -> Vec<F> {
+    pub fn vec(&self) -> Vec<F> {
+        self.clone().into_vec()
+    }
+
+    pub fn into_vec(self) -> Vec<F> {
         let mut out = vec![];
         for fragment in &self.shape.get().unwrap().fragments {
             for idx in 0..fragment.len {
@@ -437,6 +526,101 @@ impl <F: Clone> FragmentedPoly<F> {
     }
 }
 
+pub trait InterOp<T> {
+    fn interop_from(v: T) -> Self;
+    fn interop_into(v: Self) -> T;
+}
+
+
+impl<T: Field> InterOp<NestedPolynomial<T>> for FragmentedPoly<T> {
+    fn interop_from(v: NestedPolynomial<T>) -> Self {
+        let data = v.vec();
+        let s: Arc<OnceLock<Shape>> = Arc::new(Default::default());
+        let shape = Shape {
+            fragments: vec![
+                Fragment {
+                    mem_idx: 0,
+                    len: data.len(),
+                    content: FragmentContent::Data,
+                    start: 0,
+                }
+            ],
+            data_len: 0,
+            num_consts: 0,
+            dedup_consts_len: 0,
+            split: Arc::new(Default::default()),
+        };
+        s.get_or_init(|| shape);
+        FragmentedPoly {
+            data: data,
+            consts: vec![],
+            shape: s,
+        }
+    }
+
+    fn interop_into(v: Self) -> NestedPolynomial<T> {
+        NestedPolynomial {
+            values: NestedPoly {
+                values: NestedValues::Flat(v.vec()),
+                continuation: None,
+            },
+            layer_num_vars: vec![v.num_vars()],
+        }
+    }
+}
+
+impl<T: PrimeField> InterOp<DensePolynomial<T>> for FragmentedPoly<T> {
+    fn interop_from(v: DensePolynomial<T>) -> Self {
+        let data = v.vec()[..1 << v.num_vars].to_vec();
+        let s: Arc<OnceLock<Shape>> = Arc::new(Default::default());
+        let shape = Shape {
+            fragments: vec![
+                Fragment {
+                    mem_idx: 0,
+                    len: data.len(),
+                    content: FragmentContent::Data,
+                    start: 0,
+                }
+            ],
+            data_len: 0,
+            num_consts: 0,
+            dedup_consts_len: 0,
+            split: Arc::new(Default::default()),
+        };
+        s.get_or_init(|| shape);
+        FragmentedPoly {
+            data: data,
+            consts: vec![],
+            shape: s,
+        }
+    }
+
+    fn interop_into(v: Self) -> DensePolynomial<T> {
+        DensePolynomial::new(v.vec())
+    }
+}
+
+impl<T, G: InterOp<T>> InterOp<Vec<T>> for Vec<G> {
+    fn interop_from(v: Vec<T>) -> Self {
+        v.into_iter().map(G::interop_from).collect_vec()
+    }
+
+    fn interop_into(v: Self) -> Vec<T> {
+        v.into_iter().map(G::interop_into).collect_vec()
+    }
+}
+
+impl<LT, LG: InterOp<LT>, RT, RG: InterOp<RT>> InterOp<(LT, RT)> for (LG, RG) {
+    fn interop_from(v: (LT, RT)) -> Self {
+        let (l, r) = v;
+        (LG::interop_from(l), RG::interop_from(r))
+    }
+
+    fn interop_into(v: Self) -> (LT, RT) {
+        let (l, r) = v;
+        (LG::interop_into(l), RG::interop_into(r))
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -457,7 +641,7 @@ mod tests {
         let rng = &mut test_rng();
         for _ in 0..100 {
             let shape_cell = Arc::new(OnceLock::new());
-            let shape = Shape::rand(rng, 10, 10, 1);
+            let shape = Shape::rand_by_frag_spec(rng, 10, 10, 1);
             shape_cell.set(shape.clone()).unwrap();
             let split = shape.split();
             let p = FragmentedPoly::new(
@@ -483,7 +667,7 @@ mod tests {
         let rng = &mut test_rng();
         for _ in 0..100 {
             let shape_cell = Arc::new(OnceLock::new());
-            let shape = Shape::rand(rng, 10, 10, 1);
+            let shape = Shape::rand_by_frag_spec(rng, 10, 10, 1);
             shape_cell.set(shape.clone()).unwrap();
             let split = shape.split();
             let p = FragmentedPoly::new(
@@ -695,7 +879,7 @@ mod tests {
         let mut rng = &mut test_rng();
 
         for _ in 0..10 {
-            let poly = FragmentedPoly::rand(rng, 10, 10, 1);
+            let poly = FragmentedPoly::rand_by_frag_spec(rng, 10, 10, 1);
             let flat = poly.clone().into_vec();
             let dense = DensePolynomial::new(flat.clone());
             for _ in 0..10 {

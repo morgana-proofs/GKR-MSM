@@ -991,7 +991,7 @@ mod tests {
         let rng = &mut test_rng();
 
         let num_consts = 3;
-        let _shape = Shape::rand(rng, 10, 10, num_consts);
+        let _shape = Shape::rand_by_frag_spec(rng, 10, 10, num_consts);
 
         let lf = _shape.fragments.last().unwrap();
         let num_vars = (lf.start + lf.len).log_2();

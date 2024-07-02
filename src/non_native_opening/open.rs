@@ -18,19 +18,14 @@ pub struct MSMProof<G: CurveGroup> {
 }
 
 
-fn powers_of_t<F: PrimeField>(
+pub fn powers_of_t<F: PrimeField>(
     t: F, 
-    log_len: usize
+    len: usize,
 ) -> Vec<F> {
     let mut ans = vec![F::one()];
-    let mut curr_pow = t;
-    for _ in 0..log_len{
-        let clone_ans = ans.clone();
-        let mut clone_ans: Vec<_> = clone_ans.iter()
-                                    .map(|&x| x*curr_pow)
-                                    .collect();
-        ans.append(&mut clone_ans);
-        curr_pow = curr_pow * curr_pow;
+    //let mut curr_pow = t;
+    for i in 0..(len-1){
+        ans.push(ans[i]*t)
     }
     ans
 }

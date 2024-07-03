@@ -4,7 +4,7 @@
 
 use std::{cmp::min, collections::VecDeque, mem::{transmute, MaybeUninit}, sync::{Arc, OnceLock}};
 
-use ark_ff::{Field, PrimeField};
+use ark_ff::{Field, PrimeField, Zero};
 use itertools::Itertools;
 use rayon::prelude::*;
 
@@ -315,7 +315,7 @@ pub trait Copolynomial<F: Field> {
 
     /// Binds the first variable to a value.
     /// Importantly, this is the reverse order to the poly_var_bound from liblasso.
-    fn bound(&mut self, value: F);
+    fn bind(&mut self, value: F);
 
     // ----- New multi-query API -----
 
@@ -402,30 +402,8 @@ pub fn materialize_eq_slice<F: Field>(multiplier: F, point: &[F], slice: &mut [M
     }
 }
 
-
-impl<F: Field> Copolynomial<F> for EqPoly<F> {
-    fn num_vars(&self) -> usize {
-        self.point.len()
-    }
-
-    fn ev(&self, pt: &[F]) -> F {
-        let r = &self.point;
-        assert!(r.len() == pt.len());
-        self.multiplier * r.iter().zip(pt.iter()).fold(F::zero(), |acc, (x, y)| acc * (*x * y + (F::one() - x)*(F::one() - y)))
-    }
-    
-    fn bound(&mut self, value: F) {
-        let p0 = self.point.pop().unwrap();
-        self.multiplier *= p0 * value + (F::one() - p0) * (F::one() - value);
-    }
-    
-    fn take_shape(&mut self, shape: Arc<OnceLock<Shape>>) {
-        assert!(self.shape.is_none());
-        self.shape = Some(shape);
-    }
-    
-    fn materialize(&mut self) -> CopolyData<F> {
-        let shape = self.shape.as_ref().unwrap().get().unwrap();
+impl<F: Field> EqPoly<F> {
+    pub fn materialize_eq_with_shape(&self, shape: &Shape) -> CopolyData<F> {
         let Shape{
             fragments,
             data_len,
@@ -497,13 +475,65 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
             materialize_eq_slice(multipliers[*depth][*idx].0, &self.point[*depth ..], slice)
         }).count();
 
-        CopolyData{values: unsafe{ transmute(data) }, sums}
+        CopolyData{values: unsafe{ transmute::<Vec<MaybeUninit<F>>, Vec<F>>(data) }, sums}
 
+    }
+}
+
+impl<F: Field> Copolynomial<F> for EqPoly<F> {
+    fn num_vars(&self) -> usize {
+        self.point.len()
+    }
+
+    fn ev(&self, pt: &[F]) -> F {
+        let r = &self.point;
+        assert!(r.len() == pt.len());
+        self.multiplier * r.iter().zip(pt.iter()).fold(F::zero(), |acc, (x, y)| acc * (*x * y + (F::one() - x)*(F::one() - y)))
+    }
+    
+    fn bind(&mut self, value: F) {
+        let p0 = self.point.pop().unwrap();
+        self.multiplier *= p0 * value + (F::one() - p0) * (F::one() - value);
+        if self.shape.is_some() {
+            let _ = self.shape.as_ref().unwrap().clone().get().unwrap().split();
+            self.shape = Some(self.shape.as_ref().unwrap().clone().get().unwrap().split.clone());
+        };
+    }
+    
+    fn take_shape(&mut self, shape: Arc<OnceLock<Shape>>) {
+        assert!(self.shape.is_none());
+        self.shape = Some(shape);
+    }
+    
+    fn materialize(&mut self) -> CopolyData<F> {
+        let shape = self.shape.as_ref().unwrap().get().unwrap();
+        self.materialize_eq_with_shape(shape)
     }
     
     fn materialize_split(&mut self) -> (CopolyData<F>, CopolyData<F>) {
-        todo!()
-    }
+        let mut point = self.point.clone();
+        let m1 = point.pop().unwrap();
+        let m0 = F::one() - m1;
+        let a;
+        let b;
+        if m0.is_zero() {
+            let mut eq1 = Self::new(point);
+            eq1.multiplier = m1;
+            b = eq1.materialize_eq_with_shape(self.shape.as_ref().unwrap().get().unwrap().split());
+            a = CopolyData { values: vec![F::zero(); b.values.len()], sums: vec![F::zero(); b.sums.len()]}
+
+        } else {
+            let m = m1 * m0.inverse().unwrap();
+            let mut eq0 = Self::new(point);
+            eq0.multiplier = m0;
+            a = eq0.materialize_eq_with_shape(self.shape.as_ref().unwrap().get().unwrap().split());
+            b = CopolyData {
+                        values: a.values.iter().map(|x| *x * m).collect(),
+                        sums: a.sums.iter().map(|x| *x * m).collect()
+                    };
+        }
+        (a, b)
+    }        
 
     // -------- snip ----------
 
@@ -614,12 +644,12 @@ impl<F: Field> Copolynomial<F> for RotPoly<F> {
         assert!(pt.len() == self.num_vars());
         let mut poly = self.clone();
         for &x in pt.iter().rev() {
-            poly.bound(x);
+            poly.bind(x);
         }
         poly.eq_multiplier + poly.rot_multiplier
     }
 
-    fn bound(&mut self, x0: F) {
+    fn bind(&mut self, x0: F) {
         let y0 = self.point.pop().unwrap();
         let y0x0 = y0 * x0;
         self.eq_multiplier *= F::one() - y0 - x0 + y0x0.double(); // Multiply by eq(x0, y0)
@@ -823,7 +853,7 @@ mod tests {
         let lhs = eqpoly.ev(&evaluation_point);
 
         let e0 = evaluation_point[0];
-        eqpoly.bound(e0);
+        eqpoly.bind(e0);
 
         let rhs = eqpoly.ev(&evaluation_point[1 ..]);
 
@@ -864,8 +894,8 @@ mod tests {
         let r1 = Fr::rand(rng);
 
         let mut rot = RotPoly::new(y.clone());
-        rot.bound(r0);
-        rot.bound(r1);
+        rot.bind(r0);
+        rot.bind(r1);
 
         let mut y_evs = eq_poly::EqPolynomial::new(y.clone()).evals();
 
@@ -928,11 +958,11 @@ mod tests {
         let r = x.pop().unwrap();
         y_evs.bound_poly_var_bot(&r);
         y_evs.Z.truncate(32);
-        rot.bound(r);
+        rot.bind(r);
         let r = x.pop().unwrap();
         y_evs.bound_poly_var_bot(&r);
         y_evs.Z.truncate(16);
-        rot.bound(r);
+        rot.bind(r);
 
         for start in 0..16 {
             for end in start..17 {

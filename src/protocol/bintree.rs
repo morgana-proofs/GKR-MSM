@@ -518,8 +518,10 @@ mod test {
         let gen = &mut test_rng();
 
         let num_vars = 5;
+        let shape = Arc::new(OnceLock::new());
+        shape.get_or_init(||Shape::rand(gen, num_vars));
         let input = (0..3).map(|_|
-            FragmentedPoly::rand(gen, num_vars)
+            FragmentedPoly::rand_with_shape(gen, shape.clone())
         ).collect_vec();
         let point = (0..1).map(|_| Fr::rand(gen)).collect_vec();
 

@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::ptr::read;
 
 use ark_bls12_381::Fr;
 use ark_ff::{BigInt, Field, PrimeField};
@@ -71,7 +72,7 @@ pub fn map_over_poly<F: Field>(
             (f.exec)(&ins.iter().map(|p| p[idx]).collect_vec())
         }).collect();
 
-    (0..applications.first().unwrap().len()).into_par_iter()
+    (0..f.num_o).into_par_iter()
         .map(|idx| {
             applications.iter().map(|v| v[idx]).collect()
         })
@@ -144,4 +145,52 @@ pub fn memprof(l: &str) {
     let allocated = stats::allocated::read().unwrap();
     let resident = stats::resident::read().unwrap();
     println!("{}: {:.3}Gb ({} bytes) allocated / {:.3}Gb ({} bytes) resident", l, allocated as f64 / 1024f64 / 1024f64 / 1024f64, allocated, resident as f64 / 1024f64 / 1024f64 / 1024f64, resident);
+}
+
+
+pub struct MultiZipIterator<'a, T> {
+    readers: Vec<Box<dyn Iterator<Item=T> + 'a>>,
+}
+
+impl<'a, T> MultiZipIterator<'a, T> {
+    pub fn new(readers: Vec<Box<dyn Iterator<Item=T> + 'a>>) -> Self {
+        assert_ne!(readers.len(), 0);
+        Self {
+            readers,
+        }
+    }
+}
+
+impl<'a, T> Iterator for MultiZipIterator<'a, T> {
+    type Item = Vec<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // let mut res = vec![];
+        // for reader in self.readers.iter_mut() {
+        //     match reader.next() {
+        //         None => return None,
+        //         Some(t) => res.push(t),
+        //     }
+        // }
+        // return Some(res);
+        self.readers.iter_mut().map(Iterator::next).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use itertools::Itertools;
+    use crate::utils::MultiZipIterator;
+
+    #[test]
+    fn multizip() {
+        let d = (0..3)
+            .map(|i|{
+                ((i * 100)..(i * 100 + 10)).collect_vec()
+            }).collect_vec();
+        let iterator: MultiZipIterator<&i32> = MultiZipIterator::new(d.iter().map(|p| Box::new(p.iter()) as Box<dyn Iterator<Item=&i32>>).collect_vec());
+        for x in iterator {
+            println!("{:?}", x)
+        }
+    }
 }

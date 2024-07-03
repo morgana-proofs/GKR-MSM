@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::mem::MaybeUninit;
-use std::ops::{Add, AddAssign, Index, IndexMut, Mul, Sub};
+use std::ops::{Add, AddAssign, Index, IndexMut, Mul, MulAssign, Sub, SubAssign};
 use std::sync::{Arc, OnceLock};
 use ark_ed_on_bls12_381_bandersnatch::Fr;
 use ark_ff::{Field, PrimeField};
@@ -11,7 +11,9 @@ use ark_std::rand::{Rng, RngCore};
 use itertools::{Itertools, repeat_n};
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 use liblasso::utils::math::Math;
+use rayon::iter::plumbing::UnindexedConsumer;
 use rayon::prelude::*;
+use crate::copoly::CopolyData;
 use crate::polynomial::fragmented::FragmentContent::{Consts, Data};
 use crate::polynomial::nested_poly::{NestedPoly, NestedPolynomial, NestedValues};
 use crate::protocol::protocol::PolynomialMapping;
@@ -227,10 +229,6 @@ impl Shape {
 
         let mut rand = Self::empty(num_consts);
         for (start, end, is_const) in frags.into_iter() {
-            println!("{:?}", (start, end, match is_const {
-                true => {Consts}
-                false => {Data}
-            }));
             let len = end - start;
             let content = if is_const { Consts } else { Data };
             let mem_idx = match content {
@@ -347,10 +345,18 @@ impl<F> FragmentedPoly<F> {
     }
 
     pub fn num_vars(&self) -> usize {
+        self.len().log_2()
+    }
+
+    pub fn len(&self) -> usize {
         match self.shape.get().unwrap().fragments.last() {
             None => 0,
-            Some(Fragment{ len, start, .. }) => (start + len).log_2(),
+            Some(Fragment{ len, start, .. }) => start + len,
         }
+    }
+
+    pub fn items_len(&self) -> usize {
+        self.data.len() + self.consts.len()
     }
 
     fn get_by_fragment(&self, frag: &Fragment, idx: usize) -> &F {
@@ -358,6 +364,36 @@ impl<F> FragmentedPoly<F> {
             Data => &self.data[frag.mem_idx + idx],
             Consts => &self.consts[frag.mem_idx],
         }
+    }
+
+    pub fn first(&self) -> Option<&F> {
+        self.shape.get().unwrap().fragments.first().map(|frag| self.get_by_fragment(frag, 0))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item=&F> {
+        self.data.iter().chain(self.consts.iter())
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item=&mut F> {
+        self.data.iter_mut().chain(self.consts.iter_mut())
+    }
+}
+
+impl<F: Send + Sync> FragmentedPoly<F> {
+    pub fn par_iter(&self) -> impl ParallelIterator<Item=&F> {
+        self.data.par_iter().chain(self.consts.par_iter())
+    }
+
+    pub fn par_iter_mut(&mut self) -> impl ParallelIterator<Item=&mut F> {
+        self.data.par_iter_mut().chain(self.consts.par_iter_mut())
+    }
+}
+
+impl<T> Index<usize> for FragmentedPoly<T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.data.get(index).unwrap_or_else(|| &self.consts[index - self.data.len()])
     }
 }
 
@@ -476,12 +512,15 @@ impl<F: Clone> FragmentedPoly<F> {
 }
 
 impl<F: AddAssign + Mul<Output=F> + Sub<Output=F> + Send + Sync + Sized + Copy> FragmentedPoly<F> {
-    pub fn bind(&self, f: &F) -> Self {
-        let (mut l, r) = self.split();
-        l.data.par_iter_mut()
-            .chain(l.consts.par_iter_mut())
+    pub fn bind_from(&mut self, r: &Self, f: &F){
+        self.data.par_iter_mut()
+            .chain(self.consts.par_iter_mut())
             .zip(r.data.par_iter().chain(r.consts.par_iter()))
             .map(|(l, r)| { *l += *f * (*r - *l) }).count();
+    }
+    pub fn bind(&self, f: &F) -> Self {
+        let (mut l, r) = self.split();
+        l.bind_from(&r, f);
         l
     }
 
@@ -500,6 +539,19 @@ impl<F: AddAssign + Mul<Output=F> + Sub<Output=F> + Send + Sync + Sized + Copy> 
     }
 }
 
+impl<F: SubAssign + Send + Sync + Sized + Copy> SubAssign<&Self> for  FragmentedPoly<F> {
+    fn sub_assign(&mut self, rhs: &Self) {
+        self.data.par_iter_mut().zip(rhs.data.par_iter()).map(|(l, r)| *l -= *r).count();
+        self.consts.par_iter_mut().zip(rhs.consts.par_iter()).map(|(l, r)| *l -= *r).count();
+    }
+}
+
+impl<F: AddAssign + Send + Sync + Sized + Copy> AddAssign<&Self> for  FragmentedPoly<F> {
+    fn add_assign(&mut self, rhs: &Self) {
+        self.data.par_iter_mut().zip(rhs.data.par_iter()).map(|(l, r)| *l += *r).count();
+        self.consts.par_iter_mut().zip(rhs.consts.par_iter()).map(|(l, r)| *l += *r).count();
+    }
+}
 
 impl<F: Field> FragmentedPoly<F> {
     pub fn map_over_poly(ins: &[Self], f: PolynomialMapping<F>) -> Vec<Self> {
@@ -510,6 +562,24 @@ impl<F: Field> FragmentedPoly<F> {
 
     }
 }
+
+impl<F: Field> Mul<&CopolyData<F>> for &FragmentedPoly<F> {
+    type Output = F;
+
+    fn mul(self, rhs: &CopolyData<F>) -> Self::Output {
+        self.data.par_iter().chain(self.consts.par_iter())
+            .zip_eq(rhs.values.par_iter().chain(rhs.sums.par_iter()))
+            .map(|(p, cp)| *p * cp)
+            .sum()
+    }
+}
+
+impl<F: Field> MulAssign<&F> for FragmentedPoly<F> {
+    fn mul_assign(&mut self, rhs: &F) {
+        self.data.par_iter_mut().chain(self.consts.par_iter_mut()).map(|d| *d *= rhs).count();
+    }
+}
+
 impl <F: Clone> FragmentedPoly<F> {
     pub fn vec(&self) -> Vec<F> {
         self.clone().into_vec()
@@ -890,6 +960,29 @@ mod tests {
                 let dense_eval = dense.evaluate(&point);
                 assert_eq!(straight_eval, nested_eval);
                 assert_eq!(straight_eval, dense_eval);
+            }
+        }
+    }
+
+    #[test]
+    fn ops() {
+        let rng = &mut test_rng();
+
+        for _ in 0..10 {
+            let tpoly = FragmentedPoly::<Fr>::rand_by_frag_spec(rng, 10, 10, 1);
+            let flat = tpoly.clone().into_vec();
+            for _ in 0..10 {
+                let mut poly = tpoly.clone();
+                let poly2 = FragmentedPoly::rand_with_shape(rng, poly.shape.clone());
+                poly -= &poly2;
+                assert_eq!(poly.vec(), flat.iter().zip(poly2.vec().iter()).map(|(l, r)| *l - r).collect_vec());
+
+                poly += &poly2;
+                assert_eq!(poly.vec(), flat);
+
+                let m = Fr::from(rng.next_u64());
+                poly *= &m;
+                assert_eq!(poly.vec(), flat.iter().map(|l| *l * m).collect_vec());
             }
         }
     }

@@ -3,12 +3,14 @@
 // Every sumcheck will have degree 1 in copolynomials.
 
 use std::{cmp::min, collections::VecDeque, mem::{transmute, MaybeUninit}, sync::{Arc, OnceLock}};
+use std::ops::{AddAssign, Index, SubAssign};
 
 use ark_ff::{Field, PrimeField, Zero};
 use itertools::Itertools;
 use rayon::prelude::*;
 
-use crate::polynomial::fragmented::{Fragment, FragmentContent, Shape};
+use crate::polynomial::fragmented::{Fragment, FragmentContent, FragmentedPoly, Shape};
+use crate::polynomial::fragmented::FragmentContent::{Consts, Data};
 
 #[derive(Clone, Copy)]
 /// A segment starting at start and ending at start + 2^loglength, such that 2^loglength | start.
@@ -306,6 +308,40 @@ pub struct CopolyData<T> {
     pub sums: Vec<T>,
 }
 
+impl<T> CopolyData<T> {
+   pub fn iter(&self) -> impl Iterator<Item=&T> {
+        self.values.iter().chain(self.sums.iter())
+    }
+}
+
+impl<T: Send + Sync> CopolyData<T> {
+    pub fn par_iter(&self) -> impl ParallelIterator<Item=&T> {
+        self.values.par_iter().chain(self.sums.par_iter())
+    }
+}
+
+impl<T> Index<usize> for CopolyData<T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.values.get(index).unwrap_or_else(|| &self.sums[index - self.values.len()])
+    }
+}
+
+impl<T: AddAssign + Send + Sync + Copy> AddAssign<&Self> for CopolyData<T> {
+    fn add_assign(&mut self, rhs: &Self) {
+        self.values.par_iter_mut().zip(rhs.values.par_iter()).map(|(l, r)| *l += *r).count();
+        self.sums.par_iter_mut().zip(rhs.sums.par_iter()).map(|(l, r)| *l += *r).count();
+    }
+}
+
+impl<T: SubAssign + Send + Sync + Copy> SubAssign<&Self> for CopolyData<T> {
+    fn sub_assign(&mut self, rhs: &Self) {
+        self.values.par_iter_mut().zip(rhs.values.par_iter()).map(|(l, r)| *l -= *r).count();
+        self.sums.par_iter_mut().zip(rhs.sums.par_iter()).map(|(l, r)| *l -= *r).count();
+    }
+}
+
 
 pub trait Copolynomial<F: Field> {
     fn num_vars(&self) -> usize;
@@ -315,7 +351,7 @@ pub trait Copolynomial<F: Field> {
 
     /// Binds the first variable to a value.
     /// Importantly, this is the reverse order to the poly_var_bound from liblasso.
-    fn bind(&mut self, value: F);
+    fn bind(&mut self, value: &F);
 
     // ----- New multi-query API -----
 
@@ -491,7 +527,7 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
         self.multiplier * r.iter().zip(pt.iter()).fold(F::zero(), |acc, (x, y)| acc * (*x * y + (F::one() - x)*(F::one() - y)))
     }
     
-    fn bind(&mut self, value: F) {
+    fn bind(&mut self, value: &F) {
         let p0 = self.point.pop().unwrap();
         self.multiplier *= p0 * value + (F::one() - p0) * (F::one() - value);
         if self.shape.is_some() {
@@ -643,18 +679,18 @@ impl<F: Field> Copolynomial<F> for RotPoly<F> {
     fn ev(&self, pt: &[F]) -> F {
         assert!(pt.len() == self.num_vars());
         let mut poly = self.clone();
-        for &x in pt.iter().rev() {
+        for x in pt.iter().rev() {
             poly.bind(x);
         }
         poly.eq_multiplier + poly.rot_multiplier
     }
 
-    fn bind(&mut self, x0: F) {
+    fn bind(&mut self, x0: &F) {
         let y0 = self.point.pop().unwrap();
         let y0x0 = y0 * x0;
         self.eq_multiplier *= F::one() - y0 - x0 + y0x0.double(); // Multiply by eq(x0, y0)
         self.eq_multiplier += (y0 - y0x0) * self.rot_multiplier; // Add the component from Rot.
-        self.rot_multiplier *= x0 - y0x0;
+        self.rot_multiplier *= *x0 - y0x0;
     }
     
     fn take_shape(&mut self, shape: Arc<OnceLock<Shape>>) {
@@ -853,7 +889,7 @@ mod tests {
         let lhs = eqpoly.ev(&evaluation_point);
 
         let e0 = evaluation_point[0];
-        eqpoly.bind(e0);
+        eqpoly.bind(&e0);
 
         let rhs = eqpoly.ev(&evaluation_point[1 ..]);
 
@@ -894,8 +930,8 @@ mod tests {
         let r1 = Fr::rand(rng);
 
         let mut rot = RotPoly::new(y.clone());
-        rot.bind(r0);
-        rot.bind(r1);
+        rot.bind(&r0);
+        rot.bind(&r1);
 
         let mut y_evs = eq_poly::EqPolynomial::new(y.clone()).evals();
 
@@ -958,11 +994,11 @@ mod tests {
         let r = x.pop().unwrap();
         y_evs.bound_poly_var_bot(&r);
         y_evs.Z.truncate(32);
-        rot.bind(r);
+        rot.bind(&r);
         let r = x.pop().unwrap();
         y_evs.bound_poly_var_bot(&r);
         y_evs.Z.truncate(16);
-        rot.bind(r);
+        rot.bind(&r);
 
         for start in 0..16 {
             for end in start..17 {
@@ -986,7 +1022,6 @@ mod tests {
     }
 
     #[test]
-
     fn test_eq_new_materialize() {
         let rng = &mut test_rng();
 

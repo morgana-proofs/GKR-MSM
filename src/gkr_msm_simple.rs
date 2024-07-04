@@ -20,8 +20,7 @@ use crate::{
     transcript::{TranscriptReceiver, TranscriptSender},
     utils::TwistedEdwardsConfig,
 };
-use crate::polynomial::fragmented::{FragmentedPoly, InterOp};
-use crate::polynomial::nested_poly::NestedPolynomial;
+use crate::polynomial::fragmented::{FragmentedPoly, InterOp, Shape};
 use crate::protocol::bintree::{BintreeProtocol, BintreeParams, BintreeProof, BintreeProver, Layer};
 use crate::protocol::protocol::{EvalClaim, ProtocolProver};
 use crate::protocol::sumcheck::to_multieval;
@@ -113,7 +112,7 @@ pub fn gkr_msm_prove<
     assert_eq!(scalars.len(), num_points);
 
     scalars
-        .iter()
+        .par_iter()
         .map(|s| assert!(s.len() == num_scalar_bits))
         .count();
 
@@ -139,7 +138,7 @@ pub fn gkr_msm_prove<
         "Points should fit in a single column. Please reduce the amount of columns."
     );
 
-    let (mut pts_prep, tmp): (Vec<_>, Vec<_>) = points.iter().map(|x| *x).unzip();
+    let (mut pts_prep, tmp): (Vec<_>, Vec<_>) = points.par_iter().map(|x| *x).unzip();
     pts_prep.extend(
         tmp.into_iter()
             .chain(repeat(F::zero()).take(col_size - num_points * 2)),
@@ -148,14 +147,16 @@ pub fn gkr_msm_prove<
     let pts_comm: G = ck.commit_vec(&pts_prep);
     transcript.append_point::<G>(b"point column", pts_comm);
 
-    let bits_poly = FragmentedPoly::interop_from(NestedPolynomial::from_values(
+    let shape = Shape::full(num_scalar_bits * points.len());
+
+    let bits_poly = FragmentedPoly::new(
         bits_flatten
             .par_iter()
             .map(|x| F::from(*x as u64))
             .collect(),
-        bits_flatten.len().log_2(),
-        F::zero(),
-    ));
+        vec![],
+        shape.clone(),
+    );
 
     let _points_table_poly: (Vec<_>, Vec<_>) = points
         .par_iter()
@@ -165,18 +166,18 @@ pub fn gkr_msm_prove<
 
 
     let tmp = _points_table_poly.0.len().log_2();
-    let points_table_poly = <(FragmentedPoly<F>, FragmentedPoly<F>)>::interop_from((
-        NestedPolynomial::from_values(
+    let points_table_poly = (
+        FragmentedPoly::new(
             _points_table_poly.0,
-            tmp,
-            F::zero(),
+            vec![],
+            shape.clone(),
         ),
-        NestedPolynomial::from_values(
+        FragmentedPoly::new(
             _points_table_poly.1,
-            tmp,
-            F::zero(),
+            vec![],
+            shape.clone(),
         ),
-    ));
+    );
 
     // layer0
     // bits_poly

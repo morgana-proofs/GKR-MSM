@@ -21,7 +21,7 @@ impl<F: PrimeField> Pullback<F> {
 
     /// Computes the pullback.
     pub fn values(&self) -> Vec<F> {
-        self.mapping.iter().map(|i|self.image[*i]).collect()
+        self.mapping.par_iter().map(|i|self.image[*i]).collect()
     }
 
     /// Computes pullback's MSM by first aggregating repeated elements, and then doing normal MSM.

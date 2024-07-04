@@ -4,6 +4,7 @@ use std::hash::{Hash, Hasher};
 use std::mem::MaybeUninit;
 use std::ops::{Add, AddAssign, Index, IndexMut, Mul, MulAssign, Sub, SubAssign};
 use std::sync::{Arc, OnceLock};
+use ark_ec::bn::TwistType::D;
 use ark_ed_on_bls12_381_bandersnatch::Fr;
 use ark_ff::{Field, PrimeField};
 use ark_std::iterable::Iterable;
@@ -15,7 +16,6 @@ use rayon::iter::plumbing::UnindexedConsumer;
 use rayon::prelude::*;
 use crate::copoly::CopolyData;
 use crate::polynomial::fragmented::FragmentContent::{Consts, Data};
-use crate::polynomial::nested_poly::{NestedPoly, NestedPolynomial, NestedValues};
 use crate::protocol::protocol::PolynomialMapping;
 use crate::utils::map_over_poly;
 
@@ -84,6 +84,24 @@ impl Shape {
         new.fragments = shape;
         new.finalize();
         new
+    }
+
+    pub fn full(len: usize) -> Arc<OnceLock<Self>> {
+        let shape: Arc<OnceLock<Shape>> = Arc::new(Default::default());
+        shape.get_or_init(||
+            Self::new(
+                vec![
+                    Fragment {
+                        mem_idx: 0,
+                        len,
+                        content: Data,
+                        start: 0,
+                    }
+                ],
+                0
+            )
+        );
+        shape
     }
 
     /// Merges last and one before last fragments of given poly
@@ -429,8 +447,8 @@ impl<F: From<u64>> FragmentedPoly<F> {
 impl<F: Clone> FragmentedPoly<F> {
     // pub fn morph_into_shape(&self, source: &Shape, target: &Shape) -> Self {
     //     let mut new = Self::new(Vec::with_capacity(target.data_len), Vec::with_capacity(target.consts_len));
-    //     let mut source_iter = source.shape.iter();
-    //     let mut target_iter = target.shape.iter();
+    //     let mut source_iter = source.shape.par_iter();
+    //     let mut target_iter = target.shape.par_iter();
     //
     //     let mut source_frag = source_iter.next();
     //     let mut source_frag_counter = 0;
@@ -602,43 +620,6 @@ pub trait InterOp<T> {
 }
 
 
-impl<T: Field> InterOp<NestedPolynomial<T>> for FragmentedPoly<T> {
-    fn interop_from(v: NestedPolynomial<T>) -> Self {
-        let data = v.vec();
-        let s: Arc<OnceLock<Shape>> = Arc::new(Default::default());
-        let shape = Shape {
-            fragments: vec![
-                Fragment {
-                    mem_idx: 0,
-                    len: data.len(),
-                    content: FragmentContent::Data,
-                    start: 0,
-                }
-            ],
-            data_len: 0,
-            num_consts: 0,
-            dedup_consts_len: 0,
-            split: Arc::new(Default::default()),
-        };
-        s.get_or_init(|| shape);
-        FragmentedPoly {
-            data: data,
-            consts: vec![],
-            shape: s,
-        }
-    }
-
-    fn interop_into(v: Self) -> NestedPolynomial<T> {
-        NestedPolynomial {
-            values: NestedPoly {
-                values: NestedValues::Flat(v.vec()),
-                continuation: None,
-            },
-            layer_num_vars: vec![v.num_vars()],
-        }
-    }
-}
-
 impl<T: PrimeField> InterOp<DensePolynomial<T>> for FragmentedPoly<T> {
     fn interop_from(v: DensePolynomial<T>) -> Self {
         let data = v.vec()[..1 << v.num_vars].to_vec();
@@ -702,7 +683,6 @@ mod tests {
     use ark_std::{test_rng, UniformRand};
     use itertools::Itertools;
     use liblasso::poly::dense_mlpoly::DensePolynomial;
-    use crate::polynomial::nested_poly::{evaluate_exact, NestedPolynomial, RandParams};
     use super::*;
 
 
@@ -955,11 +935,9 @@ mod tests {
             for _ in 0..10 {
                 let point: Vec<_> = repeat_with(|| ark_bls12_381::Fr::rand(rng)).take(poly.num_vars()).collect();
 
-                let straight_eval = evaluate_exact(&mut flat.clone(), &point);
                 let nested_eval = poly.evaluate(&point);
                 let dense_eval = dense.evaluate(&point);
-                assert_eq!(straight_eval, nested_eval);
-                assert_eq!(straight_eval, dense_eval);
+                assert_eq!(dense_eval, nested_eval);
             }
         }
     }

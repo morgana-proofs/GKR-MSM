@@ -10,7 +10,6 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]
 use profi::prof;
 use rayon::prelude::*;
-use crate::polynomial::nested_poly::NestedPolynomial;
 use crate::protocol::protocol::{MultiEvalClaim, PolynomialMapping};
 
 pub trait TwistedEdwardsConfig {
@@ -57,7 +56,7 @@ pub fn map_over_poly_legacy<F: PrimeField>(
 
     (0..applications.first().unwrap().len()).into_par_iter()
         .map(|idx| {
-            DensePolynomial::new(applications.iter().map(|v| v[idx]).collect())
+            DensePolynomial::new(applications.par_iter().map(|v| v[idx]).collect())
         }).collect::<Vec<DensePolynomial::<F>>>().try_into().unwrap()
 }
 
@@ -83,7 +82,7 @@ pub fn map_over_poly<F: Field>(
 pub fn scale<F: Field + TwistedEdwardsConfig, T: Fn (&[F]) -> Vec<F>>(f: T) -> impl Fn (&[F]) -> Vec<F> {
     move |data: &[F]| -> Vec<F> {
         let (pts, factor) = data.split_at(data.len() - 1);
-        f(&pts.to_vec()).iter().map(|p| *p * factor[0]).collect()
+        f(&pts.to_vec()).par_iter().map(|p| *p * factor[0]).collect()
     }
 }
 
@@ -95,14 +94,6 @@ pub fn fold_with_coef<F: Field>(evals: &[F], layer_coef: F) -> Vec<F> {
         .collect()
 }
 
-pub fn split_vecs<F: PrimeField>(ins: &[NestedPolynomial<F>]) -> Vec<NestedPolynomial<F>> {
-        let (mut l, r): (Vec<NestedPolynomial<F>>, Vec<NestedPolynomial<F>>) = ins.iter().map(|p| (
-        p.split_bot()
-    )).unzip();
-
-    l.extend(r);
-    l
-}
 
 pub fn make_gamma_pows<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma: F) -> Vec<F> {
     let num_claims = claims.evs.iter().fold(0, |acc, upd| acc + upd.len());
@@ -145,52 +136,4 @@ pub fn memprof(l: &str) {
     let allocated = stats::allocated::read().unwrap();
     let resident = stats::resident::read().unwrap();
     println!("{}: {:.3}Gb ({} bytes) allocated / {:.3}Gb ({} bytes) resident", l, allocated as f64 / 1024f64 / 1024f64 / 1024f64, allocated, resident as f64 / 1024f64 / 1024f64 / 1024f64, resident);
-}
-
-
-pub struct MultiZipIterator<'a, T> {
-    readers: Vec<Box<dyn Iterator<Item=T> + 'a>>,
-}
-
-impl<'a, T> MultiZipIterator<'a, T> {
-    pub fn new(readers: Vec<Box<dyn Iterator<Item=T> + 'a>>) -> Self {
-        assert_ne!(readers.len(), 0);
-        Self {
-            readers,
-        }
-    }
-}
-
-impl<'a, T> Iterator for MultiZipIterator<'a, T> {
-    type Item = Vec<T>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // let mut res = vec![];
-        // for reader in self.readers.iter_mut() {
-        //     match reader.next() {
-        //         None => return None,
-        //         Some(t) => res.push(t),
-        //     }
-        // }
-        // return Some(res);
-        self.readers.iter_mut().map(Iterator::next).collect()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use itertools::Itertools;
-    use crate::utils::MultiZipIterator;
-
-    #[test]
-    fn multizip() {
-        let d = (0..3)
-            .map(|i|{
-                ((i * 100)..(i * 100 + 10)).collect_vec()
-            }).collect_vec();
-        let iterator: MultiZipIterator<&i32> = MultiZipIterator::new(d.iter().map(|p| Box::new(p.iter()) as Box<dyn Iterator<Item=&i32>>).collect_vec());
-        for x in iterator {
-            println!("{:?}", x)
-        }
-    }
 }

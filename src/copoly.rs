@@ -554,18 +554,18 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
         let b;
         if m0.is_zero() {
             let mut eq1 = Self::new(point);
-            eq1.multiplier = m1;
+            eq1.multiplier = m1 * self.multiplier;
             b = eq1.materialize_eq_with_shape(self.shape.as_ref().unwrap().get().unwrap().split());
             a = CopolyData { values: vec![F::zero(); b.values.len()], sums: vec![F::zero(); b.sums.len()]}
 
         } else {
             let m = m1 * m0.inverse().unwrap();
             let mut eq0 = Self::new(point);
-            eq0.multiplier = m0;
+            eq0.multiplier = m0 * self.multiplier;
             a = eq0.materialize_eq_with_shape(self.shape.as_ref().unwrap().get().unwrap().split());
             b = CopolyData {
-                        values: a.values.iter().map(|x| *x * m).collect(),
-                        sums: a.sums.iter().map(|x| *x * m).collect()
+                        values: a.values.par_iter().map(|x| *x * m).collect(),
+                        sums: a.sums.par_iter().map(|x| *x * m).collect()
                     };
         }
         (a, b)
@@ -730,7 +730,7 @@ impl<F: Field> Copolynomial<F> for RotPoly<F> {
         let poly = EqPoly::new(point.clone());
         let (mut b, mut a) = poly.half_sums_segment(target_start, target_end);
         if end == l {
-            b += point.iter().map(|x| F::one() - x).product::<F>();
+            b += point.par_iter().map(|x| F::one() - x).product::<F>();
         }
 
         a *= self.rot_multiplier;
@@ -753,7 +753,7 @@ impl<F: Field> Copolynomial<F> for RotPoly<F> {
         let mut offset = 0;
 
         if end == 1 << self.num_vars() {
-            target[l-1] = self.rot_multiplier * self.point.iter().map(|x| F::one() - x).product::<F>();
+            target[l-1] = self.rot_multiplier * self.point.par_iter().map(|x| F::one() - x).product::<F>();
             offset = 1;
         }
 
@@ -851,7 +851,7 @@ mod tests {
             for end in start .. 65 {
                 let mut target = vec![Fr::ZERO; end - start];
                 eqpoly.materialize_segment(start, end, &mut target);
-                target.iter_mut().zip(eqvals_naive[start .. end].iter()).map(|(t, x)| *t -= *x * multiplier).count();
+                target.par_iter_mut().zip(eqvals_naive[start .. end].par_iter()).map(|(t, x)| *t -= *x * multiplier).count();
                 for t in target {
                     assert!(t == Fr::ZERO);
                 }

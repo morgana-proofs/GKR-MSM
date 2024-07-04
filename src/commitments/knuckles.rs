@@ -111,7 +111,7 @@ impl<Ctx: Pairing> KnucklesProvingKey<Ctx> {
         let mut t : Vec<Ctx::ScalarField> = Vec::with_capacity(2 * n - 1);
         let mut t_scaled = vec![Ctx::ScalarField::zero(); 2 * n - 1];
 
-        let pt_rev : Vec<_> = pt.iter().map(|x| Ctx::ScalarField::one() - *x).collect();
+        let pt_rev : Vec<_> = pt.par_iter().map(|x| Ctx::ScalarField::one() - *x).collect();
         // It is more convenient to multiply by 1-pt.
 
         t.extend(poly);

@@ -52,7 +52,3 @@ harness = false
 [[bench]]
 name = "gkr_msm_simple_prof"
 harness = false
-
-[[bench]]
-name = "map_over_poly"
-harness = false

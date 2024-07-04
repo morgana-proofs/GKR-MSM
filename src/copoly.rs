@@ -2,11 +2,14 @@
 // sums over admissible subset, and evaluation over admissible subset. Example is eq(r, x).
 // Every sumcheck will have degree 1 in copolynomials.
 
-use std::{cmp::min, collections::VecDeque, mem::{transmute, MaybeUninit}, sync::{Arc, OnceLock}};
+use std::{cmp::min, collections::VecDeque, mem::{transmute, MaybeUninit}, sync::{Arc, OnceLock}, vec};
+use std::iter::once;
 use std::ops::{AddAssign, Index, SubAssign};
 
 use ark_ff::{Field, PrimeField, Zero};
-use itertools::Itertools;
+use itertools::{Itertools, repeat_n};
+use liblasso::poly::dense_mlpoly::DensePolynomial;
+use liblasso::poly::eq_poly::EqPolynomial;
 use rayon::prelude::*;
 
 use crate::polynomial::fragmented::{Fragment, FragmentContent, FragmentedPoly, Shape};
@@ -141,7 +144,7 @@ pub fn compute_segment_split(mut start: usize, end: usize) -> Vec<StandardSubset
     ret
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BinTreeNode {
     parent: usize,
     is_r_child: bool,
@@ -155,7 +158,7 @@ impl BinTreeNode {
 }
 
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BinTree {
     total_logsize: usize, 
     nodes: Vec<Vec<BinTreeNode>>, // Points to parent + L/R identifier, ordered from the root.
@@ -330,20 +333,20 @@ impl<T> Index<usize> for CopolyData<T> {
 
 impl<T: AddAssign + Send + Sync + Copy> AddAssign<&Self> for CopolyData<T> {
     fn add_assign(&mut self, rhs: &Self) {
-        self.values.par_iter_mut().zip(rhs.values.par_iter()).map(|(l, r)| *l += *r).count();
-        self.sums.par_iter_mut().zip(rhs.sums.par_iter()).map(|(l, r)| *l += *r).count();
+        self.values.iter_mut().zip_eq(rhs.values.iter()).map(|(l, r)| *l += *r).count();
+        self.sums.iter_mut().zip_eq(rhs.sums.iter()).map(|(l, r)| *l += *r).count();
     }
 }
 
 impl<T: SubAssign + Send + Sync + Copy> SubAssign<&Self> for CopolyData<T> {
     fn sub_assign(&mut self, rhs: &Self) {
-        self.values.par_iter_mut().zip(rhs.values.par_iter()).map(|(l, r)| *l -= *r).count();
-        self.sums.par_iter_mut().zip(rhs.sums.par_iter()).map(|(l, r)| *l -= *r).count();
+        self.values.iter_mut().zip_eq(rhs.values.iter()).map(|(l, r)| *l -= *r).count();
+        self.sums.iter_mut().zip_eq(rhs.sums.iter()).map(|(l, r)| *l -= *r).count();
     }
 }
 
 
-pub trait Copolynomial<F: Field> {
+pub trait Copolynomial<F: PrimeField> {
     fn num_vars(&self) -> usize;
 
     /// Evaluates a copolynomial in a point.
@@ -406,21 +409,21 @@ pub trait Copolynomial<F: Field> {
 }
 
 #[derive(Clone)]
-pub struct EqPoly<F: Field> {
+pub struct EqPoly<F: PrimeField> {
     multiplier: F,
     point: Vec<F>, // Keeps coordinates in reverse order, so we can pop them normally.
     shape: Option<Arc<OnceLock<Shape>>>,
 }
 
-impl<F: Field> EqPoly<F> {
+impl<F: PrimeField> EqPoly<F> {
     pub fn new(point: Vec<F>) -> Self {
         EqPoly { multiplier: F::one(), point, shape: None }
     }
 }
 
-pub fn materialize_eq_slice<F: Field>(multiplier: F, point: &[F], slice: &mut [MaybeUninit<F>]) {
+pub fn materialize_eq_slice<F: PrimeField>(multiplier: F, point: &[F], slice: &mut [MaybeUninit<F>]) {
     let n = point.len();
-    assert!(1 << n == slice.len());
+    assert_eq!(1 << n, slice.len());
     slice[0] = MaybeUninit::new(multiplier);
     for i in 0..n {
         let half = 1 << i;
@@ -428,17 +431,19 @@ pub fn materialize_eq_slice<F: Field>(multiplier: F, point: &[F], slice: &mut [M
         let (a, b) = slice[0..2*half].split_at_mut(half);
 
         b
-            .par_iter_mut()
+            .iter_mut()
             .enumerate()
             .map(|(j, x)| *x = MaybeUninit::new(unsafe{a[j].assume_init()} * point[pt_idx])).count();
         a
-            .par_iter_mut()
+            .iter_mut()
             .enumerate()
             .map(|(j, x)| *x = MaybeUninit::new(unsafe{x.assume_init() - b[j].assume_init()})).count();
     }
+    // let eq = EqPolynomial::new(point.to_vec());
+    // slice.iter_mut().zip_eq(eq.evals()).map(|(o, e)| *o = MaybeUninit::new(e * multiplier)).count();
 }
 
-impl<F: Field> EqPoly<F> {
+impl<F: PrimeField> EqPoly<F> {
     pub fn materialize_eq_with_shape(&self, shape: &Shape) -> CopolyData<F> {
         let Shape{
             fragments,
@@ -474,7 +479,7 @@ impl<F: Field> EqPoly<F> {
 
         for i in 1 .. self.num_vars() + 1 {
             let j = bintree.nodes[i].len();
-            multipliers.push((0..j).into_par_iter().map(|idx| {
+            multipliers.push((0..j).into_iter().map(|idx| {
                 let BinTreeNode { parent, is_r_child, is_leaf } = bintree.nodes[i][idx];
                 let m = if is_r_child {
                     multipliers[i-1][parent].1.unwrap()
@@ -516,7 +521,7 @@ impl<F: Field> EqPoly<F> {
     }
 }
 
-impl<F: Field> Copolynomial<F> for EqPoly<F> {
+impl<F: PrimeField> Copolynomial<F> for EqPoly<F> {
     fn num_vars(&self) -> usize {
         self.point.len()
     }
@@ -547,6 +552,16 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
     }
     
     fn materialize_split(&mut self) -> (CopolyData<F>, CopolyData<F>) {
+        // (
+        //     CopolyData {
+        //         values: vec![F::zero(); 1 << (self.num_vars() - 1)],
+        //         sums: vec![]
+        //     },
+        //     CopolyData {
+        //         values: vec![F::zero(); 1 << (self.num_vars() - 1)],
+        //         sums: vec![]
+        //     },
+        // )
         let mut point = self.point.clone();
         let m1 = point.pop().unwrap();
         let m0 = F::one() - m1;
@@ -564,8 +579,8 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
             eq0.multiplier = m0 * self.multiplier;
             a = eq0.materialize_eq_with_shape(self.shape.as_ref().unwrap().get().unwrap().split());
             b = CopolyData {
-                        values: a.values.par_iter().map(|x| *x * m).collect(),
-                        sums: a.sums.par_iter().map(|x| *x * m).collect()
+                        values: a.values.iter().map(|x| *x * m).collect(),
+                        sums: a.sums.iter().map(|x| *x * m).collect()
                     };
         }
         (a, b)
@@ -659,19 +674,19 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
 /// As our structure needs to support variable binding, we actually keep two multipliers - one for Rot and
 /// another one for Eq (initialized to 0 on entry).
 #[derive(Clone)]
-pub struct RotPoly<F: Field> {
+pub struct RotPoly<F: PrimeField> {
     rot_multiplier: F,
     eq_multiplier: F,
     point: Vec<F>,
 }
 
-impl<F: Field> RotPoly<F> {
+impl<F: PrimeField> RotPoly<F> {
     pub fn new(point: Vec<F>) -> Self {
         RotPoly { rot_multiplier : F::one(), eq_multiplier: F::zero(), point }
     }
 }
 
-impl<F: Field> Copolynomial<F> for RotPoly<F> {
+impl<F: PrimeField> Copolynomial<F> for RotPoly<F> {
     fn num_vars(&self) -> usize {
         self.point.len()
     }

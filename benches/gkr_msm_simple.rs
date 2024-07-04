@@ -95,7 +95,7 @@ pub fn _simple_bench(c: &mut Criterion, gammas: Range<usize>, log_num_points_s: 
 }
 
 pub fn bench(c: &mut Criterion) {
-    _simple_bench(c, 4..9, 17..18);
+    _simple_bench(c, 4..5, 13..17);
 }
 
 criterion_group!(

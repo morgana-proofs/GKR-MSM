@@ -101,12 +101,13 @@ pub fn bench_witness(c: &mut Criterion, log_num_points_s: impl Iterator<Item=usi
     let mut witness = c.benchmark_group("sumcheck/witness");
     log_num_points_s
         .map(|size| {
+            let (point, tables, params) = prepare_params(size);
             witness.bench_with_input(
                 BenchmarkId::from_parameter(format!("new {}",size)),
                 &size,
                 |b, &size| {
                     b.iter_batched(
-                        || prepare_params(size),
+                        || (point.clone(), tables.clone(), params.clone()),
                         |(point, tables, params)| {
                             new_prepare_witness((point, tables, &params))
                         },
@@ -119,7 +120,7 @@ pub fn bench_witness(c: &mut Criterion, log_num_points_s: impl Iterator<Item=usi
                 &size,
                 |b, &size| {
                     b.iter_batched(
-                        || prepare_params(size),
+                        || (point.clone(), tables.clone(), params.clone()),
                         |(point, tables, params)| {
                             old_prepare_witness((point, tables, &params))
                         },
@@ -133,16 +134,16 @@ pub fn bench_proof(c: &mut Criterion, log_num_points_s: impl Iterator<Item=usize
     let mut proof = c.benchmark_group("sumcheck/proof");
     log_num_points_s
         .map(|size| {
+            let (point, tables, params) = prepare_params(size);
+            let (claims_to_reduce, trace) = new_prepare_witness((point, tables, &params));
             proof.bench_with_input(
                 BenchmarkId::from_parameter(format!("new {}",size)),
                 &size,
                 |b, &size| {
                     b.iter_batched(
                     || {
-                        let (point, tables, params) = prepare_params(size);
-                        let (claims_to_reduce, trace) = new_prepare_witness((point, tables, &params));
                         let p_transcript = Transcript::new(b"test");
-                        (claims_to_reduce, trace, params, p_transcript)
+                        (claims_to_reduce.clone(), trace.clone(), params.clone(), p_transcript)
                     },
                     |(
                             claims_to_reduce,
@@ -168,10 +169,8 @@ pub fn bench_proof(c: &mut Criterion, log_num_points_s: impl Iterator<Item=usize
                 |b, &size| {
                     b.iter_batched(
                         || {
-                            let (point, tables, params) = prepare_params(size);
-                            let (claims_to_reduce, trace) = old_prepare_witness((point, tables, &params));
                             let p_transcript = Transcript::new(b"test");
-                            (claims_to_reduce, trace, params, p_transcript)
+                            (claims_to_reduce.clone(), trace.clone(), params.clone(), p_transcript)
                         },
                         |(
                              claims_to_reduce,
@@ -197,14 +196,15 @@ pub fn bench_both(c: &mut Criterion, log_num_points_s: impl Iterator<Item=usize>
     let mut proof = c.benchmark_group("sumcheck/witness+proof");
     log_num_points_s
         .map(|size| {
+            let (point, tables, params) = prepare_params(size);
             proof.bench_with_input(
                 BenchmarkId::from_parameter(format!("new {}",size)),
                 &size,
                 |b, &size| {
                     b.iter_batched(
-                        || (prepare_params(size), Transcript::new(b"test")),
-                        |((point, tables, params), mut p_transcript)| {
-                            let (claims_to_reduce, trace) = new_prepare_witness((point, tables, &params));
+                        || Transcript::new(b"test"),
+                        |mut p_transcript| {
+                            let (claims_to_reduce, trace) = new_prepare_witness((point.clone(), tables.clone(), &params));
 
                             let mut prover = SumcheckPolyMapProver::start(claims_to_reduce, trace, &params);
 
@@ -223,9 +223,9 @@ pub fn bench_both(c: &mut Criterion, log_num_points_s: impl Iterator<Item=usize>
                 &size,
                 |b, &size| {
                     b.iter_batched(
-                        || (prepare_params(size), Transcript::new(b"test")),
-                        |((point, tables, params), mut p_transcript)| {
-                            let (claims_to_reduce, trace) = old_prepare_witness((point, tables, &params));
+                        || Transcript::new(b"test"),
+                        |mut p_transcript| {
+                            let (claims_to_reduce, trace) = old_prepare_witness((point.clone(), tables.clone(), &params));
 
                             let mut prover = LameSumcheckPolyMapProver::start(claims_to_reduce, trace, &params);
 
@@ -248,7 +248,7 @@ pub fn sumcheck() {
         .configure_from_args();
     let range = 12..=13;
 
-    bench_witness(&mut criterion, range.clone());
+    // bench_witness(&mut criterion, range.clone());
     bench_proof(&mut criterion, range.clone());
     bench_both(&mut criterion, range.clone());
 }

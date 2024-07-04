@@ -20,7 +20,6 @@ use ark_bls12_381::Fr;
 use ark_bls12_381::Fq;
 use ark_bls12_381::G1Projective;
 use ark_ff::{MontBackend};
-use ark_std::{test_rng};
 use GKR_MSM::nested_poly::NestedPoly;
 use GKR_MSM::protocol::protocol::MultiEvalClaim;
 use GKR_MSM::protocol::protocol::{ProtocolVerifier, ProtocolProver, EvalClaim};
@@ -29,7 +28,10 @@ use GKR_MSM::transcript::Challenge;
 use GKR_MSM::transcript::IndexedProofTranscript;
 use liblasso::utils::test_lib::TestTranscript;
 
-use ark_std::rand::seq::SliceRandom;
+use ark_std::{
+    test_rng,
+    rand::seq::SliceRandom,
+};
 
 use crate::example_utils::*;
 
@@ -41,11 +43,8 @@ use crate::example_utils::*;
 // this is your input table for the sumcheck
 fn data<F: PrimeField>() -> Vec<Vec<F>>{
     let gen = &mut test_rng();
-
-    let num_i = [3, 4, 5, 6].choose(gen).unwrap();
-
-    (0..*num_i).map(
-        |i| vec![F::from((i % 2) as u64), F::one(), F::zero(), F::one(), F::from((i % 2) as u64), F::one(), F::zero(), F::one()]
+    (0..4).map(
+        |i| vec![F::from((i % 2) as u64), F::one(), F::zero(), F::one(), F::from((i % 2) as u64), F::zero(), F::one()]
     )
     .collect()
 }
@@ -118,7 +117,7 @@ fn main(){
     assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
     println!("Verifier has finished");
     println!("Verifier transcript log {:?}", v_transcript.transcript.log);
-    println!("Hurray, you sumchecked!");
+    println!("Hurray, you sumchecked! num_i = {}", sumcheck_params.f.num_i);
 }
 
 mod example_utils{

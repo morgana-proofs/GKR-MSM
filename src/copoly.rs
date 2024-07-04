@@ -495,8 +495,8 @@ impl<F: Field> Copolynomial<F> for EqPoly<F> {
         let p0 = self.point.pop().unwrap();
         self.multiplier *= p0 * value + (F::one() - p0) * (F::one() - value);
         if self.shape.is_some() {
-            let _ = self.shape.as_ref().unwrap().clone().get().unwrap().split();
-            self.shape = Some(self.shape.as_ref().unwrap().clone().get().unwrap().split.clone());
+            let _ = self.shape.as_ref().unwrap().get().unwrap().split();
+            self.shape = Some(self.shape.as_ref().unwrap().get().unwrap().split.clone());
         };
     }
     

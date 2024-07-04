@@ -63,3 +63,7 @@ harness = false
 [[example]]
 name = "sumcheck"
 path = "examples/sumcheck.rs"
+
+[[example]]
+name = "non_native_opening"
+path = "examples/non_native_opening.rs"

@@ -198,7 +198,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
         #[cfg(not(feature = "multicore"))]
         let iterator = 0..mle_half;
 
-        let comb_func = f_folded.as_ref().unwrap();
+        let comb_func: &Box<dyn Fn(&[F]) -> F + Send + Sync> = f_folded.as_ref().unwrap();
 
         let accum: Vec<Vec<F>> = iterator
             .map(|poly_term_i| {

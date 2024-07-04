@@ -50,9 +50,9 @@ name = "bintree"
 harness = false
 
 [[bench]]
-name = "gkr_msm_simple_prof"
+name = "sumcheck"
 harness = false
 
 [[bench]]
-name = "map_over_poly"
+name = "gkr_msm_simple_prof"
 harness = false

@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::ptr::read;
 
 use ark_bls12_381::Fr;
 use ark_ff::{BigInt, Field, PrimeField};
@@ -9,7 +10,6 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]
 use profi::prof;
 use rayon::prelude::*;
-use crate::polynomial::nested_poly::NestedPolynomial;
 use crate::protocol::protocol::{MultiEvalClaim, PolynomialMapping};
 
 pub trait TwistedEdwardsConfig {
@@ -56,24 +56,33 @@ pub fn map_over_poly_legacy<F: PrimeField>(
 
     (0..applications.first().unwrap().len()).into_par_iter()
         .map(|idx| {
-            DensePolynomial::new(applications.iter().map(|v| v[idx]).collect())
+            DensePolynomial::new(applications.par_iter().map(|v| v[idx]).collect())
         }).collect::<Vec<DensePolynomial::<F>>>().try_into().unwrap()
 }
 
-pub fn map_over_poly<F: PrimeField>(
-    ins: &[NestedPolynomial<F>],
+pub fn map_over_poly<F: Field>(
+    ins: &[&[F]],
     f: PolynomialMapping<F>,
-) -> Vec<NestedPolynomial<F>> {
+) -> Vec<Vec<F>> {
     #[cfg(feature = "prof")]
     prof!("map_over_poly");
-    NestedPolynomial::map_over_poly(ins, f)
+    let applications: Vec<Vec<F>> = (0..ins[0].len()).into_par_iter()
+        .map(|idx| {
+            (f.exec)(&ins.iter().map(|p| p[idx]).collect_vec())
+        }).collect();
+
+    (0..f.num_o).into_par_iter()
+        .map(|idx| {
+            applications.iter().map(|v| v[idx]).collect()
+        })
+        .collect::<Vec<Vec<F>>>()
 }
 
 
 pub fn scale<F: Field + TwistedEdwardsConfig, T: Fn (&[F]) -> Vec<F>>(f: T) -> impl Fn (&[F]) -> Vec<F> {
     move |data: &[F]| -> Vec<F> {
         let (pts, factor) = data.split_at(data.len() - 1);
-        f(&pts.to_vec()).iter().map(|p| *p * factor[0]).collect()
+        f(&pts.to_vec()).par_iter().map(|p| *p * factor[0]).collect()
     }
 }
 
@@ -85,14 +94,6 @@ pub fn fold_with_coef<F: Field>(evals: &[F], layer_coef: F) -> Vec<F> {
         .collect()
 }
 
-pub fn split_vecs<F: PrimeField>(ins: &[NestedPolynomial<F>]) -> Vec<NestedPolynomial<F>> {
-        let (mut l, r): (Vec<NestedPolynomial<F>>, Vec<NestedPolynomial<F>>) = ins.iter().map(|p| (
-        p.split_bot()
-    )).unzip();
-
-    l.extend(r);
-    l
-}
 
 pub fn make_gamma_pows<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma: F) -> Vec<F> {
     let num_claims = claims.evs.iter().fold(0, |acc, upd| acc + upd.len());

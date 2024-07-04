@@ -1,8 +1,9 @@
 use std::iter::repeat;
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use ark_bls12_381::Fr;
+use ark_ec::bn::TwistType::D;
 use ark_std::{test_rng, UniformRand};
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use itertools::Itertools;
@@ -10,7 +11,7 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 use merlin::Transcript;
 
 use GKR_MSM::grand_add::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
-use GKR_MSM::Polynomial;;
+use GKR_MSM::polynomial::fragmented::{Fragment, FragmentContent, FragmentedPoly, Shape};
 use GKR_MSM::protocol::bintree::{BintreeProtocol, BintreeParams, BintreeProver, Layer};
 use GKR_MSM::protocol::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver};
 use GKR_MSM::protocol::sumcheck::to_multieval;
@@ -20,7 +21,7 @@ fn prepare_params(
     log_num_points: usize,
 ) -> (
     Vec<Fr>,
-    Vec<Polynomial<Fr>>,
+    Vec<FragmentedPoly<Fr>>,
     BintreeParams<Fr>,
 ) {
     let gen = &mut test_rng();
@@ -30,9 +31,18 @@ fn prepare_params(
         .map(|p| (p.x, p.y))
         .unzip();
 
+    let shape: Arc<OnceLock<Shape>> = Arc::new(Default::default());
+    shape.get_or_init(|| Shape::new(vec![
+        Fragment {
+            mem_idx: 0,
+            len: 1 << log_num_points,
+            content: FragmentContent::Data,
+            start: 0,
+        }
+    ], 0));
     let points_table_poly = vec![
-        DensePolynomial::new(points.0).into(),
-        DensePolynomial::new(points.1).into(),
+        FragmentedPoly::new(points.0, vec![], shape.clone()).into(),
+        FragmentedPoly::new(points.1, vec![], shape.clone()).into(),
     ];
     let point = (0..1).map(|_| Fr::rand(gen)).collect_vec();
 
@@ -112,9 +122,9 @@ fn prepare_witness((
     params,
 ): (
     Vec<Fr>,
-    Vec<Polynomial<Fr>>,
+    Vec<FragmentedPoly<Fr>>,
     &BintreeParams<Fr>,
-)) -> (MultiEvalClaim<Fr>, Vec<Vec<Polynomial<Fr>>>) {
+)) -> (MultiEvalClaim<Fr>, Vec<Vec<FragmentedPoly<Fr>>>) {
     let (trace, output) = BintreeProtocol::witness(points_table_poly, &params);
 
     let claims_to_reduce = to_multieval(EvalClaim {

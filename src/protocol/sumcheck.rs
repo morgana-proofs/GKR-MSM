@@ -1,6 +1,8 @@
 use std::{marker::PhantomData};
+use std::ops::AddAssign;
+use std::sync::Arc;
 
-use ark_ff::PrimeField;
+use ark_ff::{Field, PrimeField};
 use ark_std::iterable::Iterable;
 use itertools::Itertools;
 use liblasso::{poly::{eq_poly::EqPolynomial, unipoly::{CompressedUniPoly, UniPoly}}};
@@ -10,23 +12,236 @@ use profi::{prof, prof_guard};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 
 use crate::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows, map_over_poly_legacy}};
-use crate::polynomial::nested_poly::NestedPolynomial;
+use crate::copoly::{CopolyData, Copolynomial, EqPoly};
+use crate::polynomial::fragmented::{FragmentedPoly, InterOp};
 use crate::utils::{fix_var_bot};
 
 use super::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier};
 
 // Impls
 
+// Fragmented
+
 pub struct SumcheckPolyMap<F: PrimeField> {
-    _marker: PhantomData<F>,
+    phantom_data: PhantomData<F>
+}
+
+pub struct Splits<F: PrimeField> {
+    pub lpolys: Vec<FragmentedPoly<F>>,
+    pub rpolys: Vec<FragmentedPoly<F>>,
+    pub lcopolys: Vec<CopolyData<F>>,
+    pub rcopolys: Vec<CopolyData<F>>,
+}
+
+pub struct FragmentedLincomb<F: PrimeField> {
+    polys: Vec<FragmentedPoly<F>>,
+    splits: Option<Splits<F>>,
+    copolys: Vec<Box<dyn Copolynomial<F> + Send + Sync>>,
+    folded_f: Option<Arc<dyn Fn(&[F]) -> F + Sync + Send>>,
+    degree: usize,
 }
 
 pub struct SumcheckPolyMapProver<F: PrimeField> {
+    sumcheckable: Option<Box<dyn Sumcheckable<F>>>,
+    polys: Option<Vec<FragmentedPoly<F>>>,
+    mapping: PolynomialMapping<F>,
+    ev_folded: Option<F>,
+    num_vars: usize,
+    claims: MultiEvalClaim<F>,
+    rs: Vec<F>,
+    round_polys: Option<Vec<CompressedUniPoly<F>>>,
+}
+
+pub(crate) trait Sumcheckable<F: PrimeField> {
+    fn bind(&mut self, f: &F);
+
+    fn split(&mut self) {
+        unimplemented!()
+    }
+    fn unipoly(&mut self) -> UniPoly<F>;
+
+    fn final_evals(&self) -> Vec<F>;
+}
+
+impl<F: PrimeField> Sumcheckable<F> for FragmentedLincomb<F> {
+    fn split(&mut self) {
+        if self.splits.is_some() {
+            return;
+        }
+        let (lpolys, rpolys): (Vec<FragmentedPoly<F>>, Vec<FragmentedPoly<F>>) = self.polys.par_iter().map(|p| p.split()).unzip();
+        let (lcopolys, rcopolys): (Vec<CopolyData<F>>, Vec<CopolyData<F>>) = self.copolys.par_iter_mut().map(|p| p.materialize_split()).unzip();
+        self.splits = Some(Splits {
+            lpolys,
+            rpolys,
+            lcopolys,
+            rcopolys,
+        })
+    }
+
+    fn bind(&mut self, f: &F) {
+        self.split();
+        let Splits { mut lpolys, rpolys, .. } = self.splits.take().unwrap();
+        lpolys.par_iter_mut().zip(rpolys.par_iter()).map(|(l, r)| {
+            l.bind_from(r, f);
+        }).count();
+        self.polys = lpolys;
+
+        self.copolys.par_iter_mut().map(|copoly| {
+            copoly.bind(f);
+        }).count();
+    }
+
+    fn unipoly(&mut self) -> UniPoly<F> {
+        self.split();
+        let Splits { lpolys, rpolys, lcopolys, rcopolys } = self.splits.take().unwrap();
+
+        let poly_diffs = lpolys
+            .par_iter()
+            .zip(rpolys.par_iter())
+            .map(|(l, r)| {let mut r = r.clone(); r -= l; r})
+            .collect::<Vec<_>>();
+
+        let copoly_diffs = lcopolys
+            .par_iter()
+            .zip(rcopolys.par_iter())
+            .map(|(l, r)| {let mut r = r.clone(); r -= l; r})
+            .collect::<Vec<_>>();
+
+        let mut poly_extensions = Vec::with_capacity(self.degree + 2);
+        poly_extensions.push(lpolys);
+        poly_extensions.push(rpolys);
+
+        let mut copoly_extensions = Vec::with_capacity(self.degree + 2);
+        copoly_extensions.push(lcopolys);
+        copoly_extensions.push(rcopolys);
+
+        for i in 2..(self.degree + 2) {
+            poly_extensions.push(poly_extensions[i - 1].clone());
+            poly_extensions[i].par_iter_mut().zip(poly_diffs.par_iter()).map(|(p, d)| p.add_assign(d)).count();
+
+            copoly_extensions.push(copoly_extensions[i - 1].clone());
+            copoly_extensions[i].par_iter_mut().zip(copoly_diffs.par_iter()).map(|(p, d)| p.add_assign(d)).count();
+        }
+        let folded = self.folded_f.as_ref().unwrap().clone();
+        let results = poly_extensions.par_iter().zip(copoly_extensions.par_iter()).map(|(polys, eqpolys)| {
+            let tmp = (0..polys[0].items_len()).into_par_iter().map(|i| {
+                folded(&polys.iter().map(|p| p[i]).chain(eqpolys.iter().map(|ep| ep[i])).collect_vec())
+            }).collect::<Vec<_>>();
+            tmp.par_iter().sum()
+        }).collect::<Vec<F>>();
+
+        UniPoly::from_evals(&results)
+    }
+
+    fn final_evals(&self) -> Vec<F> {
+        self.polys.par_iter().map(|poly| poly[0]).collect()
+    }
+}
+
+impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
+    type Prover = SumcheckPolyMapProver<F>;
+    type Verifier = SumcheckPolyMapVerifier<F>;
+    type ClaimsToReduce = MultiEvalClaim<F>;
+    type ClaimsNew = EvalClaim<F>;
+    type WitnessInput = Vec<FragmentedPoly<F>>;
+    type Trace = Vec<Vec<FragmentedPoly<F>>>;
+    type WitnessOutput = Vec<FragmentedPoly<F>>;
+    type Proof = SumcheckPolyMapProof<F>;
+    type Params = SumcheckPolyMapParams<F>;
+
+    fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
+        let out = FragmentedPoly::map_over_poly(&args, params.f.clone());
+        (vec![args], out)
+    }
+}
+
+impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
+    type ClaimsToReduce = MultiEvalClaim<F>;
+    type ClaimsNew = EvalClaim<F>;
+    type Proof = SumcheckPolyMapProof<F>;
+    type Params = SumcheckPolyMapParams<F>;
+    type Trace = Vec<Vec<FragmentedPoly<F>>>;
+
+    fn start(claims_to_reduce: Self::ClaimsToReduce, args: Self::Trace, params: &Self::Params) -> Self {
+        assert_eq!(args[0].len(), params.f.num_i);
+
+        Self {
+            sumcheckable: None,
+            polys: Some(args[0].clone()),
+            mapping: params.f.clone(),
+            claims: claims_to_reduce,
+            ev_folded: None,
+            num_vars: params.num_vars,
+            rs: vec![],
+            round_polys: Some(vec![]),
+        }
+    }
+
+    fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T) -> Option<(Self::ClaimsNew, Self::Proof)> {
+        match &mut self.sumcheckable {
+            None => {
+                let gamma = challenge.value;
+                let gamma_pows = make_gamma_pows(&self.claims, gamma);
+
+
+                let polys = self.polys.take().unwrap();
+                let shape = polys[0].shape.clone();
+                self.sumcheckable = Some(Box::new(FragmentedLincomb {
+                    polys,
+                    copolys: self.claims.points.par_iter().map(|r| {let mut eq = EqPoly::new(r.clone()); eq.take_shape(shape.clone()); Box::new(eq) as Box<dyn Copolynomial<F> + Send + Sync>}).collect(),
+                    splits: None,
+                    folded_f: Some(make_folded_f(&self.claims, &gamma_pows, &self.mapping)),
+                    degree: self.mapping.degree,
+                }));
+            }
+            Some(s) => {
+                let r_j = challenge.value;
+                fix_var_bot(&mut self.rs, r_j);
+                s.bind(&r_j);
+
+                if self.rs.len() == self.num_vars {
+                    let final_evaluations: Vec<F> =s.final_evals();
+
+                    transcript.append_scalars(b"sumcheck_final_evals", &final_evaluations[0..self.mapping.num_i]);
+
+                    return Some((
+                        EvalClaim{
+                            point: self.rs.clone(),
+                            evs: final_evaluations[0..self.mapping.num_i].to_vec(),
+                        },
+                        SumcheckPolyMapProof{
+                            round_polys : self.round_polys.take().unwrap(),
+                            final_evaluations : final_evaluations[0..self.mapping.num_i].to_vec(),
+                        }
+                    ))
+                }
+            }
+        }
+
+        let round_uni_poly = self.sumcheckable.as_mut().unwrap().unipoly();
+
+        // append the prover's message to the transcript
+        transcript.append_scalars(b"poly", &round_uni_poly.as_vec());
+        // and to proof
+        self.round_polys.as_mut().unwrap().push(round_uni_poly.compress());
+
+        None
+
+    }
+}
+
+// Polyfill
+
+pub struct LameSumcheckPolyMap<F: PrimeField> {
+    _marker: PhantomData<F>,
+}
+
+pub struct LameSumcheckPolyMapProver<F: PrimeField> {
     polys : Vec<DensePolynomial<F>>,
     round_polys : Option<Vec<CompressedUniPoly<F>>>,
     rs: Vec<F>,
     f: PolynomialMapping<F>,
-    f_folded: Option<Box<dyn Fn(&[F]) -> F + Sync + Send>>,
+    f_folded: Option<Arc<dyn Fn(&[F]) -> F + Sync + Send>>,
     claims: MultiEvalClaim<F>,
     ev_folded: Option<F>,
     num_vars: usize,
@@ -38,7 +253,7 @@ pub struct SumcheckPolyMapVerifier<F: PrimeField> {
     proof: SumcheckPolyMapProof<F>,
     claims_to_reduce: MultiEvalClaim<F>,
 
-    f_folded: Option<Box<dyn Fn(&[F]) -> F + Sync + Send>>,
+    f_folded: Option<Arc<dyn Fn(&[F]) -> F + Sync + Send>>,
     current_sum: Option<F>,
     current_poly: Option<UniPoly<F>>,
     rs: Vec<F>,
@@ -60,8 +275,8 @@ pub fn to_multieval<F: PrimeField>(claim: EvalClaim<F>) -> MultiEvalClaim<F> {
     MultiEvalClaim{points, evs}
 }
 
-impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
-    type Prover = SumcheckPolyMapProver<F>;
+impl<F: PrimeField> Protocol<F> for LameSumcheckPolyMap<F> {
+    type Prover = LameSumcheckPolyMapProver<F>;
 
     type Verifier = SumcheckPolyMapVerifier<F>;
 
@@ -69,24 +284,24 @@ impl<F: PrimeField> Protocol<F> for SumcheckPolyMap<F> {
 
     type ClaimsNew = EvalClaim<F>;
 
-    type WitnessInput = Vec<NestedPolynomial<F>>;
+    type WitnessInput = Vec<FragmentedPoly<F>>;
 
-    type Trace = Vec<Vec<NestedPolynomial<F>>>;
+    type Trace = Vec<Vec<FragmentedPoly<F>>>;
 
-    type WitnessOutput = Vec<NestedPolynomial<F>>;
+    type WitnessOutput = Vec<FragmentedPoly<F>>;
 
     type Proof = SumcheckPolyMapProof<F>;
 
     type Params = SumcheckPolyMapParams<F>;
 
     fn witness(args: Self::WitnessInput, params: &Self::Params) -> (Self::Trace, Self::WitnessOutput) {
-        let _args = args.iter().map(|p| p.into()).collect_vec();
-        let out = map_over_poly_legacy(&_args, |x|(params.f.exec)(x)).iter().map(|p| NestedPolynomial::from(p)).collect_vec();
+        let _args = Vec::<_>::interop_into(args.clone());
+        let out = Vec::<_>::interop_from(map_over_poly_legacy(&_args, |x|(params.f.exec)(x)));
         (vec![args], out)
     }
 }
 
-impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
+impl<F: PrimeField> ProtocolProver<F> for LameSumcheckPolyMapProver<F> {
     type ClaimsToReduce = MultiEvalClaim<F>;
 
     type ClaimsNew = EvalClaim<F>;
@@ -95,7 +310,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
     type Params = SumcheckPolyMapParams<F>;
 
-    type Trace = Vec<Vec<NestedPolynomial<F>>>;
+    type Trace = Vec<Vec<FragmentedPoly<F>>>;
 
     fn start(
         claims_to_reduce: Self::ClaimsToReduce,
@@ -103,7 +318,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
         params: &Self::Params,
     ) -> Self {
         assert_eq!(args[0].len(), params.f.num_i);
-        let mut args = args.iter().map(|v| v.iter().map(|p| p.into()).collect_vec()).collect_vec();
+        let mut args = Vec::<_>::interop_into(args);
 
         let eqs_iter = claims_to_reduce
             .points
@@ -165,7 +380,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
             }
 
             if rs.len() == *num_vars {
-                let final_evaluations: Vec<F> = polys.iter().map(|poly| poly[0]).collect();
+                let final_evaluations: Vec<F> = polys.par_iter().map(|poly| poly[0]).collect();
 
                 transcript.append_scalars(b"sumcheck_final_evals", &final_evaluations[0..f.num_i]);
 
@@ -188,7 +403,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
 
         let mle_half = polys[0].len() / 2;
 
-        // let mut accum = vec![vec![F::zero(); combined_degree + 1]; mle_half];
+        let mut accum = vec![vec![F::zero(); combined_degree + 1]; mle_half];
         #[cfg(feature = "multicore")]
         let iterator = (0..mle_half).into_par_iter();
 
@@ -205,7 +420,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
                 let idx_zero = 2 * poly_term_i;
                 let idx_one = 1 + 2 * poly_term_i;
 
-                let diffs: Vec<F> = polys.iter().map(|p| p[idx_one] - p[idx_zero]).collect();
+                let diffs: Vec<F> = polys.par_iter().map(|p| p[idx_one] - p[idx_zero]).collect();
                 let mut accum = vec![F::zero(); combined_degree + 1];
                 // Evaluate P({0, ..., |g(r)|})
 
@@ -216,12 +431,12 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
                 // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
 
                 // eval 0: bound_func is A(low)
-                // eval_points[0] += comb_func(&polys.iter().map(|poly| poly[poly_term_i]).collect());
-                let eval_at_zero: Vec<F> = polys.iter().map(|p| p[idx_zero]).collect();
+                // eval_points[0] += comb_func(&polys.par_iter().map(|poly| poly[poly_term_i]).collect());
+                let eval_at_zero: Vec<F> = polys.par_iter().map(|p| p[idx_zero]).collect();
                 accum[0] += comb_func(&eval_at_zero);
 
                 // TODO(#28): Can be computed from prev_round_claim - eval_point_0
-                let eval_at_one: Vec<F> = polys.iter().map(|p| p[idx_one]).collect();
+                let eval_at_one: Vec<F> = polys.par_iter().map(|p| p[idx_one]).collect();
                 accum[1] += comb_func(&eval_at_one);
 
                 // D_n(index, r) = D_{n-1}[half + index] + r * (D_{n-1}[half + index] - D_{n-1}[index])
@@ -392,7 +607,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
                 let mut args = final_evaluations.clone();
                 args.extend(claims_to_reduce.points.iter().map(|p| EqPolynomial::new(p.to_vec()).evaluate(&rs)));
 
-                assert!((f_folded.as_ref().unwrap())(&args) == *current_sum, "Verifier failure: final check incorrect");
+                assert_eq!((f_folded.as_ref().unwrap())(&args), *current_sum, "Verifier failure: final check incorrect");
 
                 return Some(
                     EvalClaim{
@@ -428,12 +643,12 @@ fn make_folded_claim<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F]
 }
 
 fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f: &PolynomialMapping<F>)
-        -> Box<dyn Fn(&[F]) -> F + Send + Sync>
+        -> Arc<dyn Fn(&[F]) -> F + Send + Sync>
 {
     let claims = claims.clone();
     let gamma_pows = gamma_pows.to_vec();
     let PolynomialMapping{exec, degree: _, num_i, num_o: _} = f.clone();
-    Box::new(
+    Arc::new(
         move |args: &[F]| {
             #[cfg(feature = "prof")]
             prof!("SumcheckPolyMapProver::folded_f");
@@ -458,24 +673,34 @@ fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f:
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use std::sync::{Arc, OnceLock};
     use ark_bls12_381::G1Projective;
     use ark_bls12_381::Fr;
-    use ark_std::test_rng;
+    use ark_std::{test_rng, UniformRand};
     use itertools::Itertools;
 
     use liblasso::utils::test_lib::TestTranscript;
+    use merlin::Transcript;
+    use crate::grand_add::affine_twisted_edwards_add_l1;
+    use crate::polynomial::fragmented::{Fragment, FragmentContent, FragmentedPoly, Shape};
 
     use crate::transcript::{IndexedProofTranscript, TranscriptSender};
 
     use super::*;
 
     #[test]
-    fn test_sumcheck_lite() {
+    fn test_sumcheck_lite_simple_shape() {
         let gen = &mut test_rng();
 
         let num_vars: usize = 5;
-        let polys: Vec<NestedPolynomial<Fr>> = (0..3).map(|_| NestedPolynomial::rand(gen, 5)).collect();
+        let shape = Arc::new(OnceLock::new());
+        shape.get_or_init(||Shape::new(vec![Fragment {
+            mem_idx: 0,
+            len: 1 << 5,
+            content: FragmentContent::Data,
+            start: 0,
+        }], 0));
+        let polys: Vec<FragmentedPoly<Fr>> = (0..3).map(|_| FragmentedPoly::rand_with_shape(gen, shape.clone())).collect();
 
         fn combfunc(i: &[Fr]) -> Vec<Fr> {
             vec![i[0], i[1], i[2] * i[2] * i[0], i[2] * i[2] * i[0]]
@@ -491,7 +716,101 @@ mod test {
             num_vars,
         };
 
+        let (e_trace, e_image_polys) = LameSumcheckPolyMap::witness(polys.clone(), &params);
         let (trace, image_polys) = SumcheckPolyMap::witness(polys.clone(), &params);
+
+        assert_eq!(e_trace, trace);
+        assert_eq!(e_image_polys.iter().map(|p| p.vec()).collect_vec(), image_polys.iter().map(|p| p.vec()).collect_vec());
+
+        let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
+        let claims : Vec<_> = image_polys.par_iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
+
+        let _point = point.clone();
+
+        let multiclaim = MultiEvalClaim {
+            points: vec![point],
+            evs: vec![claims.clone()],
+        };
+
+
+        let mut e_prover = LameSumcheckPolyMapProver::start(
+            multiclaim.clone(),
+            e_trace,
+            &params,
+        );
+
+        let mut prover = SumcheckPolyMapProver::start(
+            multiclaim.clone(),
+            trace,
+            &params,
+        );
+
+        let mut e_p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
+        let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
+        let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
+        let mut e_res = e_prover.round(gamma_c, &mut e_p_transcript);
+        let mut res = prover.round(gamma_c, &mut p_transcript);
+        while res.is_none() {
+            let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
+            e_res = e_prover.round(challenge, &mut e_p_transcript);
+            res = prover.round(challenge, &mut p_transcript);
+        }
+
+        println!("{:?}", p_transcript.transcript.log);
+
+        let (EvalClaim{point: proof_point, evs}, proof) = res.unwrap();
+        assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+
+        let mut verifier = SumcheckPolyMapVerifier::start(
+            multiclaim,
+            proof,
+            &params,
+        );
+
+        let mut v_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::as_this(&p_transcript.transcript));
+        let gamma_c = v_transcript.challenge_scalar(b"challenge_combine_outputs");
+        let mut res = verifier.round(gamma_c, &mut v_transcript);
+        while res.is_none() {
+            let challenge = v_transcript.challenge_scalar(b"challenge_nextround");
+            res = verifier.round(challenge, &mut v_transcript);
+        }
+
+        println!("{:?}", v_transcript.transcript.log);
+
+        v_transcript.transcript.assert_end();
+
+        let EvalClaim{point: proof_point, evs} = res.unwrap();
+        assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+
+    }
+    #[test]
+    fn test_sumcheck_lite() {
+        let gen = &mut test_rng();
+
+        let num_vars: usize = 5;
+        let shape = Arc::new(OnceLock::new());
+        shape.get_or_init(||Shape::rand(gen, num_vars));
+        let polys: Vec<FragmentedPoly<Fr>> = (0..3).map(|_| FragmentedPoly::rand_with_shape(gen, shape.clone())).collect();
+
+        fn combfunc(i: &[Fr]) -> Vec<Fr> {
+            vec![i[0], i[1], i[2] * i[2] * i[0], i[2] * i[2] * i[0]]
+        }
+
+        let params = SumcheckPolyMapParams {
+            f: PolynomialMapping {
+                exec: Arc::new(combfunc),
+                degree: 3,
+                num_i: 3,
+                num_o: 4,
+            },
+            num_vars,
+        };
+
+        let (e_trace, e_image_polys) = LameSumcheckPolyMap::witness(polys.clone(), &params);
+        let (trace, image_polys) = SumcheckPolyMap::witness(polys.clone(), &params);
+
+        assert_eq!(e_trace, trace);
+        assert_eq!(e_image_polys.iter().map(|p| p.vec()).collect_vec(), image_polys.iter().map(|p| p.vec()).collect_vec());
 
         let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
         let claims : Vec<_> = image_polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
@@ -504,17 +823,26 @@ mod test {
         };
 
 
+        let mut e_prover = LameSumcheckPolyMapProver::start(
+            multiclaim.clone(),
+            e_trace,
+            &params,
+        );
+
         let mut prover = SumcheckPolyMapProver::start(
             multiclaim.clone(),
             trace,
             &params,
         );
 
+        let mut e_p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
         let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
         let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
+        let mut e_res = e_prover.round(gamma_c, &mut e_p_transcript);
         let mut res = prover.round(gamma_c, &mut p_transcript);
         while res.is_none() {
             let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
+            e_res = e_prover.round(challenge, &mut e_p_transcript);
             res = prover.round(challenge, &mut p_transcript);
         }
 
@@ -558,7 +886,9 @@ mod test {
             vec![1, 0, 1, 1, 0],
             vec![1, 1, 0, 0, 1],
         ];
-        let polys: Vec<NestedPolynomial<Fr>> = (0..num_polys).map(|j| NestedPolynomial::rand(gen, 5)).collect();
+        let shape = Arc::new(OnceLock::new());
+        shape.get_or_init(||Shape::rand(gen, num_vars));
+        let polys: Vec<FragmentedPoly<Fr>> = (0..num_polys).map(|j| FragmentedPoly::rand_with_shape(gen, shape.clone())).collect();
 
         fn combfunc(i: &[Fr]) -> Vec<Fr> {
             vec![

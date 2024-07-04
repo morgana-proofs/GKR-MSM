@@ -9,8 +9,7 @@ use liblasso::utils::math::Math;
 use profi::{prof, prof_guard};
 
 use GKR_MSM::{
-    protocol::protocol::{PolynomialMapping, Protocol},
-    transcript::{self, TranscriptReceiver, TranscriptSender},
+    non_native_opening, protocol::protocol::{PolynomialMapping, Protocol}, transcript::{self, TranscriptReceiver, TranscriptSender}
 };
 use GKR_MSM::nested_poly::NestedPolynomial;
 
@@ -39,28 +38,21 @@ use crate::example_utils::*;
 
 // this function returns Vec<Vec<F>>
 // this is your input table for the sumcheck
-fn data<F: PrimeField>() -> Vec<Vec<F>>{
-    let gen = &mut test_rng();
-
-    let num_i = [3, 4, 5, 6].choose(gen).unwrap();
-
-    (0..*num_i).map(
-        |i| vec![F::from((i % 2) as u64), F::one(), F::zero(), F::one(), F::from((i % 2) as u64), F::one(), F::zero(), F::one()]
+// the inputs should be 0 or 1
+fn coeffs_bool(non_native_modulus_size_in_bits: usize) -> Vec<Vec<bool>>{
+    let num_i = 5;
+    (0..num_i).map(
+        |i| 
+        {
+            (0..non_native_modulus_size_in_bits)
+                .map(|j| (j as u64/2u64.pow(i)) % 2 != 0)
+                .collect()
+        }
     )
     .collect()
 }
 
-// this is the function(s) applied at the sumcheck
-fn combfunc<F: PrimeField>(i: &[F],)-> Vec<F> {
-    vec![i[0]*i[0] - i[0], i[0]*i[1]]
-}
-
-// this is the degree of the combfunc. 
-// if degree is wrong, it panics
-fn degree() -> usize{
-    2
-}
-
+// points where you want to open the argument
 fn points_to_check_claims_at<F: PrimeField>(num_vars: usize) -> Vec<Vec<F>> 
 {
     let ans = (0..2).map(
@@ -89,7 +81,9 @@ fn adding_challenges
 
 
 fn main(){
-    let (polys, sumcheck_params, trace, multiclaim) = prepare_inputs();
+    let non_native_modulus_size_in_bits = Fq::MODULUS_BIT_SIZE as usize;
+
+    let (polys, sumcheck_params, trace, multiclaim) = prepare_inputs(non_native_modulus_size_in_bits);
 
     // prover running
     let mut prover = SumcheckPolyMapProver::start(
@@ -127,10 +121,10 @@ mod example_utils{
     
     pub(crate) fn prepare_inputs
         <F : PrimeField>
-            () -> (Vec<NestedPolynomial<F>>, SumcheckPolyMapParams<F>, Vec<Vec<NestedPolynomial<F>>>, MultiEvalClaim<F>)
+            (non_native_modulus_size_in_bits: usize) -> (Vec<NestedPolynomial<F>>, SumcheckPolyMapParams<F>, Vec<Vec<NestedPolynomial<F>>>, MultiEvalClaim<F>)
         {
             
-            let (polys, sumcheck_params) = prepare_input_polynomials::<F>();
+            let (polys, sumcheck_params) = prepare_input_polynomials::<F>(non_native_modulus_size_in_bits);
             let points = points_to_check_claims_at(sumcheck_params.num_vars);
 
             let (trace, image_polys) = SumcheckPolyMap::witness(polys.clone(), &sumcheck_params);
@@ -173,11 +167,14 @@ mod example_utils{
         }
 
 
-    pub(crate) fn prepare_input_polynomials<F : PrimeField>() 
+    pub(crate) fn prepare_input_polynomials<F : PrimeField>(non_native_modulus_size_in_bits: usize) 
         -> (Vec<NestedPolynomial<F>>, SumcheckPolyMapParams<F>)
         {
         // here we compute the number of inputs and the number of variables needed for the data given
-        let values = data();
+        let values_bool = coeffs_bool(non_native_modulus_size_in_bits);
+        let values: Vec<Vec<_>> = values_bool.iter()
+                                .map(|v| v.clone().iter().map(|&x| F::from(x as u64)).collect())
+                                .collect();
 
         let num_i = values.len();
         let mut num_vars = 0;
@@ -190,17 +187,17 @@ mod example_utils{
                 })
             .collect();
 
-        let degree = degree();
-        // this computes the number of outputs of combfunc
+        let degree = DEGREE_func_first_part;
+        // this computes the number of outputs of func_first_part
         // and panics if not enough inputs
         let test_vec = vec![F::zero(); num_i];
-        let num_o = combfunc(&test_vec[..num_i]).len();
+        let num_o = func_first_part(&test_vec[..num_i]).len();
 
         (
             polys, 
             SumcheckPolyMapParams {
                 f: PolynomialMapping {
-                    exec: Arc::new(combfunc::<F>),
+                    exec: Arc::new(func_first_part::<F>),
                     degree,
                     num_i,
                     num_o,
@@ -231,6 +228,25 @@ mod example_utils{
             evs: claims,
         }
     }
+
+    pub(crate) fn func_first_part<F: PrimeField>(i: &[F], num_i: usize)-> Vec<F> {
+        (0..num_i-1)
+            .map(|j| i[j]*i[j] - i[j])
+            .chain(
+                (0..num_i-1)
+                    .map(|j | i[j]*i[num_i])
+                    )
+            .collect()
+    }
+
+    // pub(crate) fn func_multiplication<F: PrimeField>(i: &[F], num_i: usize)-> Vec<F> {
+    //     (0..num_i).map(|j| i[j]*i[num_i]).collect()
+    // }
+
+    // this is the degree of the func_first_part. 
+    // if degree is wrong, it panics
+    pub(crate) const DEGREE_func_first_part: usize = 2;
+
 
 }
 

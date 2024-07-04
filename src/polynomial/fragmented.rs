@@ -492,43 +492,43 @@ impl<F: Clone> FragmentedPoly<F> {
 
         let (li, ri) = self.data.iter().cloned().tee();
 
-        l.data.extend(li.step_by(2));
-        r.data.extend(ri.skip(1).step_by(2));
+        // l.data.extend(li.step_by(2));
+        // r.data.extend(ri.skip(1).step_by(2));
 
-        // let mut source_iter = source.fragments.iter();
-        // let mut target_iter = target.fragments.iter();
-        //
-        // let mut source_frag = source_iter.next();
-        // let mut source_frag_counter = 0;
-        // for target_frag in target_iter {
-        //     match &target_frag.content {
-        //         Data => {
-        //             for _ in 0..target_frag.len {
-        //                 l.data.push(self.get_by_fragment(source_frag.unwrap(), source_frag_counter).clone());
-        //                 source_frag_counter += 1;
-        //                 if source_frag_counter >= source_frag.unwrap().len {
-        //                     source_frag = source_iter.next();
-        //                     source_frag_counter = 0;
-        //                 }
-        //                 r.data.push(self.get_by_fragment(source_frag.unwrap(), source_frag_counter).clone());
-        //                 source_frag_counter += 1;
-        //
-        //                 if source_frag_counter >= source_frag.unwrap().len {
-        //                     source_frag = source_iter.next();
-        //                     source_frag_counter = 0;
-        //                 }
-        //             }
-        //         }
-        //         Consts => {
-        //             source_frag_counter += target_frag.len * 2;
-        //
-        //             if source_frag_counter >= source_frag.unwrap().len {
-        //                 source_frag = source_iter.next();
-        //                 source_frag_counter = 0;
-        //             }
-        //         }
-        //     }
-        // }
+        let mut source_iter = source.fragments.iter();
+        let mut target_iter = target.fragments.iter();
+        
+        let mut source_frag = source_iter.next();
+        let mut source_frag_counter = 0;
+        for target_frag in target_iter {
+            match &target_frag.content {
+                Data => {
+                    for _ in 0..target_frag.len {
+                        l.data.push(self.get_by_fragment(source_frag.unwrap(), source_frag_counter).clone());
+                        source_frag_counter += 1;
+                        if source_frag_counter >= source_frag.unwrap().len {
+                            source_frag = source_iter.next();
+                            source_frag_counter = 0;
+                        }
+                        r.data.push(self.get_by_fragment(source_frag.unwrap(), source_frag_counter).clone());
+                        source_frag_counter += 1;
+        
+                        if source_frag_counter >= source_frag.unwrap().len {
+                            source_frag = source_iter.next();
+                            source_frag_counter = 0;
+                        }
+                    }
+                }
+                Consts => {
+                    source_frag_counter += target_frag.len * 2;
+        
+                    if source_frag_counter >= source_frag.unwrap().len {
+                        source_frag = source_iter.next();
+                        source_frag_counter = 0;
+                    }
+                }
+            }
+        }
 
         (l, r)
     }

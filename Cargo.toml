@@ -50,5 +50,9 @@ name = "bintree"
 harness = false
 
 [[bench]]
+name = "sumcheck"
+harness = false
+
+[[bench]]
 name = "gkr_msm_simple_prof"
 harness = false

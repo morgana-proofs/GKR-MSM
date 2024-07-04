@@ -35,8 +35,8 @@ pub struct Splits<F: PrimeField> {
 
 pub struct FragmentedLincomb<F: PrimeField> {
     polys: Vec<FragmentedPoly<F>>,
-    copolys: Vec<Box<dyn Copolynomial<F> + Send + Sync>>,
     splits: Option<Splits<F>>,
+    copolys: Vec<Box<dyn Copolynomial<F> + Send + Sync>>,
     folded_f: Option<Arc<dyn Fn(&[F]) -> F + Sync + Send>>,
     degree: usize,
 }
@@ -473,8 +473,8 @@ impl<F: PrimeField> ProtocolProver<F> for LameSumcheckPolyMapProver<F> {
             });
 
         #[cfg(not(feature = "multicore"))]
-        for (poly_i, eval_point) in eval_points.par_iter_mut().enumerate() {
-            for mle in accum.par_iter().take(mle_half) {
+        for (poly_i, eval_point) in eval_points.iter_mut().enumerate() {
+            for mle in accum.iter().take(mle_half) {
             *eval_point += mle[poly_i];
             }
         }
@@ -676,10 +676,12 @@ mod test {
     use std::sync::{Arc, OnceLock};
     use ark_bls12_381::G1Projective;
     use ark_bls12_381::Fr;
-    use ark_std::test_rng;
+    use ark_std::{test_rng, UniformRand};
     use itertools::Itertools;
 
     use liblasso::utils::test_lib::TestTranscript;
+    use merlin::Transcript;
+    use crate::grand_add::affine_twisted_edwards_add_l1;
     use crate::polynomial::fragmented::{Fragment, FragmentContent, FragmentedPoly, Shape};
 
     use crate::transcript::{IndexedProofTranscript, TranscriptSender};

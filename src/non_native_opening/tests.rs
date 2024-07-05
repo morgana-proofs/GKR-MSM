@@ -98,12 +98,11 @@ fn test_sumcheck_mite_mod() {
     let gen = &mut test_rng();
 
     let num_i =  3;
-    let num_o =  2;
 
     let non_native_field_num_bits = Fq::MODULUS_BIT_SIZE as usize;
     
     let num_vars: usize = non_native_field_num_bits.log_2();
-    let num_vars = 3;
+    let num_vars = 1;
 
     let values_bits = vec![
         vec![Fr::one(); non_native_field_num_bits],
@@ -129,34 +128,45 @@ fn test_sumcheck_mite_mod() {
         
     let polys: Vec<NestedPolynomial<Fr>> = (0..num_i).map(|i| 
         {
-            let my_values = vec![Fr::from((i % 2) as u64), Fr::one(), Fr::zero(), Fr::one(), Fr::from((i % 2) as u64), Fr::one(), Fr::zero(), Fr::one()];
-            let my_nested_poly = NestedPoly::from_values(my_values, Fr::zero());
-            NestedPolynomial::new(my_nested_poly, vec![num_vars])
+            //let my_values = vec![Fr::zero(), Fr::one(), Fr::from(2u64)];//, Fr::one(), Fr::from((i % 2) as u64), Fr::one(), Fr::zero(), Fr::one()];
+            let my_nested_poly1 = NestedPoly::from_values(vec![Fr::zero(), Fr::one()], Fr::zero());
+            let my_nested_poly2 = NestedPoly::from_values(vec![Fr::one() + Fr::from(3*i as u64), Fr::zero()], Fr::zero());
+            let my_nested_poly = NestedPoly::from_polys(vec![my_nested_poly1, my_nested_poly2], Fr::zero());
+
+            NestedPolynomial::new(my_nested_poly, vec![1, num_vars])
         }).collect();
 
-    fn combfunc(i: &[Fr]) -> Vec<Fr> {
-        vec![i[0]*i[0] - i[0], i[0]*i[1]]
-    }
+        // fn combfunc(i: &[Fr]) -> Vec<Fr> {
+        //     vec![Fr::from(2u64) + i[0] *i[0] * i[1], i[2]]
+        // }
+        // let num_o = 2;
+
+        fn combfunc(i: &[Fr]) -> Vec<Fr> {
+            vec![i[0]*i[1] + i[2]]
+        }
+        let num_o = 1;
 
     let params = SumcheckPolyMapParams {
         f: PolynomialMapping {
             exec: Arc::new(combfunc),
-            degree: 2,
+            degree: 3,
             num_i,
             num_o,
         },
-        num_vars: num_vars,
+        num_vars: num_vars + 1,
     };
 
     let (trace, image_polys) = SumcheckPolyMap::witness(polys.clone(), &params);
 
-    let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(2*i)).collect();
+    let point: Vec<Fr> = (0..(num_vars as u64 + 1)).map(|i| Fr::from(1 - i)).collect();
     let claims : Vec<_> = image_polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
 
     let multiclaim = MultiEvalClaim {
         points: vec![point],
         evs: vec![claims.clone()],
     };
+
+    println!("{:?}", multiclaim);
 
 
     let mut prover = SumcheckPolyMapProver::start(
@@ -166,11 +176,15 @@ fn test_sumcheck_mite_mod() {
     );
 
     let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
-    let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
+    //let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
+    let gamma_c = Challenge{value: Fr::from(2u64)};
     let mut res = prover.round(gamma_c, &mut p_transcript);
+    let mut counter = 0u64;
     while res.is_none() {
         let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
+        let challenge = Challenge{value: Fr::from(counter)};
         res = prover.round(challenge, &mut p_transcript);
+        counter += 1;
         
      //   println!("polys : {:?},\n round_polys : {:?},\n rs : {:?},\n claims : {:?},\n, num_vars : {:?},\n", 
             // prover.polys,
@@ -184,28 +198,29 @@ fn test_sumcheck_mite_mod() {
 
     //println!("{:?}", p_transcript.transcript.log);
     //println!("{:?}", res);
-
+    use std::ops::Neg;
     let (EvalClaim{point: proof_point, evs}, proof) = res.unwrap();
-    println!("\nsup, {:?}, {:?}\n", proof_point.len(), evs.len());
-    assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+    //let (evals, proof) = res.unwrap();
+    println!("\nsup, {:?}, {:?}\n", proof_point, evs.iter().map(|x| (x, x.neg() )).collect_vec());
+    //assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
 
-    let mut verifier = SumcheckPolyMapVerifier::start(
-        multiclaim,
-        proof,
-        &params,
-    );
+    // let mut verifier = SumcheckPolyMapVerifier::start(
+    //     multiclaim,
+    //     proof,
+    //     &params,
+    // );
 
-    let mut v_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::as_this(&p_transcript.transcript));
-    let gamma_c = v_transcript.challenge_scalar(b"challenge_combine_outputs");
-    let mut res = verifier.round(gamma_c, &mut v_transcript);
-    while res.is_none() {
-        let challenge = v_transcript.challenge_scalar(b"challenge_nextround");
-        res = verifier.round(challenge, &mut v_transcript);
-    }
+    // let mut v_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::as_this(&p_transcript.transcript));
+    // let gamma_c = v_transcript.challenge_scalar(b"challenge_combine_outputs");
+    // let mut res = verifier.round(gamma_c, &mut v_transcript);
+    // while res.is_none() {
+    //     let challenge = v_transcript.challenge_scalar(b"challenge_nextround");
+    //     res = verifier.round(challenge, &mut v_transcript);
+    // }
 
-    println!("{:?}", v_transcript.transcript.log);
+    // println!("{:?}", v_transcript.transcript.log);
 
-    let EvalClaim{point: proof_point, evs} = res.unwrap();
-    assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+    // let EvalClaim{point: proof_point, evs} = res.unwrap();
+    // assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
 }
 

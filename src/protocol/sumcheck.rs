@@ -52,7 +52,7 @@ pub struct SumcheckPolyMapProver<F: PrimeField> {
     round_polys: Option<Vec<CompressedUniPoly<F>>>,
 }
 
-pub(crate) trait Sumcheckable<F: PrimeField> {
+pub trait Sumcheckable<F: PrimeField> {
     fn bind(&mut self, f: &F);
 
     fn split(&mut self) {

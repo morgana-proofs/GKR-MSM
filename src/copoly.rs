@@ -2,9 +2,9 @@
 // sums over admissible subset, and evaluation over admissible subset. Example is eq(r, x).
 // Every sumcheck will have degree 1 in copolynomials.
 
-use std::{cmp::min, collections::VecDeque, mem::{transmute, MaybeUninit}, sync::{Arc, OnceLock}, vec};
+use std::{cmp::min, collections::VecDeque, mem::{transmute, MaybeUninit}, process::Output, sync::{Arc, OnceLock}, vec};
 use std::iter::once;
-use std::ops::{AddAssign, Index, SubAssign};
+use std::ops::{AddAssign, Index, SubAssign, Add, Sub};
 
 use ark_ff::{Field, PrimeField, Zero};
 use itertools::{Itertools, repeat_n};
@@ -344,6 +344,51 @@ impl<T: SubAssign + Send + Sync + Copy> SubAssign<&Self> for CopolyData<T> {
         self.sums.iter_mut().zip_eq(rhs.sums.iter()).map(|(l, r)| *l -= *r).count();
     }
 }
+
+
+impl<T: AddAssign + Send + Sync + Copy> Add for CopolyData<T>{
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        let mut ans = self.clone();
+        ans += &rhs;
+        ans
+
+    }
+}
+
+
+impl<'a, 'b, T: AddAssign + Send + Sync + Copy> Add<&'a CopolyData<T>> for &'b CopolyData<T>{
+    type Output = CopolyData<T>;
+    fn add(self, rhs: &'a CopolyData<T>) -> CopolyData<T> {
+        let mut ans = self.clone();
+        ans += &rhs;
+        ans
+
+    }
+}
+
+impl<T: SubAssign + Send + Sync + Copy> Sub for CopolyData<T>{
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        let mut ans = self.clone();
+        ans -= &rhs;
+        ans
+
+    }
+}
+
+
+
+impl<'a, 'b, T: SubAssign + Send + Sync + Copy> Sub<&'a CopolyData<T>> for &'b CopolyData<T>{
+    type Output = CopolyData<T>;
+    fn sub(self, rhs: &'a CopolyData<T>) -> Self::Output {
+        let mut ans = self.clone();
+        ans -= rhs;
+        ans
+
+    }
+}
+
 
 
 pub trait Copolynomial<F: PrimeField> {

@@ -30,7 +30,7 @@ use crate::utils::memprof;
 pub trait MSMCircuitConfig {
     type F: PrimeField;
     type Comm: CurveGroup<ScalarField = Self::F>;
-    type G: CurveGroup<Config: TwistedEdwardsConfig>;
+    type G: CurveGroup;
 }
 
 pub struct CommitmentKey<G: CurveGroup> {

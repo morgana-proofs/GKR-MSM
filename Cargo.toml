@@ -56,3 +56,8 @@ harness = false
 [[bench]]
 name = "gkr_msm_simple_prof"
 harness = false
+
+
+[[example]]
+name = "nn"
+path = "examples/nn.rs"

@@ -157,7 +157,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn mest_sumcheck_lite_simple_shape() {
+    fn tost_sumcheck_lite_simple_shape() {
         let gen = &mut test_rng();
 
         let num_vars: usize = 5;
@@ -319,7 +319,7 @@ mod test {
     }
 
     #[test]
-    fn mest_sumcheck_multiclaim() {
+    fn tost_sumcheck_multiclaim() {
         let gen = &mut test_rng();
 
         let num_vars: usize = 5;

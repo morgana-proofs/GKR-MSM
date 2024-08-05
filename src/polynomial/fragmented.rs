@@ -775,6 +775,38 @@ impl<F: AddAssign + Send + Sync + Sized + Copy> AddAssign<&Self> for  Fragmented
     }
 }
 
+impl<T:  AddAssign + Send + Sync + Sized + Copy> Add for FragmentedPoly<T>{
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        let mut ans = self.clone();
+        ans += &rhs;
+        ans
+
+    }
+}
+
+impl<T: SubAssign + Send + Sync + Sized + Copy> Sub for FragmentedPoly<T>{
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        let mut ans = self.clone();
+        ans -= &rhs;
+        ans
+
+    }
+}
+
+impl<'a, 'b, T: SubAssign + Send + Sync + Copy> Sub<&'a FragmentedPoly<T>> for &'b FragmentedPoly<T>{
+    type Output = FragmentedPoly<T>;
+    fn sub(self, rhs: &'a FragmentedPoly<T>) -> Self::Output {
+        let mut ans = self.clone();
+        ans -= rhs;
+        ans
+
+    }
+}
+
+
+
 impl<F: Field> FragmentedPoly<F> {
     pub fn map_over_poly(ins: &[Self], f: PolynomialMapping<F>) -> Vec<Self> {
         let shape = ins[0].shape.clone();

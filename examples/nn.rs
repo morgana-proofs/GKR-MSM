@@ -1,5 +1,7 @@
 #![allow(unused_imports)]
 
+// not finished
+
 use std::{marker::PhantomData};
 use std::ops::{AddAssign, Sub, SubAssign};
 
@@ -149,7 +151,7 @@ where T:  TranscriptReceiver<F> + TranscriptSender<F>,
 
 
 fn main(){
-    prepare_inputs();
+    //prepare_inputs();
 
     
     let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());

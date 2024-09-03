@@ -26,6 +26,7 @@ use crate::protocol::sumcheck::{SumcheckPolyMap, Splits, FragmentedLincomb, Sumc
 
 pub mod prover;
 pub mod verifier;
+pub mod non_native_equalizer;
 
 use prover::*;
 use verifier::*;

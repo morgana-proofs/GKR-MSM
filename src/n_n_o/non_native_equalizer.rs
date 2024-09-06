@@ -1,7 +1,4 @@
-// make equalizer limbs:
-
-use std::ops::Deref;
-
+// make equalizer limbs
 //use ark_ff::BigInt;
 
 use super::*;
@@ -9,6 +6,8 @@ use crate::polynomial::fragmented::Shape;
 use ark_ff::{biginteger::{BigInt, BigInteger64 as B1}, BigInteger};
 
 use ark_ff::PrimeField;
+use liblasso::utils::math::Math;
+use std::ops::{Shl, Shr, BitAnd};
 
 
 
@@ -16,6 +15,22 @@ pub mod bit_utils{
     use liblasso::utils::math::Math;
 
     use super::*;
+
+    pub trait BitMath {
+        fn to_bits(self, max_bit_len: usize) ->  Vec<bool>;
+      }
+    
+    impl BitMath for usize {
+    fn to_bits(self, max_bit_len: usize) -> Vec<bool> {
+        (0..max_bit_len)
+            .map(|n| (self>>n)%2 == 1 )
+            .collect()
+        
+        }
+    }
+
+     
+
     pub fn big_num_to_limbs<F1: PrimeField, F2: PrimeField>(x: &F1, limb_len: usize) -> Vec<F2>
     {
         let x = x.into_bigint();
@@ -63,9 +78,9 @@ pub fn make_equalizer_limbs<FNat: PrimeField, FNonNat:  PrimeField>(
     poly_size: usize,
 ) -> Vec<FragmentedPoly<FNat>>
 {
-    let evals: Vec<FNonNat> = (0..poly_size as u64).map(
+    let evals: Vec<FNonNat> = (0..poly_size).map(
         |x| {
-            let x_bits = FNonNat::BigInt::from(x).to_bits_le();
+            let x_bits = x.to_bits(poly_size.log_2());
             x_bits
                 .iter()
                 .zip(point)

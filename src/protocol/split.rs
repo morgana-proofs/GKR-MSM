@@ -180,7 +180,5 @@ mod tests {
         assert_eq!(v_point, evs.point);
         assert_eq!(v_evals, evs.evs);
         (*v_transcript).transcript.assert_end();
-
-
     }
 }

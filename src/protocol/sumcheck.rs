@@ -213,7 +213,12 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
                 let r_j = challenge.value;
                 fix_var_bot(&mut self.rs, r_j);
                 s.bind(&r_j);
-
+            }
+        }
+        
+        match &mut self.sumcheckable {
+            None => {}
+            Some(s) => {
                 if self.rs.len() == self.num_vars {
                     let final_evaluations: Vec<F> = s.final_evals();
 
@@ -589,7 +594,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
 
         let SumcheckPolyMapProof { round_polys, final_evaluations } = proof;
 
-        assert!(rs.len() < *num_vars, "Verifier failure: attempt to call already finished verifier.");
+        assert!(rs.len() <= *num_vars, "Verifier failure: attempt to call already finished verifier.");
 
         let sumcheck_round_idx;
         // Detect 0-th round (gamma challenge).
@@ -615,24 +620,25 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
             );
 
             *current_sum = current_poly.evaluate(&r_j);
+        }
 
-            if rs.len() == *num_vars {
 
-                transcript.append_scalars(b"sumcheck_final_evals", &final_evaluations[0..f.num_i]);
+        if rs.len() == *num_vars {
+            let current_sum = current_sum.as_mut().unwrap();
+            transcript.append_scalars(b"sumcheck_final_evals", &final_evaluations[0..f.num_i]);
 
-                // Cloning final evals to not change the proof. We probably do not need it, as we consume it anyway.
-                let mut args = final_evaluations.clone();
-                args.extend(claims_to_reduce.points.iter().map(|p| EqPolynomial::new(p.to_vec()).evaluate(&rs)));
+            // Cloning final evals to not change the proof. We probably do not need it, as we consume it anyway.
+            let mut args = final_evaluations.clone();
+            args.extend(claims_to_reduce.points.iter().map(|p| EqPolynomial::new(p.to_vec()).evaluate(&rs)));
 
-                assert_eq!((f_folded.as_ref().unwrap())(&args), *current_sum, "Verifier failure: final check incorrect");
+            assert_eq!((f_folded.as_ref().unwrap())(&args), *current_sum, "Verifier failure: final check incorrect");
 
-                return Some(
-                    EvalClaim{
-                        point: rs.clone(),
-                        evs: final_evaluations.clone(),
-                    }
-                )
-            }
+            return Some(
+                EvalClaim{
+                    point: rs.clone(),
+                    evs: final_evaluations.clone(),
+                }
+            )
         }
 
         let new_poly = round_polys[sumcheck_round_idx].decompress(&current_sum.unwrap());
@@ -984,5 +990,97 @@ mod test {
 
         let EvalClaim{point: proof_point, evs} = res.unwrap();
         assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+    }
+
+    #[test]
+    fn test_sumcheck_0_dim() {
+        let gen = &mut test_rng();
+        let num_vars: usize = 0;
+        let num_polys: usize = 12;
+
+        let shape = Arc::new(OnceLock::new());
+        shape.get_or_init(||Shape::new(
+            vec![
+                Fragment {
+                    mem_idx: 0,
+                    len: 1,
+                    content: FragmentContent::Data,
+                    start: 0,
+                }
+            ],
+            0
+        ));
+        let polys: Vec<FragmentedPoly<Fr>> = (0..num_polys).map(|_| FragmentedPoly::rand_with_shape(gen, shape.clone())).collect();
+
+        fn combfunc(i: &[Fr]) -> Vec<Fr> {
+            i.chunks(3).map(|c| c.iter().product()).collect_vec()
+        }
+
+        let params = SumcheckPolyMapParams {
+            f: PolynomialMapping {
+                exec: Arc::new(combfunc),
+                degree: 3,
+                num_i: 12,
+                num_o: 4,
+            },
+            num_vars,
+        };
+
+        let (e_trace, e_image_polys) = LameSumcheckPolyMap::witness(polys.clone(), &params);
+        let (trace, image_polys) = SumcheckPolyMap::witness(polys.clone(), &params);
+
+        assert_eq!(e_trace, trace);
+        assert_eq!(e_image_polys.iter().map(|p| p.vec()).collect_vec(), image_polys.iter().map(|p| p.vec()).collect_vec());
+
+        let point: Vec<Fr> = (0..(num_vars as u64)).map(|i| Fr::from(i * 13)).collect();
+        let claims : Vec<_> = image_polys.iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
+
+        let _point = point.clone();
+
+        let multiclaim = MultiEvalClaim {
+            points: vec![point],
+            evs: vec![claims.clone()],
+        };
+        
+        let mut prover = SumcheckPolyMapProver::start(
+            multiclaim.clone(),
+            trace,
+            &params,
+        );
+
+        let mut p_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::new());
+        let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
+        let mut res = prover.round(gamma_c, &mut p_transcript);
+        while res.is_none() {
+            let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
+            res = prover.round(challenge, &mut p_transcript);
+        }
+
+        println!("{:?}", p_transcript.transcript.log);
+
+        let (EvalClaim{point: proof_point, evs}, proof) = res.unwrap();
+        assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+
+        let mut verifier = SumcheckPolyMapVerifier::start(
+            multiclaim,
+            proof,
+            &params,
+        );
+
+        let mut v_transcript: IndexedProofTranscript<G1Projective, _> = IndexedProofTranscript::new(TestTranscript::as_this(&p_transcript.transcript));
+        let gamma_c = v_transcript.challenge_scalar(b"challenge_combine_outputs");
+        let mut res = verifier.round(gamma_c, &mut v_transcript);
+        while res.is_none() {
+            let challenge = v_transcript.challenge_scalar(b"challenge_nextround");
+            res = verifier.round(challenge, &mut v_transcript);
+        }
+
+        println!("{:?}", v_transcript.transcript.log);
+
+        v_transcript.transcript.assert_end();
+
+        let EvalClaim{point: proof_point, evs} = res.unwrap();
+        assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+
     }
 }

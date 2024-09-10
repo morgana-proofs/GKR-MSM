@@ -550,10 +550,10 @@ mod test {
             let rng = &mut test_rng();
             let num_vars = 8;
             let num_polys = 3;
-            let num_splits = 4;
+            let num_splits = 8;
 
             fn no_const_gen<RNG: Rng>(rng: &mut RNG, num_vars: usize, num_splits: usize) -> (FragmentedPoly<Fr>, usize, usize) {
-                let split_var = rng.next_u64() as usize % (num_vars - num_splits);
+                let split_var = if num_vars - num_splits == 0 {0} else { rng.next_u64() as usize % (num_vars - num_splits) };
                 let sector_size: usize = 1 << (num_vars - 1 - split_var);
                 let data_len = 1 << num_vars;
 
@@ -575,7 +575,7 @@ mod test {
                 (d, split_var, sector_size)
             }
             fn rng_gen<RNG: Rng>(rng: &mut RNG, num_vars: usize, num_splits: usize) -> (FragmentedPoly<Fr>, usize, usize) {
-                let split_var = rng.next_u64() as usize % (num_vars - num_splits);
+                let split_var = if num_vars - num_splits == 0 {0} else { rng.next_u64() as usize % (num_vars - num_splits) };
                 let sector_size = 1 << (num_vars - 1 - split_var);
                 let max_data_sectors_pairs = 1 << (split_var);
                 let data_sectors = 2 * (rng.next_u64() as usize % max_data_sectors_pairs + 1);
@@ -634,6 +634,18 @@ mod test {
                             TriangleAddLayer::new_pmap(Box::new(f34), 3, 3, 4),
                             TriangleAddLayer::new_pmap(Box::new(f45), 4, 4, 5),
                             TriangleAddLayer::new_pmap(Box::new(f53), 3, 5, 3),
+                            TriangleAddLayer::new_split(3, split_var),
+                            TriangleAddLayer::new_pmap(Box::new(f62), 3, 6, 2),
+                            TriangleAddLayer::new_pmap(Box::new(f23), 2, 2, 3),
+                            TriangleAddLayer::new_split(3, split_var),
+                            TriangleAddLayer::new_pmap(Box::new(f62), 3, 6, 2),
+                            TriangleAddLayer::new_pmap(Box::new(f23), 2, 2, 3),
+                            TriangleAddLayer::new_split(3, split_var),
+                            TriangleAddLayer::new_pmap(Box::new(f62), 3, 6, 2),
+                            TriangleAddLayer::new_pmap(Box::new(f23), 2, 2, 3),
+                            TriangleAddLayer::new_split(3, split_var),
+                            TriangleAddLayer::new_pmap(Box::new(f62), 3, 6, 2),
+                            TriangleAddLayer::new_pmap(Box::new(f23), 2, 2, 3),
                             TriangleAddLayer::new_split(3, split_var),
                             TriangleAddLayer::new_pmap(Box::new(f62), 3, 6, 2),
                             TriangleAddLayer::new_pmap(Box::new(f23), 2, 2, 3),
@@ -814,16 +826,16 @@ mod test {
                         }
                         output_vecs = _leftover;
                     }
-                    // 
+                    //
                     // let mut map = HashMap::new();
-                    // 
+                    //
                     // for i in 0..2048 {
                     //     map.insert(
                     //         EdwardsProjective::from(EdwardsProjective::generator().mul_bigint(BigInt::<4>::from(i as u64)).into_affine()),
                     //         i
                     //     );
                     // }
-                    // 
+                    //
                     // let trs = trace.iter().zip(trace.iter().skip(1).chain(&[output])).zip(params.layers).filter(|(_, l)| {
                     //     match l {
                     //         TriangleAddLayer::Mapping(_) => false,
@@ -848,12 +860,12 @@ mod test {
                     //     }
                     //     vec![res_i, res_o]
                     // }).collect_vec();
-                    // 
+                    //
                     // dbg!(trs);
-                    // 
+                    //
                     // let out = out_points.iter().map(|p| map.get(p).map_or("OTHER".to_string(), |i| format!("{}", i))).collect_vec();
                     // dbg!(out);
-                    // 
+                    //
                     // let res = chunk_results.iter().map(|p| map.get(p).map_or("OTHER".to_string(), |i| format!("{}", i))).collect_vec();
                     // dbg!(res);
 
@@ -931,15 +943,12 @@ mod test {
                 let (points, data) = FragmentedPoly::rand_points_with_shape(rng, shape);
                 (points, data, split_var, sector_size)
             }
-            
+
             for gen in [no_const_gen, rng_gen] {
                 for _ in 0..100 {
 
                     let (points, data, split_var, sector_size) = gen(rng, num_vars);
 
-                    if split_var == 0 {
-                        continue;
-                    }
                     let input = data.to_vec();
                     let points_vec = points.vec();
 

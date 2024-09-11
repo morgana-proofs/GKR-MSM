@@ -985,4 +985,5 @@ mod test {
         let EvalClaim{point: proof_point, evs} = res.unwrap();
         assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
     }
+
 }

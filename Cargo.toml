@@ -12,6 +12,8 @@ ark-serialize = { version = "0.4.2", default-features = false, features = [
 ] }
 ark-bls12-381 = { version = "^0.4.0", default-features = false, features = [ "curve" ] }
 
+rand = {version = "^ 0.8.5"}
+
 liblasso = { git = "https://github.com/rebenkoy/liblasso.git", branch = "master", features = ["default", "multicore"]}
 #liblasso = { path = "./../liblasso", features = ["default", "multicore"]}
 hashcaster = { git = "https://github.com/morgana-proofs/hashcaster.git" }

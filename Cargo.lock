@@ -24,6 +24,7 @@ dependencies = [
  "num-traits",
  "paste",
  "profi",
+ "rand 0.8.5",
  "rayon",
 ]
 

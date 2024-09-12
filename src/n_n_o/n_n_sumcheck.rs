@@ -6,57 +6,96 @@ use liblasso::utils::math::Math;
 
 use super::non_native_equalizer::bit_utils::{*, BitMath};
 
-use std::ops::Neg;
+use rayon::iter::plumbing::UnindexedConsumer;
+use rayon::prelude::*;
 
+use std::ops::{Neg, AddAssign, Add, SubAssign, Sub, Mul,};
+use std::iter;
 
-#[derive(Debug, Default, Clone)]
-pub struct PolynomialWithZeros<F: PrimeField>{
-    // evals is a list of (non-zero) evaluations; the real eval list has length 2**log_len with the last several evals being zero
-    // e.g. if we want to encode bits of a 254-bit number as evals, len should be 254, and log_len is 8
-    evals: Vec<F>,
-    len: usize,
-    log_len: usize,
+use ark_std::{One, Zero};
+
+use super::polynomial_with_zeros::{PolynomialWithZeros};
+
+pub struct Splits<F: PrimeField> {
+    pub lpolys: Vec<PolynomialWithZeros<F>>,
+    pub rpolys: Vec<PolynomialWithZeros<F>>,
 }
 
+pub struct NonNatEqualizer<FNat: PrimeField> {
+    polys: Vec<PolynomialWithZeros<FNat>>,
+    splits: Option<Splits<FNat>>,
+    //copolys: Vec<Box<dyn Copolynomial<F> + Send + Sync>>,
+    //folded_f: Option<Arc<dyn Fn(&[F]) -> F + Sync + Send>>,
+    //degree: usize,
+}
 
-impl <F:PrimeField> PolynomialWithZeros<F>{
-    fn new(evals: &[F]) -> Self
-    {
-        let eval_vec = evals.into();
-        let len = evals.len();
-        let log_len = len.log_2();
-
-        PolynomialWithZeros{
-            evals: eval_vec,
-            len,
-            log_len
-        }
+impl<FNat: PrimeField> Sumcheckable<FNat> for NonNatEqualizer<FNat>{
+    fn bind(&mut self, f: &FNat){
+        todo!()
     }
 
-    // for testing
-    fn evaluate(&self, r: &[F]) -> F
-    {
-        assert_eq!(r.len(), self.log_len, "trying to evaluate at a point with different dimention");
+    fn split(&mut self) {
+        unimplemented!()
+    }
+    fn unipoly(&mut self) -> UniPoly<FNat>{
+        // self.split();
+        // let Splits { lpolys, rpolys } = self.splits.take().unwrap();
 
-        let ans = self.evals.iter().enumerate().map(
-            |(i, ev)|{
-                let i_bits = i.to_bits(self.log_len);
-                let copol = i_bits
-                    .iter()
-                    .zip(r)
-                    .map(|(&y, ev)|
-                        match y {
-                            true => ev.to_owned(),
-                            false => F::one() - ev.to_owned(),
-                    }).fold(F::one(), |acc, x| acc*x);
-                copol*ev
-            }  
-        ).fold(F::zero(), |acc, x| acc+x);
-        ans
+        // let poly_diffs = lpolys
+        //     .par_iter()
+        //     .zip(rpolys.par_iter())
+        //     .map(|(l, r)| {let mut r = r.clone(); r -= l; r})
+        //     .collect::<Vec<_>>();
 
+        // let copoly_diffs = lcopolys
+        //     .par_iter()
+        //     .zip(rcopolys.par_iter())
+        //     .map(|(l, r)| {let mut r = r.clone(); r -= l; r})
+        //     .collect::<Vec<_>>();
+
+        // let mut poly_extensions = Vec::with_capacity(self.degree);
+
+        // let mut copoly_extensions = Vec::with_capacity(self.degree);
+
+        // let mut last_poly = &rpolys;
+        // let mut last_copoly = &rcopolys;
+
+        // for i in 0..self.degree {
+        //     poly_extensions.push(last_poly.clone());
+        //     poly_extensions[i].par_iter_mut().zip(poly_diffs.par_iter()).map(|(p, d)| p.add_assign(d)).count();
+        //     last_poly = poly_extensions.last().unwrap();
+
+        //     copoly_extensions.push(last_copoly.clone());
+        //     copoly_extensions[i].par_iter_mut().zip(copoly_diffs.par_iter()).map(|(p, d)| p.add_assign(d)).count();
+        //     last_copoly = copoly_extensions.last().unwrap();
+        // }
+
+        // let folded = self.folded_f.as_ref().unwrap().clone();
+        // let poly_ext_iter = once(&lpolys).chain(once(&rpolys)).chain(poly_extensions.par_iter());
+        // let copoly_ext_iter = once(&lcopolys).chain(once(&rcopolys)).chain(copoly_extensions.par_iter());
+        // let results = poly_ext_iter.zip(copoly_ext_iter).map(|(polys, eqpolys)| {
+        //     let tmp = (0..polys[0].items_len()).into_par_iter().map(|i| {
+        //         folded(&polys.iter().map(|p| p[i]).chain(eqpolys.iter().map(|ep| ep[i])).collect_vec())
+        //     }).collect::<Vec<_>>();
+        //     tmp.par_iter().sum()
+        // }).collect::<Vec<F>>();
+
+        // self.splits = Some(Splits {
+        //     lpolys,
+        //     rpolys,
+        //     lcopolys,
+        //     rcopolys,
+        // });
+        // UniPoly::from_evals(&results);
+
+        
+        todo!();
 
     }
-    
+
+    fn final_evals(&self) -> Vec<FNat>{
+        todo!()
+    }
 }
 
 

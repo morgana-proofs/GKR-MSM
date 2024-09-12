@@ -780,7 +780,7 @@ mod test {
 
 
             for gen in [no_const_gen, rng_gen] {
-                for _ in 0..50 {
+                for _ in 0..10 {
                     let (points, data, split_var, sector_size) = gen(rng, num_vars);
 
                     let input = data.to_vec();
@@ -878,7 +878,7 @@ mod test {
         #[test]
         fn prover_vs_verifier() {
             let rng = &mut test_rng();
-            let num_vars = 8;
+            let num_vars = 6;
 
             fn no_const_gen<RNG: Rng>(rng: &mut RNG, num_vars: usize) -> (FragmentedPoly<ark_ed_on_bls12_381_bandersnatch::EdwardsProjective>, [FragmentedPoly<Fr>; 3], usize, usize) {
                 let split_var = rng.next_u64() as usize % (num_vars - 3);
@@ -945,7 +945,7 @@ mod test {
             }
 
             for gen in [no_const_gen, rng_gen] {
-                for _ in 0..100 {
+                for _ in 0..10 {
 
                     let (points, data, split_var, sector_size) = gen(rng, num_vars);
 

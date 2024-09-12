@@ -34,9 +34,12 @@ pub mod bit_utils{
     pub fn big_num_to_limbs<F1: PrimeField, F2: PrimeField>(x: &F1, limb_len: usize) -> Vec<F2>
     {
         let x = x.into_bigint();
-        x.to_bits_le()
+
+        assert_eq!(limb_len%8, 0);
+
+        x.to_bytes_le()
             .chunks(limb_len)
-            .map(|bits| F2::from(F2::BigInt::from_bits_le(bits)))
+            .map(|bytes| F2::from(F2::from_le_bytes_mod_order(bytes)))
             .collect()
 
     }
@@ -93,7 +96,7 @@ pub fn make_equalizer_limbs<FNat: PrimeField, FNonNat:  PrimeField>(
         })
         .collect();
 
-    let eval_limbs_transposed: Vec<_> = evals.iter().map(|x| big_num_to_limbs::<FNonNat, FNat>(x, limb_len)).collect();
+    let eval_limbs_transposed: Vec<_> = evals.iter().map(|x| big_num_to_limbs::<FNonNat, FNat>(&x, limb_len)).collect();
 
     let eval_limbs = transpose(eval_limbs_transposed);
 
@@ -127,7 +130,8 @@ mod tests{
         let num_limbs = 3;
         let limb_len = roundup_to_pow2( Fq::MODULUS_BIT_SIZE  as usize / num_limbs);
 
-        let poly_size = 64;
+        let num_vars = 6;
+        let poly_size = 1<<num_vars;
 
         let r =  (0..poly_size).map(|_| Fq::rand(&mut rng)).collect();
         // let r_bits = big_num_to_bits_F(r);

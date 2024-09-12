@@ -28,6 +28,7 @@ pub mod prover;
 pub mod verifier;
 pub mod non_native_equalizer;
 pub mod n_n_sumcheck;
+pub mod polynomial_with_zeros;
 
 use prover::*;
 use verifier::*;

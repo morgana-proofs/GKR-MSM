@@ -10,16 +10,19 @@ use super::non_native_equalizer::bit_utils::{*, BitMath};
 use rayon::iter::plumbing::UnindexedConsumer;
 use rayon::prelude::*;
 
+use core::num;
 use std::ops::{Neg, AddAssign, Add, SubAssign, Sub, Mul,};
 use std::cmp::{Eq, PartialEq};
 use std::iter;
 
-use ark_std::{One, Zero};
+use ark_std::{One, Zero, UniformRand};
+
+use rand::prelude::{Rng, thread_rng};
 
 
 
 #[derive(Debug, Default, Clone)]
-pub struct PolynomialWithZeros<F>{
+pub struct PolynomialWithZeros<F: Zero>{
     // evals is a list of (non-zero) evaluations; the real eval list has length 2**log_len with the last several evals being zero
     // e.g. if we want to encode bits of a 254-bit number as evals, len should be 254, and log_len is 8
     pub evals: Vec<F>,
@@ -41,6 +44,26 @@ impl <F: Sub<Output = F> + Add + AddAssign + Mul + One + Zero + Send + Sync + Si
             len,
             log_len
         }
+    }
+
+    pub fn zero_of_given_len(len: usize) -> Self{
+        let log_len = len.log_2();
+        let evals = vec![F::zero(); len];
+        PolynomialWithZeros{
+            evals,
+            len,
+            log_len,
+        }
+        
+    }
+    
+    pub fn zero_of_given_num_vars(num_vars: usize) -> Self{
+        PolynomialWithZeros{
+            evals: vec![],
+            len: 0,
+            log_len: num_vars,
+        }
+        
     }
 
     pub fn split(&self) -> (Self, Self)
@@ -66,7 +89,7 @@ impl <F: Sub<Output = F> + Add + AddAssign + Mul + One + Zero + Send + Sync + Si
         assert_eq!(self.log_len, rhs.log_len, "only call this function from bind");
         assert!(self.len >= rhs.len, "only call this function from bind");
         self.evals.iter_mut()
-            .zip(rhs.evals.iter().chain(iter::repeat(&F::zero())).take( self.len - rhs.len))
+            .zip(rhs.evals.iter().chain(iter::repeat(&F::zero())))
             .map(|(l, r)| { *l += *f * (*r - *l) }).count();
     }
 
@@ -100,6 +123,20 @@ impl <F: Sub<Output = F> + Add + AddAssign + Mul + One + Zero + Send + Sync + Si
         ans
     }
     
+}
+
+
+impl <F: UniformRand + Zero + Send + Sync + Sized + Copy> PolynomialWithZeros<F>
+{
+    pub fn rand<RNG: Rng>(rng: &mut RNG, len: usize, num_vars: usize) -> Self{
+        let evals = (0..len).map(|_| F::rand(rng)).collect();
+        PolynomialWithZeros{
+            evals,
+            len: len,
+            log_len: num_vars,
+        }
+        
+    }
 }
 
 
@@ -160,14 +197,17 @@ impl<F:  Sub<Output = F> + Zero + Send + Sync + Sized + Copy> Sub for Polynomial
     }
 }
 
+
 impl<F:  Zero + Send + Sync + Sized + Copy + Eq> PartialEq for PolynomialWithZeros<F> {
     fn eq(&self, other: &Self) -> bool  {
-        if ! (self.len == other.len &&
-        self.log_len == other.log_len){
+        if ! (self.log_len == other.log_len){
             false
         }
+        else if self.len >= other.len {
+            self.evals.iter().zip(other.evals.iter().chain(iter::repeat(&F::zero()))).fold(true, |acc, (&a,  &b)| acc && (a== b))
+        }
         else{
-            self.evals.iter().zip(other.evals.iter()).fold(true, |acc, (&a,  &b)| acc && (a== b))
+            other.evals.iter().zip(self.evals.iter().chain(iter::repeat(&F::zero()))).fold(true, |acc, (&a,  &b)| acc && (a== b))
         }
     }
 }

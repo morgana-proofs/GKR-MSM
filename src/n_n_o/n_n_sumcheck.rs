@@ -16,12 +16,15 @@ use ark_std::{One, Zero};
 
 use super::polynomial_with_zeros::{PolynomialWithZeros};
 
+
+#[derive(Debug, Default, Clone)]
 pub struct Splits<F: PrimeField> {
     pub lpolys: Vec<PolynomialWithZeros<F>>,
     pub rpolys: Vec<PolynomialWithZeros<F>>,
 }
 
-pub struct NonNatEqualizer<FNat: PrimeField> {
+#[derive(Debug, Default, Clone)]
+pub struct NonNatOpen<FNat: PrimeField> {
     polys: Vec<PolynomialWithZeros<FNat>>,
     splits: Option<Splits<FNat>>,
     //copolys: Vec<Box<dyn Copolynomial<F> + Send + Sync>>,
@@ -29,36 +32,43 @@ pub struct NonNatEqualizer<FNat: PrimeField> {
     //degree: usize,
 }
 
-impl<FNat: PrimeField> Sumcheckable<FNat> for NonNatEqualizer<FNat>{
+impl<FNat: PrimeField> Sumcheckable<FNat> for NonNatOpen<FNat>{
     fn bind(&mut self, f: &FNat){
-        todo!()
+        self.split();
+        let Splits { mut lpolys, rpolys, .. } = self.splits.take().unwrap();
+
+        lpolys.par_iter_mut().zip(rpolys.par_iter()).map(|(l, r)| {
+            l.bind_from(r, f);
+        }).count();
+        self.polys = lpolys;
     }
 
     fn split(&mut self) {
-        unimplemented!()
+        
+        if self.splits.is_some() {
+            return;
+        }
+        let (lpolys, rpolys): (Vec<PolynomialWithZeros<FNat>>, Vec<PolynomialWithZeros<FNat>>) = self.polys.par_iter().map(|p| p.split()).unzip();
+        self.splits = Some(Splits {
+            lpolys,
+            rpolys,
+        })
     }
     fn unipoly(&mut self) -> UniPoly<FNat>{
-        // self.split();
-        // let Splits { lpolys, rpolys } = self.splits.take().unwrap();
+        self.split();
+        let Splits { lpolys, rpolys } = self.splits.take().unwrap();
 
-        // let poly_diffs = lpolys
-        //     .par_iter()
-        //     .zip(rpolys.par_iter())
-        //     .map(|(l, r)| {let mut r = r.clone(); r -= l; r})
-        //     .collect::<Vec<_>>();
+        let poly_diffs = lpolys
+            .par_iter()
+            .zip(rpolys.par_iter())
+            .map(|(l, r)| {let mut r = r.clone(); r -= l; r})
+           .collect::<Vec<_>>();
 
-        // let copoly_diffs = lcopolys
-        //     .par_iter()
-        //     .zip(rcopolys.par_iter())
-        //     .map(|(l, r)| {let mut r = r.clone(); r -= l; r})
-        //     .collect::<Vec<_>>();
-
-        // let mut poly_extensions = Vec::with_capacity(self.degree);
-
-        // let mut copoly_extensions = Vec::with_capacity(self.degree);
+        
+        // let degree = 1;
+        // let mut poly_extensions = Vec::with_capacity(degree);
 
         // let mut last_poly = &rpolys;
-        // let mut last_copoly = &rcopolys;
 
         // for i in 0..self.degree {
         //     poly_extensions.push(last_poly.clone());
@@ -87,19 +97,19 @@ impl<FNat: PrimeField> Sumcheckable<FNat> for NonNatEqualizer<FNat>{
         //     rcopolys,
         // });
         // UniPoly::from_evals(&results);
-
-        
         todo!();
 
     }
 
     fn final_evals(&self) -> Vec<FNat>{
-        todo!()
+        self.polys.par_iter().map(|poly| poly.evals[0]).collect()
     }
 }
 
 
 mod tests{
+    use std::os::unix::thread;
+
     use super::*;
 
     use ark_bls12_381::Fr;
@@ -107,37 +117,48 @@ mod tests{
     use ark_bls12_381::G1Projective;
     use ark_ff::{MontBackend};
     use ark_std::{test_rng, UniformRand};
-    use ark_std::rand::Rng;
+    use rand::prelude::*;
     use liblasso::poly;
     use liblasso::utils::math::Math;
     use crate::transcript::IndexedProofTranscript;
     use liblasso::utils::test_lib::TestTranscript;
 
     #[test]
-    fn test_polynomial_new(){
+    fn test_nnat_open_split(){
 
-        let mut rng  = test_rng();
-        let num_limbs = 3;
-        let limb_len = roundup_to_pow2( Fq::MODULUS_BIT_SIZE  as usize / num_limbs);
+        let mut rng  = thread_rng();
 
-        let poly_size = 6u64;
-        let log_poly_size = 3u64;
+        let num_vars = 7;
+        let num_polys = 10;
 
-        let poly1: Vec<_> =  (0..poly_size).map(|i| Fq::from(i)).collect();
-        let poly2: Vec<_> =  (0..poly_size).map(|i| Fq::from(i+1)).collect();
-        // let r_bits = big_num_to_bits_F(r);
-        let point: Vec<_> = (0..log_poly_size).map(|i| Fq::from(2*i + 1)).collect();
+        let polys: Vec<PolynomialWithZeros<Fq>> = (0..num_polys)
+                .map(|_| PolynomialWithZeros::rand(&mut rng, thread_rng().gen_range(0..1<<num_vars), num_vars))
+                .collect();
 
-        let p1 = PolynomialWithZeros::new(&poly1);
-        let value1 = p1.evaluate(&point);
-        
-        let p2 = PolynomialWithZeros::new(&poly2);
-        let value2 = p2.evaluate(&point);
+        let point: Vec<_> = (0..num_vars)
+                .map( |_| Fq::rand(&mut rng))
+                .collect();
 
-        assert_eq!(p1.len, poly_size as usize);
-        assert_eq!(p1.log_len, log_poly_size as usize);
-        assert_eq!(value1 +  Fq::from(78), Fq::from(0));
-        assert_eq!(value2 +  Fq::from(78)+  Fq::from(15), Fq::from(1));
+        let mut test_opener = NonNatOpen{
+            polys : polys.clone(),
+            splits : None,
+        };
+
+        let vals: Vec<_> = polys.clone().iter()
+                .map(|p| p.evaluate(&point))
+                .collect();
+
+        (0..num_vars).map(|i| test_opener.bind(&point[i])).count();
+
+        let final_evals = test_opener.final_evals();
+
+        (0..num_polys).map(|i| 
+            {
+                assert_eq!(test_opener.polys[i].evals.len(), 1);
+                assert_eq!(test_opener.polys[i].evals[0], vals[i]);
+                assert_eq!(final_evals[i], vals[i]);
+            })
+            .count();
 
     }
 }

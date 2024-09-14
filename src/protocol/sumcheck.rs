@@ -70,6 +70,10 @@ impl<F: PrimeField> Sumcheckable<F> for FragmentedLincomb<F> {
         }
         let (lpolys, rpolys): (Vec<FragmentedPoly<F>>, Vec<FragmentedPoly<F>>) = self.polys.par_iter().map(|p| p.split()).unzip();
         let (lcopolys, rcopolys): (Vec<CopolyData<F>>, Vec<CopolyData<F>>) = self.copolys.par_iter_mut().map(|p| p.materialize_split()).unzip();
+        if lpolys[0].items_len() != (lcopolys[0].sums.len() + lcopolys[0].values.len()) {
+            println!("asd")
+        }
+        
         self.splits = Some(Splits {
             lpolys,
             rpolys,

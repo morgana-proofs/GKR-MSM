@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
+use std::iter::Once;
 use std::mem::MaybeUninit;
 use std::ops::{Add, AddAssign, Index, IndexMut, Mul, MulAssign, Sub, SubAssign};
 use std::sync::{Arc, OnceLock};
@@ -56,6 +57,7 @@ pub struct Shape {
     pub data_len: usize,
     pub num_consts: usize,
     pub dedup_consts_len: usize,
+    pub split_perm: Arc<OnceLock<Vec<usize>>>,
     pub split: Arc<OnceLock<Shape>>,
 }
 
@@ -83,7 +85,7 @@ impl Shape {
         }
     }
     pub fn empty(num_consts: usize) -> Self {
-        Self { fragments: vec![], data_len: 0, num_consts, dedup_consts_len: 0, split: Arc::default() }
+        Self { fragments: vec![], data_len: 0, num_consts, dedup_consts_len: 0, split: Arc::default(), split_perm: Arc::default()}
     }
     
     /// Derives num_consts automatically.
@@ -277,8 +279,14 @@ impl Shape {
 
 impl Shape {
     pub fn split(&self) -> &Self {
-        self.split.get_or_init(|| {
+        &self.full_split().0
+    }
+
+    pub fn full_split(&self) -> (&Self, &Vec<usize>) {
+        let s = self.split.get_or_init(|| {
+            assert!(self.split_perm.get().is_none());
             let mut l = Self::empty(self.num_consts);
+            assert!(l.split_perm.get().is_none());
             for frag in self.fragments.iter() {
                 let Fragment { mut len, content, mut start, mem_idx} = frag;
                 if start % 2 == 1 {
@@ -333,9 +341,27 @@ impl Shape {
                     };
                 }
             }
+            self.split_perm.set(l.prune_consts()).unwrap();
             l.assert_correct();
-            l  
-        })
+            l
+        });
+
+        (s, self.split_perm.get().unwrap())
+    }
+
+    pub fn prune_consts(&mut self) -> Vec<usize> {
+        let mut hits = HashMap::new();
+        let mut perm = vec![];
+        for frag in &mut self.fragments {
+            if frag.content == Consts {
+                if !hits.contains_key(&frag.mem_idx) {
+                    perm.push(frag.mem_idx);
+                    hits.insert(frag.mem_idx, perm.len() - 1);
+                }
+                frag.mem_idx = *hits.get(&frag.mem_idx).unwrap();
+            }
+        }
+        perm
     }
 }
 
@@ -363,6 +389,14 @@ pub struct FragmentedPoly<F> {
 
 impl<F> FragmentedPoly<F> {
     pub fn new(data: Vec<F>, consts: Vec<F>, shape: Arc<OnceLock<Shape>>) -> Self {
+        for frag in &shape.get().unwrap().fragments {
+            match frag.content {
+                Data => {}
+                Consts => {
+                    assert!(frag.mem_idx < consts.len());
+                }
+            }
+        }
         Self {
             data,
             consts,
@@ -641,16 +675,20 @@ impl<F: Clone> FragmentedPoly<F> {
 
     pub fn split(&self) -> (Self, Self) {
         let source = self.shape.get().unwrap();
-        let target = self.shape.get().unwrap().split();
+        let (target, perm) = self.shape.get().unwrap().full_split();
         let split_shape = self.shape.get().unwrap().split.clone();
         let last_target = target.fragments.last().unwrap();
         let data_size = last_target.mem_idx + match last_target.content {
             Data => last_target.len,
             Consts => 1,
         };
-        let (mut l, mut r) = (Self::new(Vec::with_capacity(data_size), self.consts.clone(), split_shape.clone()), Self::new(Vec::with_capacity(data_size), self.consts.clone(), split_shape));
+        let new_consts = perm.iter().map(|i| self.consts[*i].clone()).collect_vec();
+        let (mut l, mut r) = (
+            Self::new(Vec::with_capacity(data_size), new_consts.clone(), split_shape.clone()),
+            Self::new(Vec::with_capacity(data_size), new_consts, split_shape),
+        );
 
-        let (li, ri) = self.data.iter().cloned().tee();
+        // let (li, ri) = self.data.iter().cloned().tee();
 
         // l.data.extend(li.step_by(2));
         // r.data.extend(ri.skip(1).step_by(2));
@@ -803,6 +841,7 @@ impl<T: PrimeField> InterOp<DensePolynomial<T>> for FragmentedPoly<T> {
             num_consts: 0,
             dedup_consts_len: 0,
             split: Arc::new(Default::default()),
+            split_perm: Arc::new(Default::default()),
         };
         s.get_or_init(|| shape);
         FragmentedPoly {
@@ -859,7 +898,7 @@ mod tests {
             let shape_cell = Arc::new(OnceLock::new());
             let shape = Shape::rand_by_frag_spec(rng, 10, 10, 1);
             shape_cell.set(shape.clone()).unwrap();
-            let split = shape.split();
+            let split = shape.full_split();
             let p = FragmentedPoly::new(
                 (0..shape.data_len).map(|_| Fr::from(rng.next_u64())).collect_vec(),
                 (0..shape.num_consts).map(|_| Fr::from(rng.next_u64())).collect_vec(),
@@ -885,7 +924,7 @@ mod tests {
             let shape_cell = Arc::new(OnceLock::new());
             let shape = Shape::rand_by_frag_spec(rng, 10, 10, 1);
             shape_cell.set(shape.clone()).unwrap();
-            let split = shape.split();
+            let split = shape.full_split();
             let p = FragmentedPoly::new(
                 (0..shape.data_len).map(|_| rng.next_u64() % 10).collect_vec(),
                 (0..shape.num_consts).map(|_| rng.next_u64() % 10).collect_vec(),
@@ -979,7 +1018,8 @@ mod tests {
         let shape = Shape::new(s, 2);
         let shape_cell = Arc::new(OnceLock::new());
         shape_cell.set(shape.clone()).unwrap();
-        let split = shape.split();
+        let (split, perm) = shape.full_split();
+        assert_eq!(perm, &vec![0]);
         let p = FragmentedPoly::new(d, c, shape_cell);
         assert_eq!(v, p.clone().into_vec());
         let el = v.iter().cloned().step_by(2).collect_vec();
@@ -1037,7 +1077,7 @@ mod tests {
         ],
         4
         );
-        let l = s.split();
+        let (l, perm) = s.full_split();
         let el =  Shape::new(vec![
             Fragment {
                 mem_idx: 0,
@@ -1058,7 +1098,7 @@ mod tests {
                 start: 4,
             },
             Fragment {
-                mem_idx: 2,
+                mem_idx: 1,
                 len: 2,
                 content: Consts,
                 start: 8,
@@ -1070,13 +1110,14 @@ mod tests {
                 start: 10,
             },
             Fragment {
-                mem_idx: 3,
+                mem_idx: 2,
                 len: 2,
                 content: Consts,
                 start: 14,
             },
         ],
         4);
+        assert_eq!(perm, &vec![0, 2, 3]);
         assert_eq!(l, &el);
         let ll = l.split();
         let ell =  Shape::new(vec![

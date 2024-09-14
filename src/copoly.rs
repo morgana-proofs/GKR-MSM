@@ -449,7 +449,8 @@ impl<F: PrimeField> EqPoly<F> {
             fragments,
             data_len,
             num_consts,
-            split: _ ,
+            split: _,
+            split_perm: _,
             dedup_consts_len,
         } = shape;
 
@@ -536,7 +537,7 @@ impl<F: PrimeField> Copolynomial<F> for EqPoly<F> {
         let p0 = self.point.pop().unwrap();
         self.multiplier *= p0 * value + (F::one() - p0) * (F::one() - value);
         if self.shape.is_some() {
-            let _ = self.shape.as_ref().unwrap().get().unwrap().split();
+            let _ = self.shape.as_ref().unwrap().get().unwrap().full_split();
             self.shape = Some(self.shape.as_ref().unwrap().get().unwrap().split.clone());
         };
     }

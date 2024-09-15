@@ -14,31 +14,31 @@ use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRef
 use crate::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows, map_over_poly_legacy}};
 use crate::copoly::{CopolyData, Copolynomial, EqPoly};
 use crate::polynomial::fragmented::{FragmentedPoly, InterOp};
+use crate::polynomial::vecvec::VecVecPolynomial;
 use crate::utils::{fix_var_bot};
 
 use super::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier};
 
-// Impls
-
-// Fragmented
 
 pub struct SumcheckPolyMap<F: PrimeField> {
     phantom_data: PhantomData<F>
 }
 
-pub struct Splits<F: PrimeField> {
-    pub lpolys: Vec<FragmentedPoly<F>>,
-    pub rpolys: Vec<FragmentedPoly<F>>,
-    pub lcopolys: Vec<CopolyData<F>>,
-    pub rcopolys: Vec<CopolyData<F>>,
-}
+// pub struct Splits<F, const N_POLYS: usize> {
+//     pub lpolys: Vec<SplitVecVecPolynomial<F, N_POLYS>>,
+//     pub rpolys: Vec<SplitVecVecPolynomial<F, N_POLYS>>,
+//     pub lcopolys: Vec<CopolyData<F>>,
+//     pub rcopolys: Vec<CopolyData<F>>,
+// }
 
-pub struct FragmentedLincomb<F: PrimeField> {
-    polys: Vec<FragmentedPoly<F>>,
-    splits: Option<Splits<F>>,
-    copolys: Vec<Box<dyn Copolynomial<F> + Send + Sync>>,
-    folded_f: Option<Arc<dyn Fn(&[F]) -> F + Sync + Send>>,
+pub struct Lincomb<F: PrimeField, const N_POLYS: usize, const N_OUT: usize> {
+    polys: VecVecPolynomial<F, N_POLYS>,
+    copolys: Vec<EqPoly<F>>,
+    func: Arc<dyn Fn(&[F; N_POLYS]) -> [F; N_OUT] + Sync + Send>,
+    num_ins: usize,
+    num_out: usize,
     degree: usize,
+    gamma_pows: [F; N_OUT]
 }
 
 pub struct SumcheckPolyMapProver<F: PrimeField> {
@@ -54,104 +54,149 @@ pub struct SumcheckPolyMapProver<F: PrimeField> {
 
 pub(crate) trait Sumcheckable<F: PrimeField> {
     fn bind(&mut self, f: &F);
-
     fn split(&mut self) {
         unimplemented!()
     }
     fn unipoly(&mut self) -> UniPoly<F>;
-
     fn final_evals(&self) -> Vec<F>;
 }
 
-impl<F: PrimeField> Sumcheckable<F> for FragmentedLincomb<F> {
-    fn split(&mut self) {
-        if self.splits.is_some() {
-            return;
-        }
-        let (lpolys, rpolys): (Vec<FragmentedPoly<F>>, Vec<FragmentedPoly<F>>) = self.polys.par_iter().map(|p| p.split()).unzip();
-        let (lcopolys, rcopolys): (Vec<CopolyData<F>>, Vec<CopolyData<F>>) = self.copolys.par_iter_mut().map(|p| p.materialize_split()).unzip();
-        if lpolys[0].items_len() != (lcopolys[0].sums.len() + lcopolys[0].values.len()) {
-            println!("asd")
-        }
-        
-        self.splits = Some(Splits {
-            lpolys,
-            rpolys,
-            lcopolys,
-            rcopolys,
-        })
-    }
+impl<F: PrimeField, const N_POLYS: usize, const N_OUT: usize> Sumcheckable<F> for Lincomb<F, N_POLYS, N_OUT> {
+    // fn split(&mut self) {
+    //     if self.splits.is_some() {
+    //         return;
+    //     }
+    //     let (lpolys, rpolys): (Vec<FragmentedPoly<F>>, Vec<FragmentedPoly<F>>) = self.polys.par_iter().map(|p| p.split()).unzip();
+    //     let (lcopolys, rcopolys): (Vec<CopolyData<F>>, Vec<CopolyData<F>>) = self.copolys.par_iter_mut().map(|p| p.materialize_split()).unzip();
+    //     if lpolys[0].items_len() != (lcopolys[0].sums.len() + lcopolys[0].values.len()) {
+    //         println!("asd")
+    //     }
+    //
+    //     self.splits = Some(Splits {
+    //         lpolys,
+    //         rpolys,
+    //         lcopolys,
+    //         rcopolys,
+    //     })
+    // }
 
     fn bind(&mut self, f: &F) {
-        self.split();
-        let Splits { mut lpolys, rpolys, .. } = self.splits.take().unwrap();
+        self.polys.bind_21(f);
 
-        lpolys.par_iter_mut().zip(rpolys.par_iter()).map(|(l, r)| {
-            l.bind_from(r, f);
-        }).count();
-        self.polys = lpolys;
-
-        self.copolys.par_iter_mut().map(|copoly| {
-            copoly.bind(f);
-        }).count();
+        // self.copolys.par_iter_mut().map(|copoly| {
+        //     copoly.bind(f);
+        // }).count();
     }
 
     fn unipoly(&mut self) -> UniPoly<F> {
-        self.split();
-        let Splits { lpolys, rpolys, lcopolys, rcopolys } = self.splits.take().unwrap();
+        // self.split();
+        // let Splits { lpolys, rpolys, lcopolys, rcopolys } = self.splits.take().unwrap();
 
-        let poly_diffs = lpolys
-            .par_iter()
-            .zip(rpolys.par_iter())
-            .map(|(l, r)| {let mut r = r.clone(); r -= l; r})
-            .collect::<Vec<_>>();
+        self.polys.make_21();
 
-        let copoly_diffs = lcopolys
-            .par_iter()
-            .zip(rcopolys.par_iter())
-            .map(|(l, r)| {let mut r = r.clone(); r -= l; r})
-            .collect::<Vec<_>>();
-
-        let mut poly_extensions = Vec::with_capacity(self.degree);
-
-        let mut copoly_extensions = Vec::with_capacity(self.degree);
-
-        let mut last_poly = &rpolys;
-        let mut last_copoly = &rcopolys;
-
-        for i in 0..self.degree {
-            poly_extensions.push(last_poly.clone());
-            poly_extensions[i].par_iter_mut().zip(poly_diffs.par_iter()).map(|(p, d)| p.add_assign(d)).count();
-            last_poly = poly_extensions.last().unwrap();
-
-            copoly_extensions.push(last_copoly.clone());
-            copoly_extensions[i].par_iter_mut().zip(copoly_diffs.par_iter()).map(|(p, d)| p.add_assign(d)).count();
-            last_copoly = copoly_extensions.last().unwrap();
+        let mut sum2 = [F::zero(); N_OUT];
+        let mut sum1 = [F::zero(); N_OUT];
+        for row in &self.polys.data {
+            let mut sum_local2 = [F::zero(); N_OUT];
+            let mut sum_local1 = [F::zero(); N_OUT];
+            let eq = F::zero();
+            for chunk in row.chunks(N_POLYS * 2) {
+                let addition2 = (self.func)(&chunk[0..N_POLYS].try_into().unwrap());
+                let addition1 = (self.func)(&chunk[N_POLYS..(N_POLYS * 2)].try_into().unwrap());
+                for i in 0..N_OUT {
+                    sum_local2[i] += addition2[i] * eq;
+                    sum_local1[N_OUT + i] += addition1[i] * eq;
+                }
+            }
+            for i in 0..(N_OUT * 2) {
+                sum2[i] += sum_local2[i];
+                sum1[i] += sum_local1[i];
+            }
         }
 
-        let folded = self.folded_f.as_ref().unwrap().clone();
-        let poly_ext_iter = once(&lpolys).chain(once(&rpolys)).chain(poly_extensions.par_iter());
-        let copoly_ext_iter = once(&lcopolys).chain(once(&rcopolys)).chain(copoly_extensions.par_iter());
-        let results = poly_ext_iter.zip(copoly_ext_iter).map(|(polys, eqpolys)| {
-            let tmp = (0..polys[0].items_len()).into_par_iter()
-                .map(|i| {
-                    folded(&polys.iter().map(|p| p[i]).chain(eqpolys.iter().map(|ep| ep[i])).collect_vec())
-                })
-                .collect::<Vec<_>>();
-            tmp.par_iter().sum()
-        }).collect::<Vec<F>>();
+        let mut total2 = sum2[0];
+        let mut total1 = sum1[0];
+        for i in 1..N_OUT {
+            total2 += sum2[i] * self.gamma_pows[i];
+            total1 += sum1[i] * self.gamma_pows[i];
+        }
 
-        self.splits = Some(Splits {
-            lpolys,
-            rpolys,
-            lcopolys,
-            rcopolys,
-        });
-        UniPoly::from_evals(&results)
+        // let (lpolys, rpolys): (Vec<SplitVecVecPolynomial<F, N_POLYS>>, Vec<SplitVecVecPolynomial<F, N_POLYS>>) = self.polys.iter().map(|p| p.split()).unzip();
+
+        // let poly_diffs = lpolys
+        //     .par_iter()
+        //     .zip(rpolys.par_iter())
+        //     .map(|(l, r)| {r - l})
+        //     .collect::<Vec<_>>();
+
+        // let mut args = Vec::with_capacity(self.num_ins);
+        //
+        // for poly_idx in 0..self.polys.len() {
+        //     for idx in 0..(self.polys[0].num_vars() / 2) {
+        //         for p in 0..self.degree + 2 {
+        //             // args.push(self.polys[poly_idx][idx] as F + (self.polys[poly_idx][idx * 2] as F - self.polys[poly_idx][idx * 2 + 1] as F) * p;
+        //         }
+        //
+        //         // same with copolys
+        //
+        //         // do some shit with
+        //         // (self.folded_f.unwrap())(&args);
+        //
+        //         // args.truncate(0);
+        //     }
+        // }
+        //
+        // let copoly_diffs = lcopolys
+        //     .par_iter()
+        //     .zip(rcopolys.par_iter())
+        //     .map(|(l, r)| {let mut r = r.clone(); r -= l; r})
+        //     .collect::<Vec<_>>();
+        //
+        // let mut poly_extensions = Vec::with_capacity(self.degree);
+        //
+        // let mut copoly_extensions = Vec::with_capacity(self.degree);
+        //
+        // let mut last_poly = &rpolys;
+        // let mut last_copoly = &rcopolys;
+        //
+        // for i in 0..self.degree {
+        //     poly_extensions.push(last_poly.clone());
+        //     poly_extensions[i].par_iter_mut().zip(poly_diffs.par_iter()).map(|(p, d)| p.add_assign(d)).count();
+        //     last_poly = poly_extensions.last().unwrap();
+        //
+        //     copoly_extensions.push(last_copoly.clone());
+        //     copoly_extensions[i].par_iter_mut().zip(copoly_diffs.par_iter()).map(|(p, d)| p.add_assign(d)).count();
+        //     last_copoly = copoly_extensions.last().unwrap();
+        // }
+        //
+        // let folded = self.folded_f.as_ref().unwrap().clone();
+        // let poly_ext_iter = once(&lpolys).chain(once(&rpolys)).chain(poly_extensions.par_iter());
+        // let copoly_ext_iter = once(&lcopolys).chain(once(&rcopolys)).chain(copoly_extensions.par_iter());
+
+        // (polys(0), copolys(0)), (polys(1), copolys(1)), (polys(2), copolys(2))...
+        
+        // // for each point P
+        // let results = poly_ext_iter.zip(copoly_ext_iter).map(|(polys, eqpolys)| {
+        // // for each value V in polynomial
+        //     let tmp = (0..polys[0].items_len()).into_par_iter().map(|i| {
+        // // f(poly_1[V] @ P, poly_2[V] @ P ....) 
+        //         folded(&polys.iter().map(|p| p[i]).chain(eqpolys.iter().map(|ep| ep[i])).collect_vec())
+        //     }).collect::<Vec<_>>();
+        //     tmp.par_iter().sum()
+        // }).collect::<Vec<F>>();
+
+        // self.splits = Some(Splits {
+        //     lpolys,
+        //     rpolys,
+        //     lcopolys,
+        //     rcopolys,
+        // });
+        UniPoly::from_evals(&[])
     }
 
     fn final_evals(&self) -> Vec<F> {
-        self.polys.par_iter().map(|poly| poly[0]).collect()
+        // self.polys.par_iter().map(|poly| poly[0]).collect()
+        vec![]
     }
 }
 
@@ -201,19 +246,19 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
                 let gamma_pows = make_gamma_pows(&self.claims, gamma);
 
 
-                let polys = self.polys.take().unwrap();
-                let shape = polys[0].shape.clone();
-                self.sumcheckable = Some(Box::new(FragmentedLincomb {
-                    polys,
-                    copolys: self.claims.points.par_iter().map(|r| {
-                        let mut eq = EqPoly::new(r.clone());
-                        eq.take_shape(shape.clone());
-                        Box::new(eq) as Box<dyn Copolynomial<F> + Send + Sync>
-                    }).collect(),
-                    splits: None,
-                    folded_f: Some(make_folded_f(&self.claims, &gamma_pows, &self.mapping)),
-                    degree: self.mapping.degree,
-                }));
+                // let polys = self.polys.take().unwrap();
+                // let shape = polys[0].shape.clone();
+                // self.sumcheckable = Some(Box::new(Lincomb {
+                //     polys,
+                //     copolys: self.claims.points.par_iter().map(|r| {
+                //         let mut eq = EqPoly::new(r.clone());
+                //         eq.take_shape(shape.clone());
+                //         Box::new(eq) as Box<dyn Copolynomial<F> + Send + Sync>
+                //     }).collect(),
+                //     // splits: None,
+                //     folded_f: Some(make_folded_f(&self.claims, &gamma_pows, &self.mapping)),
+                //     degree: self.mapping.degree,
+                // }));
             }
             Some(s) => {
                 let r_j = challenge.value;
@@ -221,7 +266,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
                 s.bind(&r_j);
             }
         }
-        
+
         match &mut self.sumcheckable {
             None => {}
             Some(s) => {
@@ -370,8 +415,8 @@ impl<F: PrimeField> ProtocolProver<F> for LameSumcheckPolyMapProver<F> {
     }
 
     fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
-        ->
-    Option<(Self::ClaimsNew, Self::Proof)> {
+                                       ->
+                                       Option<(Self::ClaimsNew, Self::Proof)> {
         #[cfg(feature = "prof")]
         prof!("SumcheckPolyMapProver::round");
 
@@ -494,16 +539,16 @@ impl<F: PrimeField> ProtocolProver<F> for LameSumcheckPolyMapProver<F> {
             .par_iter_mut()
             .enumerate()
             .for_each(|(poly_i, eval_point)| {
-            *eval_point = accum
-                .par_iter()
-                .map(|mle| mle[poly_i])
-                .sum::<F>();
+                *eval_point = accum
+                    .par_iter()
+                    .map(|mle| mle[poly_i])
+                    .sum::<F>();
             });
 
         #[cfg(not(feature = "multicore"))]
         for (poly_i, eval_point) in eval_points.iter_mut().enumerate() {
             for mle in accum.iter().take(mle_half) {
-            *eval_point += mle[poly_i];
+                *eval_point += mle[poly_i];
             }
         }
 
@@ -593,8 +638,8 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
     }
 
     fn round<T: TranscriptReceiver<F>>(&mut self, challenge: Challenge<F>, transcript: &mut T)
-        ->
-    Option<Self::ClaimsNew> {
+                                       ->
+                                       Option<Self::ClaimsNew> {
 
         let Self {current_sum, f, f_folded, num_vars, claims_to_reduce, proof, rs, current_poly} = self;
 
@@ -672,7 +717,7 @@ fn make_folded_claim<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F]
 }
 
 fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f: &PolynomialMapping<F>)
-        -> Arc<dyn Fn(&[F]) -> F + Send + Sync>
+                                -> Arc<dyn Fn(&[F]) -> F + Send + Sync>
 {
     let claims = claims.clone();
     let gamma_pows = gamma_pows.to_vec();
@@ -1047,7 +1092,7 @@ mod test {
             points: vec![point],
             evs: vec![claims.clone()],
         };
-        
+
         let mut prover = SumcheckPolyMapProver::start(
             multiclaim.clone(),
             trace,

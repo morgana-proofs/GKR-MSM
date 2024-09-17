@@ -16,7 +16,7 @@ use ark_std::{One, Zero};
 
 use super::polynomial_with_zeros::{PolynomialWithZeros};
 
-
+  
 #[derive(Debug, Default, Clone)]
 pub struct Splits<F: PrimeField> {
     pub lpolys: Vec<PolynomialWithZeros<F>>,
@@ -27,9 +27,36 @@ pub struct Splits<F: PrimeField> {
 pub struct NonNatOpen<FNat: PrimeField> {
     polys: Vec<PolynomialWithZeros<FNat>>,
     splits: Option<Splits<FNat>>,
+    gamma: Option<FNat>,
+    challenges: Vec<FNat>,
+    round_polys : Vec<UniPoly<FNat>> 
+
     //copolys: Vec<Box<dyn Copolynomial<F> + Send + Sync>>,
     //folded_f: Option<Arc<dyn Fn(&[F]) -> F + Sync + Send>>,
     //degree: usize,
+}
+
+impl<FNat : PrimeField> NonNatOpen<FNat>{
+    fn new_from_polys(polys : &[PolynomialWithZeros<FNat>]) -> Self{
+        NonNatOpen{
+            polys : polys.into(),
+            splits : None,
+            gamma : None,
+            challenges : vec![],
+            round_polys : vec![],
+        }
+    }
+
+    fn new_from_evals(evals : &[&[FNat]]) -> Self{
+        let polys = evals.iter().map(|&eval_vec| PolynomialWithZeros::new(eval_vec)).collect();
+        NonNatOpen{
+            polys : polys.into(),
+            splits : None,
+            gamma : None,
+            challenges : vec![],
+            round_polys : vec![],
+        }
+    }
 }
 
 impl<FNat: PrimeField> Sumcheckable<FNat> for NonNatOpen<FNat>{
@@ -58,11 +85,20 @@ impl<FNat: PrimeField> Sumcheckable<FNat> for NonNatOpen<FNat>{
         self.split();
         let Splits { lpolys, rpolys } = self.splits.take().unwrap();
 
-        let poly_diffs = lpolys
-            .par_iter()
-            .zip(rpolys.par_iter())
-            .map(|(l, r)| {let mut r = r.clone(); r -= l; r})
-           .collect::<Vec<_>>();
+        let lsum: Vec<_> = lpolys.iter().map(|p| p.sum()).collect();
+        let rsum: Vec<_> = rpolys.iter().map(|p| p.sum()).collect();
+
+        // if lpolys.len() == 1{
+        //     let coeffs = ()
+        // }
+
+
+
+        // let poly_diffs = lpolys
+        //     .par_iter()
+        //     .zip(rpolys.par_iter())
+        //     .map(|(l, r)| {let mut r = r.clone(); r -= l; r})
+        //    .collect::<Vec<_>>();
 
         
         // let degree = 1;
@@ -139,10 +175,7 @@ mod tests{
                 .map( |_| Fq::rand(&mut rng))
                 .collect();
 
-        let mut test_opener = NonNatOpen{
-            polys : polys.clone(),
-            splits : None,
-        };
+        let mut test_opener = NonNatOpen::new_from_polys(&polys);
 
         let vals: Vec<_> = polys.clone().iter()
                 .map(|p| p.evaluate(&point))

@@ -101,6 +101,13 @@ impl <F: Sub<Output = F> + Add + AddAssign + Mul + One + Zero + Send + Sync + Si
         l
     }
 
+    
+    // sums all evals
+    pub fn sum(&self) -> F {
+        self.evals.iter().fold(F::zero(),|acc, &x| acc + x)
+    }
+
+
     // for testing
     pub fn evaluate(&self, r: &[F]) -> F
     {
@@ -257,7 +264,7 @@ mod tests{
 
     
     #[test]
-    fn test_polynomial_split(){
+    fn test_polynomial_split_and_bind(){
 
         let mut rng  = test_rng();
         let num_limbs = 3;
@@ -291,13 +298,37 @@ mod tests{
 
         
         assert_eq!( bind_1.clone() + bind_2.clone(), sum_bind);
+    }
+
+    
+    #[test]
+    fn test_polynomial_sum_evals(){
+
+        let mut rng  = test_rng();
+        let num_limbs = 3;
+        let limb_len = roundup_to_pow2( Fq::MODULUS_BIT_SIZE  as usize / num_limbs);
+
+        let poly_size = 6u64;
+        let log_poly_size = 3u64;
+
+        let poly1: Vec<_> =  (0..poly_size).map(|i| Fq::from(i)).collect();
+        let poly2: Vec<_> =  (0..poly_size + 1).map(|i| Fq::from(i+1)).collect();
+        
+        let p1 = PolynomialWithZeros::new(&poly1);
+        let p2 = PolynomialWithZeros::new(&poly2);
+
+        let sum_p_1 = p1.sum();
+        let sum_p_2 = p2.sum();
+
+        let expected_sum_1 = Fq::from(poly_size*(poly_size - 1)/2);
+        let expected_sum_2 = Fq::from((poly_size+2)*(poly_size + 1)/2);
 
 
-        // assert_eq!(p1.len, poly_size as usize);
-        // assert_eq!(p1.log_len, log_poly_size as usize);
-        // assert_eq!(value1 +  Fq::from(78), Fq::from(0));
-        // assert_eq!(value2 +  Fq::from(78)+  Fq::from(15), Fq::from(1));
-
+        println!("sum_p = {:?}, diff_p = {:?}\n", sum_p_1, sum_p_2);
+    
+        
+        assert_eq!( sum_p_1, expected_sum_1, "first sum failed");
+        assert_eq!( sum_p_2, expected_sum_2, "second sum failed");
     }
 }
 

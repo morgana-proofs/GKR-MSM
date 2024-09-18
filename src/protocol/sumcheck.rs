@@ -140,8 +140,7 @@ impl<F: PrimeField> Sumcheckable<F> for FragmentedLincomb<F> {
                 .collect::<Vec<_>>();
             tmp.par_iter().sum()
         }).collect::<Vec<F>>();
-        println!("\nresults.len = {}\n", results.len());
-
+        
         self.splits = Some(Splits {
             lpolys,
             rpolys,

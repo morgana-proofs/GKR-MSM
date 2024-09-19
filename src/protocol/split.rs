@@ -164,7 +164,6 @@ mod tests {
 
         let mut prover = SplitProver::start(claims_to_reduce, trace, &());
 
-
         let (evs, _) = (&mut prover).round(c, p_transcript).unwrap();
 
         assert_eq!(evs.point, expected_point);
@@ -180,7 +179,5 @@ mod tests {
         assert_eq!(v_point, evs.point);
         assert_eq!(v_evals, evs.evs);
         (*v_transcript).transcript.assert_end();
-
-
     }
 }

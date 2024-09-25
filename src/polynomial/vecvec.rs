@@ -1,13 +1,147 @@
 use std::cmp::min;
 use std::fmt::{Debug, Formatter, Write};
+use std::intrinsics::transmute;
 use std::iter::repeat;
-use std::ops::{Add, AddAssign, Mul, Sub, SubAssign};
+use std::mem::MaybeUninit;
+use std::ops::{Add, AddAssign, Mul, Range, Sub, SubAssign};
 use std::process::Output;
+use std::slice::from_ref;
 use std::sync::Arc;
 use ark_ff::{Field, PrimeField};
+use ark_std::iterable::Iterable;
 use ark_std::rand::{Rng, RngCore};
 use itertools::{repeat_n, Either, Itertools};
+use liblasso::utils::math::Math;
 use rayon::prelude::*;
+use crate::copoly::materialize_eq_slice;
+
+use hashcaster::ptr_utils::UninitArr;
+use crate::utils::{eq_poly_sequence, eq_poly_sequence_from_multiplier, eq_poly_sequence_last};
+
+pub struct EQPolyPointParts {
+    pub padded_vars_idx: usize,
+    pub segment_vars_idx: usize,
+    pub binding_var_idx: usize
+}
+
+impl EQPolyPointParts {
+    fn new<F>(point: &[F], col_logsize: usize, max_segment_logsize: usize) -> Self {
+        let padded_vars_idx = col_logsize;
+        let segment_vars_idx = point.len() - max_segment_logsize;
+        let binding_var_idx = point.len() - 1;
+
+        Self {
+            padded_vars_idx,
+            segment_vars_idx,
+            binding_var_idx,
+        }
+    }
+
+    fn bind(&mut self) {
+        self.binding_var_idx -= 1
+    }
+
+    fn vertical_vars_range(&self) -> Range<usize> {
+        0..self.padded_vars_idx
+    }
+
+    fn padded_vars_range(&self) -> Range<usize> {
+        self.padded_vars_idx..self.segment_vars_idx.min(self.binding_var_idx)
+    }
+
+    fn segment_vars_range(&self) -> Range<usize> {
+        self.segment_vars_idx..self.segment_vars_idx.max(self.binding_var_idx)
+    }
+}
+
+pub struct EQPolyData<F> {
+    // Some point parts accounting
+    pub point_parts: EQPolyPointParts,
+    pub point: Vec<F>,
+    // Bound variables multiplier
+    pub multiplier: F,
+    // Coefficients for each row of matrix (corresponding to the most significant variables)
+    pub row_eq_coefs: Vec<F>,
+    // Evals in 0-point of EQ poly already bounded by some
+    pub pad_multipliers: Vec<F>,
+    // EQ polys materialized for the longest segment in each fold
+    pub row_eq_poly_seq: Vec<Vec<F>>,
+    // EQ polys prefix sums to multiply
+    pub row_eq_poly_prefix_seq: Vec<Vec<F>>,
+    // how many vars are already bound
+    pub already_bound_vars: usize,
+}
+
+impl<F: PrimeField> EQPolyData<F> {
+    fn new(point: &[F], col_logsize: usize, max_row_len: usize) -> Self {
+        let max_segment_logsize = 1 << max_row_len.log_2();
+
+        // variable parts
+        let point_parts = EQPolyPointParts::new(point, col_logsize, max_segment_logsize);
+        let point = point.to_vec();
+
+        // this use-case can probably be optimised
+        let row_eq_coefs = eq_poly_sequence_last(&point[point_parts.vertical_vars_range()]).unwrap();
+
+        let mut pad_multipliers = point[point_parts.padded_vars_range()].to_vec();
+        let total_multiplier = pad_multipliers.iter_mut().fold(F::one(), |mut acc, val| {
+            acc *= F::one() - *val;
+            *val = acc;
+            acc
+        });
+
+        let row_eq_poly_seq = eq_poly_sequence_from_multiplier(total_multiplier, &point[point_parts.segment_vars_range()]);
+
+        let mut row_eq_poly_prefix_seq = Vec::with_capacity(row_eq_poly_seq.len());
+        for v in &row_eq_poly_seq {
+            let mut acc = Vec::with_capacity(v.len());
+            acc.push(v[0]);
+            for idx in 1..v.len() {
+                acc[idx] = acc[idx - 1] + v[idx];
+            }
+            row_eq_poly_prefix_seq.push(acc);
+        }
+
+        Self {
+            point_parts,
+            point,
+            multiplier: F::one(),
+            row_eq_coefs,
+            row_eq_poly_seq,
+            row_eq_poly_prefix_seq,
+            already_bound_vars: 0,
+            pad_multipliers,
+        }
+    }
+
+    pub fn bind(&mut self, t: & F) {
+        self.multiplier *= F::one() - self.point[self.point_parts.binding_var_idx] - t + (self.point[self.point_parts.binding_var_idx] * t).double();
+
+        self.already_bound_vars += 1;
+    }
+
+    pub fn get_segment_evals(&self, segment_len: usize) -> &[F] {
+        if self.already_bound_vars < self.row_eq_poly_seq.len() {
+            &self.row_eq_poly_seq[self.row_eq_poly_seq.len() - 1 - self.already_bound_vars][0..segment_len]
+        } else {
+            // additional -1 is because of duplication of last pad_multiplier as first in row_eq_poly_seq
+            from_ref(&self.pad_multipliers[self.pad_multipliers.len() - 1 - 1 - (self.already_bound_vars - self.row_eq_poly_seq.len())])
+        }
+    }
+
+    pub fn get_segment_sum(&self, segment_len: usize) -> &F {
+        if self.already_bound_vars < self.row_eq_poly_seq.len() {
+            &self.row_eq_poly_prefix_seq[self.row_eq_poly_prefix_seq.len() - 1 - self.already_bound_vars][segment_len]
+        } else {
+            // additional -1 is because of duplication of last pad_multiplier as first in row_eq_poly_seq
+            &self.pad_multipliers[self.pad_multipliers.len() - 1 - 1 - (self.already_bound_vars - self.row_eq_poly_seq.len())]
+        }
+    }
+
+    pub fn get_trailing_sum(&self, segment_len: usize) -> F {
+        F::one() - self.get_segment_sum(segment_len)
+    }
+}
 
 pub struct VecVecPolynomial<F, const N_POLYS: usize> {
     pub data: Vec<Vec<F>>,  // Actually Vec<Vec<[F; N_POLYS]>>
@@ -54,6 +188,15 @@ impl<F: Clone, const N_POLYS: usize> VecVecPolynomial<F, N_POLYS> {
 
         Self {data, row_pad, col_pad, row_logsize, col_logsize }
     }
+
+    pub fn max_segment_len(&self) -> usize {
+        self.data.iter().map(|p| p.len()).max().unwrap_or(0)
+    }
+
+    pub fn min_segment_len(&self) -> usize {
+        self.data.iter().map(|p| p.len()).min().unwrap_or(0)
+    }
+
     pub fn new_unchecked(data: Vec<Vec<F>>, row_pad: [F; N_POLYS], col_pad: F, inner_exp: usize, total_exp: usize) -> Self {
         Self {data, row_pad, col_pad, row_logsize: inner_exp, col_logsize: total_exp }
     }

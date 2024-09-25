@@ -14,6 +14,8 @@ ark-bls12-381 = { version = "^0.4.0", default-features = false, features = [ "cu
 
 liblasso = { git = "https://github.com/rebenkoy/liblasso.git", branch = "master", features = ["default", "multicore"]}
 #liblasso = { path = "./../liblasso", features = ["default", "multicore"]}
+hashcaster = { git = "https://github.com/morgana-proofs/hashcaster.git" }
+bytemuck = "1.18.0"
 
 ark-ed-on-bls12-381-bandersnatch = "0.4.0"
 rayon = "1.10.0"

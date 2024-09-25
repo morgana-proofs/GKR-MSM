@@ -1,10 +1,13 @@
 use std::marker::PhantomData;
+use std::num::Mul;
+use std::ops::{Add, Mul};
 use std::ptr::read;
 
 use ark_bls12_381::Fr;
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
+use hashcaster::ptr_utils::{AsSharedMUMutPtr, UninitArr, UnsafeIndexRawMut};
 use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]
@@ -127,6 +130,53 @@ pub fn fix_var_bot<F>(vec: &mut Vec<F>, v: F) {
 
 pub fn random_point<F: UniformRand>(gen: &mut impl Rng, num_vars: usize) -> Vec<F> {
     (0..num_vars).map(|_| F::rand(gen)).collect_vec()
+}
+
+#[cfg(feature = "parallel")]
+pub trait CfgParallel: Send + Sync {}
+#[cfg(not(feature = "parallel"))]
+pub trait CfgParallel {}
+#[cfg(feature = "parallel")]
+impl<F: Send + Sync> CfgParallel for F {}
+#[cfg(not(feature = "parallel"))]
+impl<F> CfgParallel for F {}
+
+pub fn eq_poly_sequence_from_multiplier<F: CfgParallel + Mul<Output=F> + Add<Output=F> + Clone + Copy>(multiplier: F, pt: &[F]) -> Vec<Vec<F>> {
+    let l = pt.len();
+    let mut ret = Vec::with_capacity(l + 1);
+    ret.push(vec![multiplier]);
+
+    for i in 1..=l {
+        let last = &ret[i - 1];
+        let multiplier = &pt[i - 1];
+        let mut incoming = UninitArr::<F>::new(1 << i);
+        unsafe {
+            let ptr = incoming.as_shared_mut_ptr();
+            #[cfg(not(feature = "parallel"))]
+            let iter = (0 .. (1 << (i-1))).into_iter();
+
+            #[cfg(feature = "parallel")]
+            let iter = (0 .. 1 << (i-1)).into_par_iter();
+
+            iter.map(|j|{
+                let w = &last[j];
+                let m = multiplier.clone() * w.clone();
+                *ptr.get_mut(2*j) = w.clone() + m.clone();
+                *ptr.get_mut(2*j + 1) = m;
+            }).count();
+            ret.push(incoming.assume_init());
+        }
+    }
+
+    ret
+}
+
+pub fn eq_poly_sequence<F: Field>(pt: &[F]) -> Vec<Vec<F>> {
+    eq_poly_sequence_from_multiplier(F::one(), pt)
+}
+
+pub fn eq_poly_sequence_last<F: Field>(pt: &[F]) -> Option<Vec<F>> {
+    eq_poly_sequence(pt).pop()
 }
 
 #[cfg(feature = "memprof")]

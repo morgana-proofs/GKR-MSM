@@ -72,82 +72,82 @@ fn prepare_inputs<F: PrimeField>(){
 }
 
 
-pub fn run_nn_opening<F: PrimeField, T>(
-    num_vars: usize,
-    polys: Vec<FragmentedPoly<F>>,
-    exec: Arc<dyn Fn(&[F]) -> Vec<F> + Send + Sync>,
-    degree: usize,
-    num_i: usize,
-    num_o: usize,
-    point: Vec<F>,
-    p_transcript: &mut T,
-    v_transcript: &mut T,
-)
-where T:  TranscriptReceiver<F> + TranscriptSender<F>,
-{
+// pub fn run_nn_opening<F: PrimeField, T>(
+//     num_vars: usize,
+//     polys: Vec<FragmentedPoly<F>>,
+//     exec: Arc<dyn Fn(&[F]) -> Vec<F> + Send + Sync>,
+//     degree: usize,
+//     num_i: usize,
+//     num_o: usize,
+//     point: Vec<F>,
+//     p_transcript: &mut T,
+//     v_transcript: &mut T,
+// )
+// where T:  TranscriptReceiver<F> + TranscriptSender<F>,
+// {
 
-    let params = NNSumcheckPolyMapParams {
-        f: PolynomialMapping {
-            exec,
-            degree,
-            num_i,
-            num_o,
-        },
-        num_vars,
-    };
+//     let params = NNSumcheckPolyMapParams {
+//         f: PolynomialMapping {
+//             exec,
+//             degree,
+//             num_i,
+//             num_o,
+//         },
+//         num_vars,
+//     };
 
-    let (trace, image_polys) = NNSumcheckPolyMap::witness(polys.clone(), &params);
+//     let (trace, image_polys) = NNSumcheckPolyMap::witness(polys.clone(), &params);
 
-    let claims : Vec<_> = image_polys.par_iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
+//     let claims : Vec<_> = image_polys.par_iter().enumerate().map(|(i, p)| (i, p.evaluate(&point))).collect();
 
-    let _point = point.clone();
+//     let _point = point.clone();
 
-    let multiclaim = MultiEvalClaim {
-        points: vec![point],
-        evs: vec![claims.clone()],
-    };
-
-
-    let mut prover = NNSumcheckPolyMapProver::start(
-        multiclaim.clone(),
-        trace,
-        &params,
-    );
-
-    let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
-    let mut res = prover.round(gamma_c, p_transcript);
-    while res.is_none() {
-        let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
-        res = prover.round(challenge, p_transcript);
-    }
-
-    //println!("{:?}", p_transcript.transcript.log);
-
-    let (EvalClaim{point: proof_point, evs}, proof) = res.unwrap();
-    assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
-
-    let mut verifier = NNSumcheckPolyMapVerifier::start(
-        multiclaim,
-        proof,
-        &params,
-    );
-
-    let gamma_c = v_transcript.challenge_scalar(b"challenge_combine_outputs");
-    let mut res = verifier.round(gamma_c, v_transcript);
-    while res.is_none() {
-        let challenge = v_transcript.challenge_scalar(b"challenge_nextround");
-        res = verifier.round(challenge, v_transcript);
-    }
-
-    //println!("{:?}", v_transcript.transcript.log);
-
-    //v_transcript.transcript.assert_end();
-
-    let EvalClaim{point: proof_point, evs} = res.unwrap();
-    assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+//     let multiclaim = MultiEvalClaim {
+//         points: vec![point],
+//         evs: vec![claims.clone()],
+//     };
 
 
-}
+//     let mut prover = NNSumcheckPolyMapProver::start(
+//         multiclaim.clone(),
+//         trace,
+//         &params,
+//     );
+
+//     let gamma_c = p_transcript.challenge_scalar(b"challenge_combine_outputs");
+//     let mut res = prover.round(gamma_c, p_transcript);
+//     while res.is_none() {
+//         let challenge = p_transcript.challenge_scalar(b"challenge_nextround");
+//         res = prover.round(challenge, p_transcript);
+//     }
+
+//     //println!("{:?}", p_transcript.transcript.log);
+
+//     let (EvalClaim{point: proof_point, evs}, proof) = res.unwrap();
+//     assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+
+//     let mut verifier = NNSumcheckPolyMapVerifier::start(
+//         multiclaim,
+//         proof,
+//         &params,
+//     );
+
+//     let gamma_c = v_transcript.challenge_scalar(b"challenge_combine_outputs");
+//     let mut res = verifier.round(gamma_c, v_transcript);
+//     while res.is_none() {
+//         let challenge = v_transcript.challenge_scalar(b"challenge_nextround");
+//         res = verifier.round(challenge, v_transcript);
+//     }
+
+//     //println!("{:?}", v_transcript.transcript.log);
+
+//     //v_transcript.transcript.assert_end();
+
+//     let EvalClaim{point: proof_point, evs} = res.unwrap();
+//     assert_eq!(evs, polys.iter().map(|p| p.evaluate(&proof_point)).collect_vec());
+
+
+// }
 
 
 fn main(){

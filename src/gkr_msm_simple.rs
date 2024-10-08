@@ -339,6 +339,8 @@ pub fn gkr_msm_prove<
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use ark_bls12_381::{G1Affine, G1Projective};
     use ark_std::{test_rng, UniformRand};
     use ark_std::rand::Rng;
@@ -358,11 +360,16 @@ mod tests {
     static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
     #[test]
-    fn small() {
-        let gamma = 5;
-        let log_num_points = 5;
+    fn gkr_msm_simple_test() {
+        // let gamma = 5;
+        // let log_num_points = 5;
+        // let log_num_scalar_bits = 8;
+        // let log_num_bit_columns = 6;
+
+        let gamma = 6;
+        let log_num_points = 16;
         let log_num_scalar_bits = 8;
-        let log_num_bit_columns = 6;
+        let log_num_bit_columns = 7;    
 
         let num_points = 1 << log_num_points;
         let num_scalar_bits = 1 << log_num_scalar_bits;
@@ -371,18 +378,18 @@ mod tests {
         let num_bit_columns = 1 << log_num_bit_columns;
         let col_size = size >> log_num_bit_columns;
 
-        dbg!(
-            gamma,
-            log_num_points,
-            log_num_scalar_bits,
-            log_num_bit_columns,
-            num_points,
-            num_scalar_bits,
-            num_vars,
-            size,
-            num_bit_columns,
-            col_size
-        );
+        // dbg!(
+        //     gamma,
+        //     log_num_points,
+        //     log_num_scalar_bits,
+        //     log_num_bit_columns,
+        //     num_points,
+        //     num_scalar_bits,
+        //     num_vars,
+        //     size,
+        //     num_bit_columns,
+        //     col_size
+        // );
         let gen = &mut test_rng();
         let bases = (0..col_size).map(|_| G1Affine::rand(gen)).collect_vec();
         let coefs = (0..num_points)
@@ -402,6 +409,8 @@ mod tests {
 
         let mut p_transcript = Transcript::new(b"test");
 
+        let start = Instant::now();
+
         gkr_msm_prove(
             coefs,
             points,
@@ -411,5 +420,9 @@ mod tests {
             &comm_key,
             &mut p_transcript,
         );
+
+        let end = Instant::now();
+
+        println!("Total time elapsed: {}", (end-start).as_secs_f64());
     }
 }

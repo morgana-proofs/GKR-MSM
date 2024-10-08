@@ -1,5 +1,4 @@
 use std::marker::PhantomData;
-use std::num::Mul;
 use std::ops::{Add, Mul};
 use std::ptr::read;
 

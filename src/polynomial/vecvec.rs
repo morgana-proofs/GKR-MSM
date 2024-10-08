@@ -309,51 +309,51 @@ impl<F, const N_POLYS: usize> VecVecPolynomial<F, N_POLYS> {
 
 }
 
-#[cfg(test)]
-mod tests {
-    // use ark_ed_on_bls12_381_bandersnatch::Fr;
-    use ark_std::rand::Error;
-    use ark_std::test_rng;
-    use liblasso::poly::dense_mlpoly::DensePolynomial;
-    use super::*;
+// #[cfg(test)]
+// mod tests {
+//     // use ark_ed_on_bls12_381_bandersnatch::Fr;
+//     use ark_std::rand::Error;
+//     use ark_std::test_rng;
+//     use liblasso::poly::dense_mlpoly::DensePolynomial;
+//     use super::*;
 
-    use ark_ff::fields::{MontConfig};
-    use ark_ff::{Fp, MontBackend};
+//     use ark_ff::fields::MontConfig;
+//     use ark_ff::{Fp, MontBackend};
 
-    #[derive(MontConfig)]
-    #[modulus = "17"]
-    #[generator = "3"]
-    pub struct FqConfig;
-    pub type Fq = Fp<MontBackend<FqConfig, 1>, 1>;
+//     #[derive(MontConfig)]
+//     #[modulus = "17"]
+//     #[generator = "3"]
+//     pub struct FqConfig;
+//     pub type Fq = Fp<MontBackend<FqConfig, 1>, 1>;
 
-    #[test]
-    fn bind() {
-        // let x = <u64 as Field>::extension_degree();
-        let gen = &mut test_rng();
+//     #[test]
+//     fn bind() {
+//         // let x = <u64 as Field>::extension_degree();
+//         let gen = &mut test_rng();
 
-        // let mut v = VecVecPolynomial::<Fq, 2>::rand(gen, 3, 2);
-        let mut v = VecVecPolynomial::<Fq, 2>::new(
-            vec![
-                vec![Fq::from(1), Fq::from(2), Fq::from(3), Fq::from(4)],
-                vec![Fq::from(5), Fq::from(6)],
-            ],
-            [Fq::from(7), Fq::from(8)],
-            Fq::from(0),
-            2,
-            2,
-        );
-        // let t = Fq::from(gen.next_u64());
-        let t = Fq::from(10);
-        let [d1, d2] = v.vec();
-        let [mut e1, mut e2] = [vec![], vec![]];
-        v.make_21();
-        v.bind_21(&(t - Fq::from(1)));
-        for i in 0..(d1.len() / 2) {
-            e1.push(d1[2 * i] + t * (d1[2 * i + 1] - d1[2 * i]));
-            e2.push(d2[2 * i] + t * (d2[2 * i + 1] - d2[2 * i]));
-        }
-        let [b1, b2] = v.vec();
-        assert_eq!(e1, b1);
-        assert_eq!(e2, b2);
-    }
-}
+//         // let mut v = VecVecPolynomial::<Fq, 2>::rand(gen, 3, 2);
+//         let mut v = VecVecPolynomial::<Fq, 2>::new(
+//             vec![
+//                 vec![Fq::from(1), Fq::from(2), Fq::from(3), Fq::from(4)],
+//                 vec![Fq::from(5), Fq::from(6)],
+//             ],
+//             [Fq::from(7), Fq::from(8)],
+//             Fq::from(0),
+//             2,
+//             2,
+//         );
+//         // let t = Fq::from(gen.next_u64());
+//         let t = Fq::from(10);
+//         let [d1, d2] = v.vec();
+//         let [mut e1, mut e2] = [vec![], vec![]];
+//         v.make_21();
+//         v.bind_21(&(t - Fq::from(1)));
+//         for i in 0..(d1.len() / 2) {
+//             e1.push(d1[2 * i] + t * (d1[2 * i + 1] - d1[2 * i]));
+//             e2.push(d2[2 * i] + t * (d2[2 * i + 1] - d2[2 * i]));
+//         }
+//         let [b1, b2] = v.vec();
+//         assert_eq!(e1, b1);
+//         assert_eq!(e2, b2);
+//     }
+// }

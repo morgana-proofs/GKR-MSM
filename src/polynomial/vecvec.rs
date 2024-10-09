@@ -1,22 +1,16 @@
-use std::cmp::min;
 use std::fmt::{Debug, Formatter, Write};
-use std::intrinsics::transmute;
-use std::iter::repeat;
-use std::mem::MaybeUninit;
 use std::ops::{Add, AddAssign, Mul, Range, Sub, SubAssign};
-use std::process::Output;
 use std::slice::from_ref;
-use std::sync::Arc;
+use ark_ec::twisted_edwards::{TECurveConfig, Projective};
 use ark_ff::{Field, PrimeField};
-use ark_std::iterable::Iterable;
 use ark_std::rand::{Rng, RngCore};
-use itertools::{repeat_n, Either, Itertools};
+use ark_std::UniformRand;
+use itertools::Itertools;
 use liblasso::utils::math::Math;
+use num_traits::Zero;
 use rayon::prelude::*;
-use crate::copoly::materialize_eq_slice;
 
-use hashcaster::ptr_utils::UninitArr;
-use crate::utils::{eq_poly_sequence, eq_poly_sequence_from_multiplier, eq_poly_sequence_last};
+use crate::utils::{eq_poly_sequence_from_multiplier, eq_poly_sequence_last};
 
 pub struct EQPolyPointParts {
     pub padded_vars_idx: usize,
@@ -143,6 +137,7 @@ impl<F: PrimeField> EQPolyData<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct VecVecPolynomial<F, const N_POLYS: usize> {
     pub data: Vec<Vec<F>>,  // Actually Vec<Vec<[F; N_POLYS]>>
     /// Each row is padded to 1 << *row_logsize* by corresponding *row_pad*
@@ -217,6 +212,28 @@ impl<F: From<u64> + Clone, const N_POLYS: usize> VecVecPolynomial<F, N_POLYS> {
             data,
             (0..N_POLYS).map(|_| F::from(rng.next_u64())).collect_vec().try_into().unwrap_or_else(|_| panic!()),
             F::from(rng.next_u64()),
+            row_logsize,
+            col_logsize,
+        )
+    }
+}
+
+impl<F: PrimeField> VecVecPolynomial<F, 3> {
+    pub fn rand_points<
+        CC: TECurveConfig<BaseField=F>,
+        RNG: Rng,
+    >(rng: &mut RNG, row_logsize: usize, col_logsize: usize) -> Self {
+        let data = (0..(rng.next_u64() as usize % (1 << col_logsize))).map(|_| {
+            (0..(rng.next_u64() as usize % (1 << row_logsize))).map(|_| {
+                let p = Projective::<CC>::rand(rng);
+                [p.x, p.y, p.z].into_iter()
+            }).flatten().collect_vec()
+        }).collect_vec();
+        
+        Self::new(
+            data,
+            [F::zero(), F::zero(), F::one()],
+            F::zero(),
             row_logsize,
             col_logsize,
         )

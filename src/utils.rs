@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::mem::{transmute, MaybeUninit};
 use std::ops::{Add, Mul};
 use std::ptr::read;
 
@@ -106,6 +107,17 @@ pub fn make_gamma_pows<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma: F) -> V
         gamma_pows.push(tmp * gamma);
     }
     gamma_pows
+}
+
+pub fn make_gamma_pows_static<F: PrimeField, const N_POWS: usize>(gamma: F) -> [F; N_POWS] {
+    let mut gamma_pows = Vec::with_capacity(N_POWS);
+    gamma_pows.push(F::one());
+    gamma_pows.push(gamma);
+    for i in 2..N_POWS {
+        let tmp = gamma_pows[i - 1];
+        gamma_pows.push(tmp * gamma);
+    };
+    gamma_pows.try_into().unwrap_or_else(|v: Vec<F>| panic!("Expected a Vec of length {} but it was {}", N_POWS, v.len()))
 }
 
 pub fn split_into_chunks_balanced<T>(arr: &[T], num_threads: usize) -> impl Iterator<Item = &[T]> + '_ {

@@ -34,11 +34,11 @@ pub struct Splits<F: PrimeField> {
 }
 
 pub struct FragmentedLincomb<F: PrimeField> {
-    polys: Vec<FragmentedPoly<F>>,
-    splits: Option<Splits<F>>,
-    copolys: Vec<Box<dyn Copolynomial<F> + Send + Sync>>,
-    folded_f: Option<Arc<dyn Fn(&[F]) -> F + Sync + Send>>,
-    degree: usize,
+    pub polys: Vec<FragmentedPoly<F>>,
+    pub splits: Option<Splits<F>>,
+    pub copolys: Vec<Box<dyn Copolynomial<F> + Send + Sync>>,
+    pub folded_f: Option<Arc<dyn Fn(&[F]) -> F + Sync + Send>>,
+    pub degree: usize,
 }
 
 pub struct SumcheckPolyMapProver<F: PrimeField> {
@@ -671,7 +671,7 @@ fn make_folded_claim<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F]
     )
 }
 
-fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f: &PolynomialMapping<F>)
+pub fn make_folded_f<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma_pows: &[F], f: &PolynomialMapping<F>)
         -> Arc<dyn Fn(&[F]) -> F + Send + Sync>
 {
     let claims = claims.clone();

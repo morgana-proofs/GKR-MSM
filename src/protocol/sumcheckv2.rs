@@ -57,7 +57,7 @@ impl<F: PrimeField> UnivarFormat<F> {
 }
 
 
-pub(crate) trait Sumcheckable<F: PrimeField> {
+pub trait Sumcheckable<F: PrimeField> {
     fn bind(&mut self, f: &F);
     fn unipoly(&mut self) -> UniPoly<F>;
     fn final_evals(&self) -> Vec<F>;

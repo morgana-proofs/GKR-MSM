@@ -108,7 +108,7 @@ impl<F: PrimeField> EQPolyData<F> {
         }
     }
 
-    pub fn bind(&mut self, t: & F) {
+    pub fn bind(&mut self, t: F) {
         self.multiplier *= F::one() - self.point[self.point_parts.binding_var_idx] - t + (self.point[self.point_parts.binding_var_idx] * t).double();
 
         self.already_bound_vars += 1;
@@ -270,7 +270,7 @@ impl<F: Field, const N_POLYS: usize> VecVecPolynomial<F, N_POLYS> {
     /// into p_00 + t(p_01 - p_00), p_10 + t(p_11 - p_10)
     ///
     /// Where p_*2 = 2 * p_*1 - p_*0
-    pub fn bind_21(&mut self, tm1: &F) {
+    pub fn bind_21(&mut self, tm1: F) {
         let iter = self.data.par_iter_mut();
         
         iter
@@ -279,7 +279,7 @@ impl<F: Field, const N_POLYS: usize> VecVecPolynomial<F, N_POLYS> {
                     for j in 0..N_POLYS {
                         r[i * N_POLYS + j] = F::add(
                             r[(2 * i + 1) * N_POLYS + j],
-                            *tm1 * F::sub(
+                            tm1 * F::sub(
                                 r[2 * i * N_POLYS + j],
                                 r[(2 * i + 1) * N_POLYS + j]
                             )

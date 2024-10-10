@@ -58,16 +58,16 @@ impl<F: PrimeField> UnivarFormat<F> {
 
 
 pub trait Sumcheckable<F: PrimeField> {
-    fn bind(&mut self, f: &F);
+    fn bind(&mut self, t: F);
     fn unipoly(&mut self) -> UniPoly<F>;
     fn final_evals(&self) -> Vec<F>;
 }
 
 impl<F: PrimeField, const N_POLYS: usize, const N_OUT: usize> Sumcheckable<F> for Lincomb<F, N_POLYS, N_OUT> {
-    fn bind(&mut self, f: &F) {
-        self.polys.bind_21(f);
-        self.current_point.push(f.clone());
-        self.eq_poly_data.bind(f);
+    fn bind(&mut self, t: F) {
+        self.polys.bind_21(t);
+        self.current_point.push(t);
+        self.eq_poly_data.bind(t);
     }
 
     fn unipoly(&mut self) -> UniPoly<F> {

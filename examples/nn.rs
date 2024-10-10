@@ -54,7 +54,7 @@ fn prepare_inputs<F: PrimeField>(){
     shape.get_or_init(||Shape::rand(gen, num_vars));
     let polys: Vec<FragmentedPoly<F>> = (0..3).map(|_| FragmentedPoly::rand_with_shape(gen, shape.clone())).collect();
 
-    let params = NNSumcheckPolyMapParams {
+    let params = SumcheckPolyMapParams {
         f: PolynomialMapping {
             exec: Arc::new(combfunc),
             degree: 3,
@@ -64,7 +64,7 @@ fn prepare_inputs<F: PrimeField>(){
         num_vars,
     };
 
-    let (trace, image_polys) = NNSumcheckPolyMap::witness(polys.clone(), &params);
+    let (trace, image_polys) = SumcheckPolyMap::witness(polys.clone(), &params);
 
 
     let point: Vec<F> = (0..(num_vars as u64)).map(|i| F::from(i * 13)).collect();

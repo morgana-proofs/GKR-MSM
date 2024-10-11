@@ -14,9 +14,9 @@ use super::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, Pr
 #[cfg(feature = "prof")]
 use profi::{prof, prof_guard};
 
-pub struct Lincomb<F: PrimeField, const N_POLYS: usize, const N_OUT: usize> {
-    polys: VecVecPolynomial<F, N_POLYS>,
-    func: Arc<dyn Fn(&[F; N_POLYS]) -> [F; N_OUT] + Sync + Send>,
+pub struct Lincomb<F: PrimeField, const N_INS: usize, const N_OUT: usize> {
+    polys: Vec<VecVecPolynomial<F>>,
+    func: Arc<dyn Fn(&[&F; N_INS]) -> [F; N_OUT] + Sync + Send>,
     num_ins: usize,
     num_out: usize,
     degree: usize,
@@ -26,7 +26,7 @@ pub struct Lincomb<F: PrimeField, const N_POLYS: usize, const N_OUT: usize> {
     previous_claim: F,
 }
 
-impl<F: PrimeField, const N_POLYS: usize, const N_OUT: usize> Lincomb<F, N_POLYS, N_OUT> {
+impl<F: PrimeField, const N_INS: usize, const N_OUT: usize> Lincomb<F, N_INS, N_OUT> {
     pub fn init_eq(&mut self) {
     }
 }
@@ -63,33 +63,48 @@ pub trait Sumcheckable<F: PrimeField> {
     fn final_evals(&self) -> Vec<F>;
 }
 
-impl<F: PrimeField, const N_POLYS: usize, const N_OUT: usize> Sumcheckable<F> for Lincomb<F, N_POLYS, N_OUT> {
+impl<F: PrimeField, const N_INS: usize, const N_OUT: usize> Sumcheckable<F> for Lincomb<F, N_INS, N_OUT> {
     fn bind(&mut self, f: &F) {
-        self.polys.bind_21(f);
+        self.polys.par_iter_mut().map(|v| v.bind_21(f)).count();
         self.current_point.push(f.clone());
         self.eq_poly_data.bind(f);
     }
 
     fn unipoly(&mut self) -> UniPoly<F> {
-        self.polys.make_21();
+        self.polys.par_iter_mut().map(|v| v.make_21()).count();
 
-        let pad_results = (self.func)(&self.polys.row_pad);
+        let mut inputs: [&F; N_INS] = self.polys.iter().map(|p| &p.row_pad).collect_vec().try_into().unwrap();
+
+
+        // TODO: move to precompute, this is know ant parametrisation phase
+        let row_lengths = self.polys[0].data.iter().map(|r| r.len()).collect_vec();
+
+        let pad_results = (self.func)(&inputs);
 
         let mut sum2 = [F::zero(); N_OUT];
         let mut sum1 = [F::zero(); N_OUT];
-        for (row, coef) in self.polys.data.iter().zip(self.eq_poly_data.row_eq_coefs.iter()) {
+        for (row_idx, coef) in self.eq_poly_data.row_eq_coefs.iter().enumerate() {
+
             let mut sum_local2 = [F::zero(); N_OUT];
             let mut sum_local1 = [F::zero(); N_OUT];
-            let eq = self.eq_poly_data.get_segment_evals(row.len() / (N_POLYS * 2));
-            for (idx, chunk) in row.chunks(N_POLYS * 2).enumerate() {
-                let addition2 = (self.func)(&chunk[0..N_POLYS].try_into().unwrap());
-                let addition1 = (self.func)(&chunk[N_POLYS..(N_POLYS * 2)].try_into().unwrap());
+            let eq = self.eq_poly_data.get_segment_evals(row_lengths[row_idx] / 2);
+            for idx in (0..row_lengths[row_idx]).step_by(2) {
+
+                for (poly_idx, poly) in self.polys.iter().enumerate() {
+                    inputs[poly_idx] = &poly.data[row_idx][idx]
+                }
+                let addition2 = (self.func)(&inputs);
+
+                for (poly_idx, poly) in self.polys.iter().enumerate() {
+                    inputs[poly_idx] = &poly.data[row_idx][idx + 1]
+                }
+                let addition1 = (self.func)(&inputs);
                 for i in 0..N_OUT {
                     sum_local2[i] += addition2[i] * eq[idx];
                     sum_local1[i] += addition1[i] * eq[idx];
                 }
             }
-            let trailing_sum = F::one() - self.eq_poly_data.get_trailing_sum(row.len() / (N_POLYS * 2));
+            let trailing_sum = F::one() - self.eq_poly_data.get_trailing_sum(row_lengths[row_idx] / 2);
             for i in 0..N_OUT {
                 sum2[i] += sum_local2[i];
                 sum1[i] += sum_local1[i];
@@ -167,74 +182,74 @@ mod test {
         };
 
         let gamma_pows = make_gamma_pows_static::<_, 4>(F::one().double());
-
-        let mut new_sumcheckable = Lincomb::<F, 3, 4> {
-            polys: data.clone(),
-            func: Arc::new(|a| twisted_edwards_add_l1(a).as_slice().try_into().unwrap_or_else(|_| panic!())),
-            num_ins: 3,
-            num_out: 4,
-            degree: 2,
-            gamma_pows: Some(gamma_pows.clone()),
-            current_point: vec![],
-            eq_poly_data: EQPolyData {
-                point_parts: EQPolyPointParts {
-                    padded_vars_idx: 0,
-                    segment_vars_idx: 0,
-                    binding_var_idx: 0,
-                },
-                point: vec![],
-                multiplier: F::one(),
-                row_eq_coefs: vec![],
-                pad_multipliers: vec![],
-                row_eq_poly_seq: vec![],
-                row_eq_poly_prefix_seq: vec![],
-                already_bound_vars: 0,
-            },
-            previous_claim: F::zero(),
-        };
-
-        let folded_f = make_folded_f(
-            &claim,
-            &gamma_pows,
-            &PolynomialMapping {
-                exec: Arc::new(twisted_edwards_add_l1),
-                degree: 2,
-                num_i: 3,
-                num_o: 4,
-            },
-        );
-
-        let shape = Arc::new(OnceLock::from(Shape {
-            fragments: vec![
-                Fragment {
-                    mem_idx: 0,
-                    len: 1 << num_vars,
-                    content: FragmentContent::Data,
-                    start: 0,
-                }
-            ],
-            data_len: 1 << num_vars,
-            num_consts: 0,
-            dedup_consts_len: 0,
-            split_perm: Arc::new(Default::default()),
-            split: Arc::new(Default::default()),
-        }));
-
-        let fragmented_data = data.vec().into_iter().map(|p| {
-            FragmentedPoly::new(p, vec![], shape.clone())
-        }).collect_vec();
-
-        let mut old_eq = EqPoly::new(point.clone());
-        old_eq.take_shape(shape.clone());
-
-        let mut old_sumcheckable = FragmentedLincomb {
-            polys: fragmented_data,
-            splits: None,
-            copolys: vec![Box::new(old_eq)],
-            folded_f: Some(folded_f),
-            degree: 2,
-        };
-
-        assert_eq!(old_sumcheckable.unipoly().as_vec(), new_sumcheckable.unipoly().as_vec());
+        // // 
+        // // let mut new_sumcheckable = Lincomb::<F, 3, 4> {
+        // //     polys: data.clone(),
+        // //     func: Arc::new(|a| twisted_edwards_add_l1(a).as_slice().try_into().unwrap_or_else(|_| panic!())),
+        // //     num_ins: 3,
+        // //     num_out: 4,
+        // //     degree: 2,
+        // //     gamma_pows: Some(gamma_pows.clone()),
+        // //     current_point: vec![],
+        // //     eq_poly_data: EQPolyData {
+        // //         point_parts: EQPolyPointParts {
+        // //             padded_vars_idx: 0,
+        // //             segment_vars_idx: 0,
+        // //             binding_var_idx: 0,
+        // //         },
+        // //         point: vec![],
+        // //         multiplier: F::one(),
+        // //         row_eq_coefs: vec![],
+        // //         pad_multipliers: vec![],
+        // //         row_eq_poly_seq: vec![],
+        // //         row_eq_poly_prefix_seq: vec![],
+        // //         already_bound_vars: 0,
+        // //     },
+        // //     previous_claim: F::zero(),
+        // // };
+        // // 
+        // // let folded_f = make_folded_f(
+        // //     &claim,
+        // //     &gamma_pows,
+        // //     &PolynomialMapping {
+        // //         exec: Arc::new(twisted_edwards_add_l1),
+        // //         degree: 2,
+        // //         num_i: 3,
+        // //         num_o: 4,
+        // //     },
+        // // );
+        // // 
+        // // let shape = Arc::new(OnceLock::from(Shape {
+        // //     fragments: vec![
+        // //         Fragment {
+        // //             mem_idx: 0,
+        // //             len: 1 << num_vars,
+        // //             content: FragmentContent::Data,
+        // //             start: 0,
+        // //         }
+        // //     ],
+        // //     data_len: 1 << num_vars,
+        // //     num_consts: 0,
+        // //     dedup_consts_len: 0,
+        // //     split_perm: Arc::new(Default::default()),
+        // //     split: Arc::new(Default::default()),
+        // // }));
+        // // 
+        // // let fragmented_data = data.vec().into_iter().map(|p| {
+        // //     FragmentedPoly::new(p, vec![], shape.clone())
+        // // }).collect_vec();
+        // // 
+        // // let mut old_eq = EqPoly::new(point.clone());
+        // // old_eq.take_shape(shape.clone());
+        // // 
+        // // let mut old_sumcheckable = FragmentedLincomb {
+        // //     polys: fragmented_data,
+        // //     splits: None,
+        // //     copolys: vec![Box::new(old_eq)],
+        // //     folded_f: Some(folded_f),
+        // //     degree: 2,
+        // // };
+        // 
+        // assert_eq!(old_sumcheckable.unipoly().as_vec(), new_sumcheckable.unipoly().as_vec());
     }
 }

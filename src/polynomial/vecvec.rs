@@ -296,7 +296,7 @@ impl<F: Field> VecVecPolynomial<F> {
                     for j in 0..1 {
                         r[i * 1 + j] = F::add(
                             r[(2 * i + 1) * 1 + j],
-                            *tm1 * F::sub(
+                            tm1 * F::sub(
                                 r[2 * i * 1 + j],
                                 r[(2 * i + 1) * 1 + j]
                             )
@@ -388,8 +388,8 @@ mod tests {
         let [mut e1, mut e2] = [vec![], vec![]];
         v1.make_21();
         v2.make_21();
-        v1.bind_21(&(t - Fq::from(1)));
-        v2.bind_21(&(t - Fq::from(1)));
+        v1.bind_21((t - Fq::from(1)));
+        v2.bind_21((t - Fq::from(1)));
         for i in 0..(d1.len() / 2) {
             e1.push(d1[2 * i] + t * (d1[2 * i + 1] - d1[2 * i]));
             e2.push(d2[2 * i] + t * (d2[2 * i + 1] - d2[2 * i]));

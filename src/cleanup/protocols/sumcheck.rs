@@ -192,7 +192,7 @@ impl<F: PrimeField, Fun: AlgFnSingleOutput<F>> Sumcheckable<F> for DenseSumcheck
                         difs[j] = self.polys[j][2 * i + 1] - self.polys[j][2 * i]
                     }
 
-                    for s in 2..n_polys {
+                    for s in 2..(self.f.deg() + 1) {
                         for j in 0..n_polys {
                             args[j] += difs[j];
                         }

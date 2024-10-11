@@ -67,8 +67,8 @@ pub struct EQPolyData<F> {
 }
 
 impl<F: PrimeField> EQPolyData<F> {
-    fn new(point: &[F], col_logsize: usize, max_row_len: usize) -> Self {
-        let max_segment_logsize = 1 << max_row_len.log_2();
+    pub fn new(point: &[F], col_logsize: usize, max_row_len: usize) -> Self {
+        let max_segment_logsize = max_row_len.log_2();
 
         // variable parts
         let point_parts = EQPolyPointParts::new(point, col_logsize, max_segment_logsize);
@@ -91,7 +91,7 @@ impl<F: PrimeField> EQPolyData<F> {
             let mut acc = Vec::with_capacity(v.len());
             acc.push(v[0]);
             for idx in 1..v.len() {
-                acc[idx] = acc[idx - 1] + v[idx];
+                acc.push(acc[idx - 1] + v[idx]);
             }
             row_eq_poly_prefix_seq.push(acc);
         }
@@ -125,7 +125,7 @@ impl<F: PrimeField> EQPolyData<F> {
 
     pub fn get_segment_sum(&self, segment_len: usize) -> &F {
         if self.already_bound_vars < self.row_eq_poly_seq.len() {
-            &self.row_eq_poly_prefix_seq[self.row_eq_poly_prefix_seq.len() - 1 - self.already_bound_vars][segment_len]
+            &self.row_eq_poly_prefix_seq[self.row_eq_poly_prefix_seq.len() - 1 - self.already_bound_vars][segment_len - 1]
         } else {
             // additional -1 is because of duplication of last pad_multiplier as first in row_eq_poly_seq
             &self.pad_multipliers[self.pad_multipliers.len() - 1 - 1 - (self.already_bound_vars - self.row_eq_poly_seq.len())]

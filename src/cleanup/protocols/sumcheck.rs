@@ -1,4 +1,4 @@
-use std::{marker::PhantomData};
+use std::{marker::PhantomData, ptr};
 
 use ark_ff::PrimeField;
 use itertools::Itertools;
@@ -115,39 +115,102 @@ impl<F: PrimeField, I: ExactSizeIterator<Item = usize> + Clone + Send + Sync, S:
 
 
 
-pub trait AlgFnSingleOutput<F: PrimeField, const N: usize> : Clone + Sync + Send {
-    fn exec(&self, arg: [F; N]) -> F;
+pub trait AlgFnSingleOutput<F: PrimeField> : Clone + Sync + Send {
+    /// Executes function.
+    fn exec(&self, args: &[F]) -> F;
+    /// Declares the degree.
     fn deg(&self) -> usize;
+    /// Declares expected number of inputs.
+    fn n_args(&self) -> usize;
 }
 
 /// A simple sumcheck object.
 /// Not parallelized right now.
-pub struct DenseSumcheckObject<F: PrimeField, const N: usize, Fun: AlgFnSingleOutput<F, N>> {
-    polys: [Vec<F>; N],
+pub struct DenseSumcheckObject<F: PrimeField, Fun: AlgFnSingleOutput<F>> {
+    polys: Vec<Vec<F>>,
     f: Fun,
     num_vars: usize,
+    round_idx: usize,
+    cached_unipoly: Option<UniPoly<F>>,
 }
 
-impl<F: PrimeField, const N: usize, Fun: AlgFnSingleOutput<F, N>> DenseSumcheckObject<F, N, Fun> {
-    pub fn new(polys: [Vec<F>; N], f: Fun, num_vars: usize) -> Self {
-        for i in 0..N {
+impl<F: PrimeField, Fun: AlgFnSingleOutput<F>> DenseSumcheckObject<F, Fun> {
+    pub fn new(polys: Vec<Vec<F>>, f: Fun, num_vars: usize) -> Self {
+        let l = polys.len();
+        assert!(l == f.n_args());
+        for i in 0..l {
             assert!(polys[i].len() == 1 << num_vars);
         }
-        Self { polys, f, num_vars }
+        Self { polys, f, num_vars, round_idx: 0, cached_unipoly: None }
     }
 }
 
-impl<F: PrimeField, const N: usize, Fun: AlgFnSingleOutput<F, N>> Sumcheckable<F> for DenseSumcheckObject<F, N, Fun> {
+pub fn bind_dense_poly<F: PrimeField>(poly: &mut Vec<F>, t: F) {
+    let half = poly.len() / 2;
+    for i in 0..half {
+        poly[i] = poly[2*i] + t * (poly[2*i + 1] - poly[2*i]);
+    }
+    poly.truncate(half);
+}
+
+impl<F: PrimeField, Fun: AlgFnSingleOutput<F>> Sumcheckable<F> for DenseSumcheckObject<F, Fun> {
     fn bind(&mut self, t: F) {
-        todo!()
+        assert!(self.round_idx < self.num_vars, "the protocol has already ended");
+        for poly in &mut self.polys {
+            bind_dense_poly(poly, t);
+        }
+        self.round_idx += 1;
     }
 
     fn unipoly(&mut self) -> UniPoly<F> {
-        todo!()
+        assert!(self.round_idx < self.num_vars, "the protocol has already ended");
+        match self.cached_unipoly.as_ref() {
+            Some(p) => {return p.clone()},
+            None => {
+                let half = 1 << (self.num_vars - self.round_idx - 1);
+                let n_polys = self.polys.len();
+                
+                let mut difs = vec![F::zero(); n_polys];
+                let mut args = vec![F::zero(); n_polys];
+
+                let mut acc = vec![F::zero(); self.f.deg() + 1];
+
+                for i in 0..half {
+                    for j in 0..n_polys {
+                        args[j] = self.polys[j][2 * i];
+                    }
+
+                    acc[0] += self.f.exec(&args);
+
+                    for j in 0..n_polys {
+                        args[j] = self.polys[j][2 * i + 1]
+                    }
+
+                    acc[1] += self.f.exec(&args);
+
+                    for j in 0..n_polys {
+                        difs[j] = self.polys[j][2 * i + 1] - self.polys[j][2 * i]
+                    }
+
+                    for s in 2..n_polys {
+                        for j in 0..n_polys {
+                            args[j] += difs[j];
+                        }
+
+                        acc[s] += self.f.exec(&args);
+                    }
+                }
+
+                self.cached_unipoly = Some(UniPoly::from_evals(&acc));
+            }
+        }
+        self.cached_unipoly.as_ref().unwrap().clone()
+        
     }
 
     fn final_evals(&self) -> Vec<F> {
-        todo!()
+        assert!(self.round_idx == self.num_vars, "can only call final evals after last round");
+        self.polys.iter().map(|poly| poly[0]).collect()
     }
 }
 

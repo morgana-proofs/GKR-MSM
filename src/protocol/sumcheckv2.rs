@@ -156,7 +156,7 @@ mod test {
     use crate::protocol::sumcheck::{make_folded_f, FragmentedLincomb, Sumcheckable as OldSumcheckable};
     use crate::utils::{eq_poly_sequence_last, make_gamma_pows_static};
     use super::{Lincomb, Sumcheckable as NewSumcheckable};
-    use crate::cleanup::protocols::sumcheck::{AlgFnSingleOutput, DenseSumcheckObject};
+    use crate::cleanup::protocols::sumcheck::{AlgFnSO, ExampleSumcheckObjectSO};
 
 
     #[test]
@@ -204,18 +204,21 @@ mod test {
             gamma_pows: Vec<Fr>,
         }
 
-        impl AlgFnSingleOutput<Fr> for XYZ {
-            fn exec(&self, args: &[Fr]) -> Fr {
-                let (eq, args) = args.split_last().unwrap();
-                twisted_edwards_add_l1(args).iter().zip_eq(self.gamma_pows.iter()).map(|(v, g)| v * g).sum::<Fr>() * eq
-            }
+        impl AlgFnSO<Fr> for XYZ {
 
             fn deg(&self) -> usize {
                 3
             }
 
-            fn n_args(&self) -> usize {
+            fn n_ins(&self) -> usize {
                 7
+            }
+            
+            fn exec(&self, args: &impl std::ops::Index<usize, Output = Fr>) -> Fr {
+                let eq = args[6];
+                let args = (0..6).map(|i| args[i]).collect_vec();
+
+                twisted_edwards_add_l1(&args).iter().zip_eq(self.gamma_pows.iter()).map(|(v, g)| v * g).sum::<Fr>() * eq
             }
         }
 
@@ -236,7 +239,7 @@ mod test {
             ),
         };
 
-        let mut dense_sumcheckable = DenseSumcheckObject::new(
+        let mut dense_sumcheckable = ExampleSumcheckObjectSO::new(
             dense_data,
             XYZ { gamma_pows: gamma_pows.to_vec() },
             num_vars,

@@ -18,6 +18,6 @@ pub trait Protocol2 {
     type ClaimsBefore; // Input and output claims. Names changed to before and after to prevent confusion, because "before" claims are actually claims about the output of the protocol.
     type ClaimsAfter;
     
-    fn prove<PT: TProverTranscript>(&self, pt: &mut PT, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput);
-    fn verify<PT: TVerifierTranscript>(&self, pt: &mut PT, claims: Self::ClaimsBefore) -> Self::ClaimsAfter;
+    fn prove<PT: TProverTranscript>(&self, transcript: &mut PT, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput);
+    fn verify<PT: TVerifierTranscript>(&self, transcript: &mut PT, claims: Self::ClaimsBefore) -> Self::ClaimsAfter;
 }

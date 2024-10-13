@@ -264,6 +264,13 @@ impl<F: PrimeField, Fun: AlgFn<F>> FoldToSumcheckable<F> for ExampleSumcheckObje
     }
 }
 
+/// Evaluation of a polynomial in a point.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PointClaim<F: PrimeField> {
+    pub point: Vec<F>,
+    pub ev: F,
+}
+
 /// Evaluations of multiple polynomials in a single point.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SinglePointClaims<F: PrimeField> {

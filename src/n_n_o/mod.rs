@@ -30,6 +30,8 @@ pub mod non_native_equalizer;
 pub mod n_n_sumcheck;
 pub mod polynomial_with_zeros;
 
+pub mod cleanup;
+
 #[cfg(test)]
 mod tests;
 

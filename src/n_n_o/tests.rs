@@ -56,11 +56,11 @@ fn test_polynomial_sum_1d(){
     let num_limbs = 3;
     let limb_len = roundup_to_pow2( Fq::MODULUS_BIT_SIZE  as usize / num_limbs);
 
-    let poly_size1 = rand::thread_rng().gen_range(0..128);
-    let poly_size2 = rand::thread_rng().gen_range(0..128);
     let log_poly_size = 7;
 
     for _ in 0..10{
+        let poly_size1 = rand::thread_rng().gen_range(0..128);
+        let poly_size2 = rand::thread_rng().gen_range(0..128);
         let p1 = PolynomialWithZeros::rand(&mut rng, poly_size1, log_poly_size);
         let p2 = PolynomialWithZeros::rand(&mut rng, poly_size2, log_poly_size);
 
@@ -74,6 +74,9 @@ fn test_polynomial_sum_1d(){
         diff_p -= &p1;
         let diff_evals = diff_p.evals;
 
+        assert_eq!(sum_p.len, p1.len.max(p2.len));
+        assert_eq!(diff_p.len, sum_p.len);
+
         let check_sum = p1_evals.iter()
                                         .zip(p2_evals.iter()
                                                     .chain(iter::repeat(&Fq::zero())))
@@ -82,16 +85,78 @@ fn test_polynomial_sum_1d(){
                                         .all(|((a, b), c)| a.clone() + b.clone() - c.clone() == Fq::zero());
 
         assert!(check_sum, "sum bad");
-
-        
+    
         let check_diff = p1_evals.iter()
                                         .zip(p2_evals.iter()
                                                     .chain(iter::repeat(&Fq::zero())))
                                         .zip(diff_evals.iter()
                                                     .chain(iter::repeat(&Fq::zero())))
                                         .all(|((a, b), c)| b.clone() - a.clone() - c.clone() == Fq::zero());
-    
         assert!(check_diff, "diff bad");
+
+        println!("p1 = {:?},\np2 = {:?},\nsum = {:?},\ndiff = {:?}\n", p1.evals, p2.evals,sum_evals, diff_evals);
+    }
+}
+
+
+
+
+#[test]
+fn test_polynomial_sum_1d_smol(){
+
+    let mut rng  = test_rng();
+    let num_limbs = 3;
+    let limb_len = roundup_to_pow2( Fq::MODULUS_BIT_SIZE  as usize / num_limbs);
+
+    let log_poly_size = 3;
+
+    for _ in 0..10{
+        let poly_size1 = rand::thread_rng().gen_range(0..8);
+        let poly_size2 = rand::thread_rng().gen_range(0..8);
+        let p1 = PolynomialWithZeros::rand(&mut rng, poly_size1, log_poly_size);
+        let p2 = PolynomialWithZeros::rand(&mut rng, poly_size2, log_poly_size);
+
+        let p1_evals = p1.clone().evals;
+        let p2_evals = p2.clone().evals;
+
+        let mut sum_p1 = p1.clone();
+        sum_p1 += &p2;
+        let sum_evals1 = sum_p1.evals;
+        let mut sum_p2 = p2.clone();
+        sum_p2 += &p1;
+        let sum_evals2 = sum_p2.evals;
+        let mut diff_p = p2.clone();
+        diff_p -= &p1;
+        let diff_evals = diff_p.evals;
+
+        assert_eq!(sum_p1.len, p1.len.max(p2.len));
+        assert_eq!(diff_p.len, sum_p1.len);
+        assert_eq!(diff_p.len, sum_p2.len);
+
+        let check_sum1 = p1_evals.iter()
+                                        .zip(p2_evals.iter()
+                                                    .chain(iter::repeat(&Fq::zero())))
+                                        .zip(sum_evals1.iter()
+                                                    .chain(iter::repeat(&Fq::zero())))
+                                        .all(|((a, b), c)| a.clone() + b.clone() - c.clone() == Fq::zero());
+
+                                        
+        let check_sum1 = sum_evals2.iter()
+                                        .zip(sum_evals1.iter()
+                                        .chain(iter::repeat(&Fq::zero())))
+                                        .all(|(a, b)| a.clone() - b.clone() == Fq::zero());
+
+        assert!(check_sum1, "sum bad");
+    
+        let check_diff = p1_evals.iter()
+                                        .zip(p2_evals.iter()
+                                                    .chain(iter::repeat(&Fq::zero())))
+                                        .zip(diff_evals.iter()
+                                                    .chain(iter::repeat(&Fq::zero())))
+                                        .all(|((a, b), c)| b.clone() - a.clone() - c.clone() == Fq::zero());
+        assert!(check_diff, "diff bad");
+
+        println!("p1 = {:?},\np2 = {:?},\nsum = {:?},\ndiff = {:?}\n", p1.evals, p2.evals, sum_evals1, diff_evals);
     }
 }
 

@@ -148,21 +148,34 @@ impl <F: UniformRand + Zero + Send + Sync + Sized + Copy> PolynomialWithZeros<F>
 }
 
 
+mod utils{
+    use super::*;
+    pub(super) fn add_if_lhs_is_longer<F: AddAssign + Zero + Send + Sync + Sized + Copy>(lhs: &mut PolynomialWithZeros<F>, rhs: &PolynomialWithZeros<F>){
+        lhs.evals.iter_mut()
+            .zip(rhs.evals.iter().chain(iter::repeat(&F::zero())))
+            .map(|(a, b)| *a+= *b)
+            .count();
+    }
+
+    pub(super) fn sub_if_lhs_is_longer<F: SubAssign + Zero + Send + Sync + Sized + Copy>(lhs: &mut PolynomialWithZeros<F>, rhs: &PolynomialWithZeros<F>){
+        lhs.evals.iter_mut()
+            .zip(rhs.evals.iter().chain(iter::repeat(&F::zero())))
+            .map(|(a, b)| *a-= *b)
+            .count();
+    }
+}
+use utils::*;
 impl<F: Sub<Output = F> + SubAssign + Zero + Send + Sync + Sized + Copy> SubAssign<&Self> for  PolynomialWithZeros<F> {
     fn sub_assign(&mut self, rhs: &Self) {
         assert_eq!(self.log_len, rhs.log_len);
         if self.len >= rhs.len{
-            self.evals.iter_mut()
-                        .zip(rhs.evals.iter().chain(iter::repeat(&F::zero())))
-                        .map(|(a, b)| *a-= *b)
-                        .count();
+            sub_if_lhs_is_longer(self, rhs);
         }
         else{
-            self.evals = rhs.evals.iter()
-                        .zip(self.evals.iter().chain(iter::repeat(&F::zero())))
-                        .map(|(&a, &b)| b- a)
-                        .collect();
+            let mut vec_zeros = vec![F::zero();  rhs.len - self.len];
+            self.evals.append(&mut vec_zeros);
             self.len = rhs.len;
+            sub_if_lhs_is_longer(self, rhs); 
         }
     }
 }
@@ -170,17 +183,22 @@ impl<F: Sub<Output = F> + SubAssign + Zero + Send + Sync + Sized + Copy> SubAssi
 impl<F: Add<Output = F> + AddAssign + Zero + Send + Sync + Sized + Copy> AddAssign<&Self> for  PolynomialWithZeros<F> {
     fn add_assign(&mut self, rhs: &Self) {assert_eq!(self.log_len, rhs.log_len);
         if self.len >= rhs.len{
-            self.evals.iter_mut()
-                        .zip(rhs.evals.iter().chain(iter::repeat(&F::zero())))
-                        .map(|(a, b)| *a+= *b)
-                        .count();
+            add_if_lhs_is_longer(self, rhs)  
         }
+        // else if self.len == rhs.len - 1{
+        //     self.evals.push(F::zero());
+        //     self.len += 1;
+        //     add_if_lhs_is_longer(self, rhs); 
+        // }
         else{
-            self.evals = rhs.evals.iter()
-                        .zip(self.evals.iter().chain(iter::repeat(&F::zero())))
-                        .map(|(&a, &b)| a+ b)
-                        .collect();
+            let mut vec_zeros = vec![F::zero();  rhs.len - self.len];
+            self.evals.append(&mut vec_zeros);
             self.len = rhs.len;
+            add_if_lhs_is_longer(self, rhs); 
+            // self.evals = rhs.evals.iter()
+            //             .zip(self.evals.iter().chain(iter::repeat(&F::zero())))
+            //             .map(|(&a, &b)| a+ b)
+            //             .collect();
         }
     }
 }

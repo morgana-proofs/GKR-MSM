@@ -6,16 +6,18 @@ use ark_ff::{Field, PrimeField};
 use ark_std::rand::{Rng, RngCore};
 use ark_std::UniformRand;
 use itertools::Itertools;
+use liblasso::poly::eq_poly::EqPolynomial;
 use liblasso::utils::math::Math;
 use num_traits::Zero;
 use rayon::prelude::*;
 
-use crate::utils::{eq_poly_sequence_from_multiplier, eq_poly_sequence_last};
+use crate::utils::{eq_poly_sequence_from_multiplier, eq_poly_sequence_last, padded_eq_poly_sequence};
 
+#[derive(Debug)]
 pub struct EQPolyPointParts {
     pub padded_vars_idx: usize,
     pub segment_vars_idx: usize,
-    pub binding_var_idx: usize
+    pub binding_var_idx: Option<usize>,
 }
 
 impl EQPolyPointParts {
@@ -27,24 +29,36 @@ impl EQPolyPointParts {
         Self {
             padded_vars_idx,
             segment_vars_idx,
-            binding_var_idx,
+            binding_var_idx: Some(binding_var_idx),
         }
     }
 
     fn bind(&mut self) {
-        self.binding_var_idx -= 1
+        match &mut self.binding_var_idx {
+            None => {}
+            Some(0) => {
+                self.binding_var_idx = None;
+            }
+            Some(x) => {
+                *x -= 1;
+            }
+        }
     }
 
-    fn vertical_vars_range(&self) -> Range<usize> {
+    pub fn vertical_vars_range(&self) -> Range<usize> {
         0..self.padded_vars_idx
     }
 
-    fn padded_vars_range(&self) -> Range<usize> {
-        self.padded_vars_idx..self.segment_vars_idx.min(self.binding_var_idx)
+    pub fn padded_vars_range(&self) -> Range<usize> {
+        self.padded_vars_idx..self.segment_vars_idx.min(self.binding_var_idx.unwrap())
     }
 
-    fn segment_vars_range(&self) -> Range<usize> {
-        self.segment_vars_idx..self.segment_vars_idx.max(self.binding_var_idx)
+    pub fn segment_vars_range(&self) -> Range<usize> {
+        self.segment_vars_idx..self.segment_vars_idx.max(self.binding_var_idx.unwrap())
+    }
+
+    pub fn row_vars_range(&self) -> Range<usize> {
+        self.padded_vars_idx..self.segment_vars_idx.max(self.binding_var_idx.unwrap())
     }
 }
 
@@ -56,8 +70,6 @@ pub struct EQPolyData<F> {
     pub multiplier: F,
     // Coefficients for each row of matrix (corresponding to the most significant variables)
     pub row_eq_coefs: Vec<F>,
-    // Evals in 0-point of EQ poly already bounded by some
-    pub pad_multipliers: Vec<F>,
     // EQ polys materialized for the longest segment in each fold
     pub row_eq_poly_seq: Vec<Vec<F>>,
     // EQ polys prefix sums to multiply
@@ -77,21 +89,15 @@ impl<F: PrimeField> EQPolyData<F> {
         // this use-case can probably be optimised
         let row_eq_coefs = eq_poly_sequence_last(&point[point_parts.vertical_vars_range()]).unwrap();
 
-        let mut pad_multipliers = point[point_parts.padded_vars_range()].to_vec();
-        let total_multiplier = pad_multipliers.iter_mut().fold(F::one(), |mut acc, val| {
-            acc *= F::one() - *val;
-            *val = acc;
-            acc
-        });
 
-        let row_eq_poly_seq = eq_poly_sequence_from_multiplier(total_multiplier, &point[point_parts.segment_vars_range()]);
+        let row_eq_poly_seq = padded_eq_poly_sequence(point_parts.padded_vars_range().len(), &point[point_parts.row_vars_range()]);
 
         let mut row_eq_poly_prefix_seq = Vec::with_capacity(row_eq_poly_seq.len());
         for v in &row_eq_poly_seq {
-            let mut acc = Vec::with_capacity(v.len());
-            acc.push(v[0]);
-            for idx in 1..v.len() {
-                acc.push(acc[idx - 1] + v[idx]);
+            let mut acc = Vec::with_capacity(v.len() + 1);
+            acc.push(F::zero());
+            for idx in 0..v.len() {
+                acc.push(acc[idx] + v[idx]);
             }
             row_eq_poly_prefix_seq.push(acc);
         }
@@ -104,32 +110,25 @@ impl<F: PrimeField> EQPolyData<F> {
             row_eq_poly_seq,
             row_eq_poly_prefix_seq,
             already_bound_vars: 0,
-            pad_multipliers,
         }
     }
 
     pub fn bind(&mut self, t: F) {
-        self.multiplier *= F::one() - self.point[self.point_parts.binding_var_idx] - t + (self.point[self.point_parts.binding_var_idx] * t).double();
-
+        self.multiplier *= F::one() - self.point[self.point_parts.binding_var_idx.unwrap()] - t + (self.point[self.point_parts.binding_var_idx.unwrap()] * t).double();
+        self.point_parts.bind();
         self.already_bound_vars += 1;
     }
 
     pub fn get_segment_evals(&self, segment_len: usize) -> &[F] {
-        if self.already_bound_vars < self.row_eq_poly_seq.len() {
-            &self.row_eq_poly_seq[self.row_eq_poly_seq.len() - 1 - self.already_bound_vars][0..segment_len]
-        } else {
-            // additional -1 is because of duplication of last pad_multiplier as first in row_eq_poly_seq
-            from_ref(&self.pad_multipliers[self.pad_multipliers.len() - 1 - 1 - (self.already_bound_vars - self.row_eq_poly_seq.len())])
-        }
+        &self.row_eq_poly_seq[self.row_eq_poly_seq.len() - 1 - self.already_bound_vars][0..segment_len]
+    }
+
+    pub fn get_current_evals(&self) -> &[F] {
+        &self.row_eq_poly_seq[self.row_eq_poly_seq.len() - 1 - self.already_bound_vars]
     }
 
     pub fn get_segment_sum(&self, segment_len: usize) -> &F {
-        if self.already_bound_vars < self.row_eq_poly_seq.len() {
-            &self.row_eq_poly_prefix_seq[self.row_eq_poly_prefix_seq.len() - 1 - self.already_bound_vars][segment_len - 1]
-        } else {
-            // additional -1 is because of duplication of last pad_multiplier as first in row_eq_poly_seq
-            &self.pad_multipliers[self.pad_multipliers.len() - 1 - 1 - (self.already_bound_vars - self.row_eq_poly_seq.len())]
-        }
+        &self.row_eq_poly_prefix_seq[self.row_eq_poly_prefix_seq.len() - 1 - self.already_bound_vars][segment_len]
     }
 
     pub fn get_trailing_sum(&self, segment_len: usize) -> F {
@@ -216,12 +215,12 @@ impl<F: From<u64> + Clone> VecVecPolynomial<F> {
 }
 
 impl<F: PrimeField> VecVecPolynomial<F> {
-    pub fn rand_points<
+    pub fn rand_points_dense_rows<
         CC: TECurveConfig<BaseField=F>,
         RNG: Rng,
     >(rng: &mut RNG, row_logsize: usize, col_logsize: usize) -> [Self; 3] {
-        let data = (0..(rng.next_u64() as usize % (1 << col_logsize))).map(|_| {
-            (0..(rng.next_u64() as usize % (1 << row_logsize))).map(|_| {
+        let data = (0..(1 << col_logsize)).map(|_| {
+            (0..(1 << row_logsize)).map(|_| {
                 let p = Projective::<CC>::rand(rng);
                 [p.x, p.y, p.z]
             }).collect_vec()
@@ -248,12 +247,105 @@ impl<F: PrimeField> VecVecPolynomial<F> {
             ),
             Self::new(
                 data[2].take().unwrap(),
-                F::zero(),
+                F::one(),
                 F::zero(),
                 row_logsize,
                 col_logsize,
             )
         ]
+    }
+
+
+    pub fn rand_points_dense<
+        CC: TECurveConfig<BaseField=F>,
+        RNG: Rng,
+    >(rng: &mut RNG, row_logsize: usize, col_logsize: usize) -> [Self; 3] {
+        let data = (0..(1 << col_logsize)).map(|_| {
+            (0..(1 << row_logsize)).map(|_| {
+                let p = Projective::<CC>::rand(rng);
+                [p.x, p.y, p.z]
+            }).collect_vec()
+        }).collect_vec();
+
+        let mut data = (0..3).map(|i| {
+            Some(data.iter().map(|r| r.iter().map(|p| p[i].clone()).collect_vec()).collect_vec())
+        }).collect_vec();
+
+        [
+            Self::new(
+                data[0].take().unwrap(),
+                F::zero(),
+                F::zero(),
+                row_logsize,
+                col_logsize,
+            ),
+            Self::new(
+                data[1].take().unwrap(),
+                F::one(),
+                F::zero(),
+                row_logsize,
+                col_logsize,
+            ),
+            Self::new(
+                data[2].take().unwrap(),
+                F::one(),
+                F::zero(),
+                row_logsize,
+                col_logsize,
+            )
+        ]
+    }
+
+
+    pub fn rand_points<
+        CC: TECurveConfig<BaseField=F>,
+        RNG: Rng,
+    >(rng: &mut RNG, row_logsize: usize, col_logsize: usize) -> [Self; 3] {
+        let data = (0..=(rng.next_u64() as usize % (1 << col_logsize))).map(|_| {
+            (0..=(rng.next_u64() as usize % (1 << row_logsize))).map(|_| {
+                let p = Projective::<CC>::rand(rng);
+                [p.x, p.y, p.z]
+            }).collect_vec()
+        }).collect_vec();
+
+        let mut data = (0..3).map(|i| {
+            Some(data.iter().map(|r| r.iter().map(|p| p[i].clone()).collect_vec()).collect_vec())
+        }).collect_vec();
+
+        [
+            Self::new(
+                data[0].take().unwrap(),
+                F::zero(),
+                F::zero(),
+                row_logsize,
+                col_logsize,
+            ),
+            Self::new(
+                data[1].take().unwrap(),
+                F::one(),
+                F::zero(),
+                row_logsize,
+                col_logsize,
+            ),
+            Self::new(
+                data[2].take().unwrap(),
+                F::one(),
+                F::zero(),
+                row_logsize,
+                col_logsize,
+            )
+        ]
+    }
+
+    pub fn fill_padding(&mut self) {
+        for row in &mut self.data {
+            while row.len() < 1 << self.row_logsize {
+                row.push(self.row_pad)
+            }
+        }
+        while self.data.len() < 1 << self.col_logsize {
+            self.data.push(vec![self.col_pad; 1 << self.row_logsize]);
+        }
     }
 }
 
@@ -273,10 +365,8 @@ impl<F: Field> VecVecPolynomial<F> {
 
         iter
             .map(|r| {
-                for i in 0..(r.len() / 1 / 2) {
-                    for j in 0..1 {
-                        r[2 * i * 1 + j] = r[(2 * i + 1) * 1 + j].double() - r[2 * i * 1 + j];
-                    }
+                for i in 0..(r.len() / 2) {
+                    r[2 * i] = r[2 * i + 1].double() - r[2 * i];
                 }
             })
             .count();
@@ -287,28 +377,21 @@ impl<F: Field> VecVecPolynomial<F> {
     /// into p_00 + t(p_01 - p_00), p_10 + t(p_11 - p_10)
     ///
     /// Where p_*2 = 2 * p_*1 - p_*0
-    pub fn bind_21(&mut self, tm1: F) {
+    pub fn bind_21(&mut self, t: F) {
+        let tm1 = t - F::one();
         let iter = self.data.par_iter_mut();
         
         iter
             .map(|r| {
-                for i in 0..(r.len() / 1 / 2) {
-                    for j in 0..1 {
-                        r[i * 1 + j] = F::add(
-                            r[(2 * i + 1) * 1 + j],
-                            tm1 * F::sub(
-                                r[2 * i * 1 + j],
-                                r[(2 * i + 1) * 1 + j]
-                            )
-                        );
-                    }
+                for i in 0..(r.len() / 2) {
+                    r[i] = r[2 * i + 1] + tm1 * (r[2 * i] - r[2 * i + 1]);
                 }
-                let mut i = r.len() / 1 / 2;
-                if i > 1 && i % 2 == 1 {
-                    r.push(self.row_pad.clone());
+                let mut i = r.len() / 2;
+                if i % 2 == 1 {
+                    r[i] = self.row_pad;
                     i += 1;
                 }
-                r.truncate(i * 1);
+                r.truncate(i);
             })
             .count();
         self.row_logsize -= 1;
@@ -335,12 +418,17 @@ impl<F: Clone> VecVecPolynomial<F> {
     }
 }
 
-impl<F> VecVecPolynomial<F> {
+pub fn map<const N_INS: usize, const N_OUT: usize, F: Clone, Fnc: Fn(&[&F; N_INS]) -> [F; N_OUT] + Sync + Send>(polys: &[VecVecPolynomial<F>; N_INS]) -> [VecVecPolynomial<F>; N_OUT] {
+    todo!()   
+}
 
+pub fn map_split<const N_INS: usize, const N_OUT: usize, F: Clone, Fnc: Fn(&[&F; N_INS]) -> [F; N_OUT] + Sync + Send>(polys: &[VecVecPolynomial<F>; N_INS]) -> [[VecVecPolynomial<F>; N_OUT]; 2] {
+    todo!()
 }
 
 #[cfg(test)]
 mod tests {
+    use rstest::*;
     // use ark_ed_on_bls12_381_bandersnatch::Fr;
     use ark_std::rand::Error;
     use ark_std::test_rng;
@@ -349,53 +437,70 @@ mod tests {
 
     use ark_ff::fields::MontConfig;
     use ark_ff::{Fp, MontBackend};
+    use num_traits::One;
 
     #[derive(MontConfig)]
-    #[modulus = "17"]
-    #[generator = "3"]
+    #[modulus = "179"]
+    #[generator = "1"]
     pub struct FqConfig;
     pub type Fq = Fp<MontBackend<FqConfig, 1>, 1>;
 
     #[test]
     fn bind() {
-        // let x = <u64 as Field>::extension_degree();
         let gen = &mut test_rng();
+        let num_vars = 8;
+        let vertical_vars = 2;
+        let mut v1 = VecVecPolynomial::<Fq>::rand(gen, num_vars - vertical_vars, vertical_vars);
+        dbg!(&v1.data.iter().map(|r| r.len()).collect_vec());
 
-        // let mut v = VecVecPolynomial::<Fq, 2>::rand(gen, 3, 2);
-        let mut v1 = VecVecPolynomial::<Fq>::new(
-            vec![
-                vec![Fq::from(1), Fq::from(3)],
-                vec![Fq::from(5)],
-            ],
-            Fq::from(7),
-            Fq::from(0),
-            2,
-            2,
-        );
-        let mut v2 = VecVecPolynomial::<Fq>::new(
-            vec![
-                vec![Fq::from(2), Fq::from(4)],
-                vec![Fq::from(6)],
-            ],
-            Fq::from(8),
-            Fq::from(0),
-            2,
-            2,
-        );
-        // let t = Fq::from(gen.next_u64());
-        let t = Fq::from(10);
-        let [d1, d2] = [v1.vec(), v2.vec()];
-        let [mut e1, mut e2] = [vec![], vec![]];
-        v1.make_21();
-        v2.make_21();
-        v1.bind_21((t - Fq::from(1)));
-        v2.bind_21((t - Fq::from(1)));
-        for i in 0..(d1.len() / 2) {
-            e1.push(d1[2 * i] + t * (d1[2 * i + 1] - d1[2 * i]));
-            e2.push(d2[2 * i] + t * (d2[2 * i + 1] - d2[2 * i]));
+        let t = Fq::from(gen.next_u64());
+
+        for i in 0..(num_vars - vertical_vars) {
+            let d1 = v1.vec();
+            let mut e1 = vec![];
+            v1.make_21();
+            v1.bind_21(t);
+            for i in 0..(d1.len() / 2) {
+                e1.push(d1[2 * i] + t * (d1[2 * i + 1] - d1[2 * i]));
+            }
+            let b1 = v1.vec();
+            e1.iter().zip_eq(b1.iter()).enumerate().map(|(idx, (e, b))| {
+                assert_eq!(e, b, "{}", idx)
+            }).count();
         }
-        let [b1, b2] = [v1.vec(), v2.vec()];
-        assert_eq!(e1, b1);
-        assert_eq!(e2, b2);
+    }
+
+    #[rstest]
+    fn eq_prefixes(
+        #[values(0, 1, 2)]
+        num_vertical_vars: usize,
+        #[values(2, 3, 7)]
+        max_row_len: usize,
+    ) {
+        let gen = &mut test_rng();
+        let num_vars = 6;
+
+        let mut eq = EQPolyData::new(
+            &(0..num_vars).map(|_| Fq::rand(gen)).collect_vec(),
+            num_vertical_vars,
+            max_row_len,
+        );
+        let mut segment_size = 1 << (max_row_len.log_2() - 1);
+
+        for i in 0..(num_vars - num_vertical_vars) {
+            let eq_evals = eq.get_segment_evals(segment_size);
+            for i in 0..segment_size {
+                assert_eq!(
+                    eq_evals[0..i].iter().sum::<Fq>() + eq.get_trailing_sum(i),
+                    Fq::one(),
+                )
+            }
+            eq.bind(Fq::rand(gen));
+            segment_size = 1.max(segment_size / 2);
+        }
+        match eq.point_parts.binding_var_idx {
+            None => {assert_eq!(eq.point_parts.padded_vars_idx, 0)}
+            Some(i) => {assert_eq!(i, eq.point_parts.padded_vars_idx - 1)}
+        }
     }
 }

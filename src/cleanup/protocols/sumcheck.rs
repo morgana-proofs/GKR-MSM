@@ -48,7 +48,7 @@ pub struct SumcheckVerifierConfig<I: ExactSizeIterator<Item = usize> + Clone + S
 }
 
 impl<I: ExactSizeIterator<Item = usize> + Clone + Send + Sync> SumcheckVerifierConfig<I> {
-    
+
     pub fn new(degrees: impl IntoIterator<IntoIter = I>) -> Self {
         Self { degrees : degrees.into_iter() }
     }
@@ -64,7 +64,7 @@ impl<I: ExactSizeIterator<Item = usize> + Clone + Send + Sync> SumcheckVerifierC
         for d in degrees {
             let msg = transcript.read_scalars(d); // polynomial of degree d has d+1 coefficient, but the linear term is ignored
             let poly = decompress_coefficients(&msg, claim);
-            
+
             let x = transcript.challenge(128);
             r.push(x);
             claim = evaluate_poly(&poly, x);
@@ -113,7 +113,7 @@ impl<F: PrimeField, I: ExactSizeIterator<Item = usize> + Clone + Send + Sync, S:
             sumcheck_object.bind(x);
             claim = evaluate_poly(&poly, x);
         }
-    
+
         r.reverse();
         ((claim, r), sumcheck_object.final_evals())
 
@@ -192,14 +192,14 @@ impl<F: PrimeField, Fun: AlgFnSO<F>> Sumcheckable<F> for ExampleSumcheckObjectSO
 
     fn unipoly(&mut self) -> UniPoly<F> {
         assert!(self.round_idx < self.num_vars, "the protocol has already ended");
-        
+
         match self.cached_unipoly.as_ref() {
             Some(p) => {return p.clone()},
             None => {
                 let half = 1 << (self.num_vars - self.round_idx - 1);
                 let n_polys = self.polys.len();
                 let offset_deg = self.f.deg() + 1;
-                
+
                 let mut difs = vec![F::zero(); n_polys];
                 let mut args = vec![F::zero(); n_polys];
 
@@ -235,7 +235,7 @@ impl<F: PrimeField, Fun: AlgFnSO<F>> Sumcheckable<F> for ExampleSumcheckObjectSO
             }
         }
         self.cached_unipoly.as_ref().unwrap().clone()
-        
+
     }
 
     fn final_evals(&self) -> Vec<F> {
@@ -258,7 +258,7 @@ impl<F: PrimeField, Fun: AlgFn<F>> ExampleSumcheckObject<F, Fun> {
 
 impl<F: PrimeField, Fun: AlgFn<F>> FoldToSumcheckable<F> for ExampleSumcheckObject<F, Fun> {
     type Target = ExampleSumcheckObjectSO<F, GammaWrapper<F, Fun>>;
-    
+
     fn rlc(self, gamma: F) -> Self::Target {
         Self::Target::new(self.polys, GammaWrapper::new(self.f, gamma), self.num_vars)
     }
@@ -317,7 +317,6 @@ impl<F: PrimeField, Fun: AlgFnSO<F>, S: Sumcheckable<F>> Protocol2 for BareSumch
         transcript.write_scalars(&poly_evs);
 
         (SinglePointClaims {point, evs: poly_evs}, ())
-
     }
 
     fn verify<PT: TVerifierTranscript>(&self, transcript: &mut PT, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
@@ -329,8 +328,7 @@ impl<F: PrimeField, Fun: AlgFnSO<F>, S: Sumcheckable<F>> Protocol2 for BareSumch
         let poly_evs = transcript.read_scalars(self.f.n_ins());
 
         assert_eq!(self.f.exec(&poly_evs), ev, "Final combinator check has failed.");
-        SinglePointClaims {point, evs: poly_evs}
-    }
+        SinglePointClaims {point, evs: poly_evs}    }
 }
 
 #[derive(Clone)]
@@ -411,11 +409,11 @@ impl<F: PrimeField, Fun: AlgFn<F>, S: FoldToSumcheckable<F>> Protocol2 for BareS
             folded_claim *= gamma;
             folded_claim += claims[l-i-2].sum;
         };
-        
+
         let folded_claim = SumClaim {sum: folded_claim};
 
         let sumcheckable = advice.rlc(gamma);
-        
+
         folded_protocol.prove(transcript, folded_claim, sumcheckable)
 
     }
@@ -463,11 +461,11 @@ mod tests {
         fn exec(&self, args: &impl Index<usize, Output = Fr>) -> Fr {
             args[0]*args[2] + args[0]*args[1]*args[2] + (args[0] - args[2]).pow([4])
         }
-    
+
         fn deg(&self) -> usize {
             4
         }
-    
+
         fn n_ins(&self) -> usize {
             3
         }
@@ -480,15 +478,15 @@ mod tests {
         fn exec(&self, args: &impl Index<usize, Output = Fr>) -> impl Iterator<Item = Fr> {
             [args[0] * args[1] - Fr::one(), args[0]*args[2], (args[0] + args[2]).pow([4]), (args[1] - Fr::one()).pow([3])].into_iter()
         }
-    
+
         fn deg(&self) -> usize {
             4
         }
-    
+
         fn n_ins(&self) -> usize {
             3
         }
-    
+
         fn n_outs(&self) -> usize {
             4
         }
@@ -505,7 +503,7 @@ mod tests {
         let rng = &mut test_rng();
         let dim = 6;
         let polys : Vec<Vec<Fr>> = (0..3).map(|_| (0 .. 1 << dim).map(|_|Fr::rand(rng)).collect()).collect();
-                
+
         let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
 
         let f = TestFunctionSO{};
@@ -517,11 +515,11 @@ mod tests {
 
         let simple_combinator_sumcheck  = BareSumcheckSO::new(f, dim);
         let (output_claims, _) = simple_combinator_sumcheck.prove(&mut transcript_p, sum_claim, sumcheckable);
-        
+
         let proof = transcript_p.end();
 
         let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);
-        
+
         let expected_output_claims = simple_combinator_sumcheck.verify(&mut transcript_v, sum_claim);
 
         assert_eq!(output_claims, expected_output_claims);
@@ -535,7 +533,7 @@ mod tests {
         let rng = &mut test_rng();
         let dim = 6;
         let polys : Vec<Vec<Fr>> = (0..3).map(|_| (0 .. 1 << dim).map(|_|Fr::rand(rng)).collect()).collect();
-                
+
         let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
 
         let f = TestFunction{};
@@ -550,11 +548,11 @@ mod tests {
 
         let simple_combinator_sumcheck  = BareSumcheck::new(f, dim);
         let (output_claims, _) = simple_combinator_sumcheck.prove(&mut transcript_p, sum_claims.clone(), sumcheckable);
-        
+
         let proof = transcript_p.end();
 
         let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);
-        
+
         let expected_output_claims = simple_combinator_sumcheck.verify(&mut transcript_v, sum_claims);
 
         assert_eq!(output_claims, expected_output_claims);

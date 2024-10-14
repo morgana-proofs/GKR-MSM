@@ -1,8 +1,10 @@
 use std::fmt::{Debug, Formatter, Write};
 use std::ops::{Add, AddAssign, Mul, Range, Sub, SubAssign};
 use std::slice::from_ref;
+use std::sync::Arc;
 use ark_ec::twisted_edwards::{TECurveConfig, Projective};
 use ark_ff::{Field, PrimeField};
+use ark_std::iterable::Iterable;
 use ark_std::rand::{Rng, RngCore};
 use ark_std::UniformRand;
 use itertools::Itertools;
@@ -188,8 +190,8 @@ impl<F: Clone> VecVecPolynomial<F> {
         self.data.iter().map(|p| p.len()).min().unwrap_or(0)
     }
 
-    pub fn new_unchecked(data: Vec<Vec<F>>, row_pad: F, col_pad: F, inner_exp: usize, total_exp: usize) -> Self {
-        Self {data, row_pad, col_pad, row_logsize: inner_exp, col_logsize: total_exp }
+    pub fn new_unchecked(data: Vec<Vec<F>>, row_pad: F, col_pad: F, row_logsize: usize, col_logsize: usize) -> Self {
+        Self {data, row_pad, col_pad, row_logsize, col_logsize }
     }
 
     pub fn num_vars(&self) -> usize {
@@ -418,42 +420,137 @@ impl<F: Clone> VecVecPolynomial<F> {
     }
 }
 
-pub fn map<const N_INS: usize, const N_OUT: usize, F: Clone, Fnc: Fn(&[&F; N_INS]) -> [F; N_OUT] + Sync + Send>(polys: &[VecVecPolynomial<F>; N_INS]) -> [VecVecPolynomial<F>; N_OUT] {
-    todo!()   
+pub fn vecvec_map<const N_INS: usize, const N_OUT: usize, F: PrimeField, Fnc: Fn(&[&F; N_INS]) -> [F; N_OUT] + Sync + Send>(
+    polys: &[VecVecPolynomial<F>; N_INS],
+    func: Arc<Fnc>
+) -> [VecVecPolynomial<F>; N_OUT] {
+    let row_logsize = polys[0].row_logsize;
+    let col_logsize = polys[0].col_logsize;
+    let mut outs = [
+        0;
+        N_OUT
+    ].map(|_| (Vec::with_capacity(polys[0].data.len()), None, None));
+
+    let mut inputs: [&F; N_INS] = polys.iter().map(|p| &p.row_pad).collect_vec().try_into().unwrap_or_else(|_| panic!());
+    for ((_, rp, _), ret) in outs.iter_mut().zip_eq(func.as_ref()(&inputs)) {
+        *rp = Some(ret)
+    }
+
+    inputs = polys.iter().map(|p| &p.col_pad).collect_vec().try_into().unwrap_or_else(|_| panic!());
+    for ((.., cp), ret) in outs.iter_mut().zip_eq(func.as_ref()(&inputs)) {
+        *cp = Some(ret)
+    }
+
+    for row in &polys[0].data {
+        for (v, ..) in &mut outs {
+            v.push(Vec::with_capacity(row.len()));
+        }
+    }
+
+    for row_idx in 0..polys[0].data.len() {
+        for idx in 0..polys[0].data[row_idx].len() {
+            inputs = polys.iter().map(|p| &p.data[row_idx][idx]).collect_vec().try_into().unwrap_or_else(|_| panic!());
+            for ((data, ..), ret) in outs.iter_mut().zip_eq(func.as_ref()(&inputs)) {
+                data[row_idx].push(ret)
+            }
+        }
+    }
+
+    outs.map(|(data, row_pad, col_pad)| {
+        VecVecPolynomial::new(
+            data,
+            row_pad.unwrap(),
+            col_pad.unwrap(),
+            row_logsize,
+            col_logsize,
+        )
+    })
 }
 
-pub fn map_split<const N_INS: usize, const N_OUT: usize, F: Clone, Fnc: Fn(&[&F; N_INS]) -> [F; N_OUT] + Sync + Send>(polys: &[VecVecPolynomial<F>; N_INS]) -> [[VecVecPolynomial<F>; N_OUT]; 2] {
-    todo!()
+pub fn vecvec_map_split<const N_INS: usize, const N_OUT: usize, F: PrimeField, Fnc: Fn(&[&F; N_INS]) -> [F; N_OUT] + Sync + Send>(
+    polys: &[VecVecPolynomial<F>; N_INS],
+    func: Arc<Fnc>
+) -> [[VecVecPolynomial<F>; N_OUT]; 2] {
+    let row_logsize = polys[0].row_logsize;
+    let col_logsize = polys[0].col_logsize;
+    let mut outs = [0; 2].map(|_| {
+        [
+            0;
+            N_OUT
+        ].map(|_| (Vec::with_capacity(polys[0].data.len()), None, None))
+    });
+
+    let mut inputs: [&F; N_INS] = polys.iter().map(|p| &p.row_pad).collect_vec().try_into().unwrap_or_else(|_| panic!());
+    let row_pad = func.as_ref()(&inputs);
+
+    inputs = polys.iter().map(|p| &p.col_pad).collect_vec().try_into().unwrap_or_else(|_| panic!());
+    let col_pad = func.as_ref()(&inputs);
+
+    for oi in 0..2 {
+        for ((_, rp, _), ret) in outs[oi].iter_mut().zip_eq(row_pad) {
+            *rp = Some(ret);
+        }
+        for ((.., cp), ret) in outs[oi].iter_mut().zip_eq(col_pad) {
+            *cp = Some(ret);
+        }
+
+        for row in &polys[0].data {
+            for (v, ..) in outs[oi].iter_mut() {
+                v.push(Vec::with_capacity(((row.len() / 2 + 1) / 2) * 2));
+            }
+        }
+    }
+
+    for row_idx in 0..polys[0].data.len() {
+        for idx in 0..polys[0].data[row_idx].len() {
+            inputs = polys.iter().map(|p| &p.data[row_idx][idx]).collect_vec().try_into().unwrap_or_else(|_| panic!());
+            for ((data, ..), ret) in outs[idx % 2].iter_mut().zip_eq(func.as_ref()(&inputs)) {
+                data[row_idx].push(ret)
+            }
+        }
+        if outs[0][0].0[row_idx].len() % 2 == 1 {
+            for oi in 0..2 {
+                for i in 0..outs[oi].len() {
+                    outs[oi][i].0[row_idx].push(outs[oi][i].1.unwrap());
+                }
+            }
+        }
+    }
+
+    outs.map(|o| o.map(|(data, row_pad, col_pad)| {
+        VecVecPolynomial::new_unchecked(
+            data,
+            row_pad.unwrap(),
+            col_pad.unwrap(),
+            row_logsize - 1,
+            col_logsize,
+        )
+    }))
 }
 
 #[cfg(test)]
 mod tests {
+    use ark_ec::CurveConfig;
     use rstest::*;
-    // use ark_ed_on_bls12_381_bandersnatch::Fr;
-    use ark_std::rand::Error;
+    use ark_ed_on_bls12_381_bandersnatch::{BandersnatchConfig, Fr};
     use ark_std::test_rng;
-    use liblasso::poly::dense_mlpoly::DensePolynomial;
     use super::*;
 
     use ark_ff::fields::MontConfig;
-    use ark_ff::{Fp, MontBackend};
     use num_traits::One;
+    use crate::protocol::protocol::PolynomialMapping;
+    use crate::utils::map_over_poly;
 
-    #[derive(MontConfig)]
-    #[modulus = "179"]
-    #[generator = "1"]
-    pub struct FqConfig;
-    pub type Fq = Fp<MontBackend<FqConfig, 1>, 1>;
 
     #[test]
     fn bind() {
         let gen = &mut test_rng();
         let num_vars = 8;
         let vertical_vars = 2;
-        let mut v1 = VecVecPolynomial::<Fq>::rand(gen, num_vars - vertical_vars, vertical_vars);
+        let mut v1 = VecVecPolynomial::<Fr>::rand(gen, num_vars - vertical_vars, vertical_vars);
         dbg!(&v1.data.iter().map(|r| r.len()).collect_vec());
 
-        let t = Fq::from(gen.next_u64());
+        let t = Fr::from(gen.next_u64());
 
         for i in 0..(num_vars - vertical_vars) {
             let d1 = v1.vec();
@@ -481,7 +578,7 @@ mod tests {
         let num_vars = 6;
 
         let mut eq = EQPolyData::new(
-            &(0..num_vars).map(|_| Fq::rand(gen)).collect_vec(),
+            &(0..num_vars).map(|_| Fr::rand(gen)).collect_vec(),
             num_vertical_vars,
             max_row_len,
         );
@@ -491,16 +588,89 @@ mod tests {
             let eq_evals = eq.get_segment_evals(segment_size);
             for i in 0..segment_size {
                 assert_eq!(
-                    eq_evals[0..i].iter().sum::<Fq>() + eq.get_trailing_sum(i),
-                    Fq::one(),
+                    eq_evals[0..i].iter().sum::<Fr>() + eq.get_trailing_sum(i),
+                    Fr::one(),
                 )
             }
-            eq.bind(Fq::rand(gen));
+            eq.bind(Fr::rand(gen));
             segment_size = 1.max(segment_size / 2);
         }
         match eq.point_parts.binding_var_idx {
             None => {assert_eq!(eq.point_parts.padded_vars_idx, 0)}
             Some(i) => {assert_eq!(i, eq.point_parts.padded_vars_idx - 1)}
+        }
+    }
+
+    #[test]
+    fn map() {
+        let gen = &mut test_rng();
+        type F = <BandersnatchConfig as CurveConfig>::BaseField;
+        let n_args = 3;
+        fn foo(ins: &[&F; 3]) -> [F; 2] {
+            [
+                ins[0] + ins[1],
+                ins[1] + ins[2],
+            ]
+        }
+        fn blah(ins: &[F]) -> Vec<F> {
+            let tmp = ins.iter().collect_vec();
+            let tmp = tmp.as_slice();
+            foo(&TryInto::<&[&F; 3]>::try_into(tmp).unwrap()).to_vec()
+        }
+
+        let data = VecVecPolynomial::rand_points::<BandersnatchConfig, _>(gen, 3, 3);
+        let dense_data = data.iter().map(|p| p.vec()).collect_vec();
+
+        let out = vecvec_map(data.as_slice().try_into().unwrap(), Arc::new(foo));
+        let expected_out = map_over_poly(&dense_data.iter().map(|p| p.as_slice()).collect_vec().as_slice(), PolynomialMapping {
+            exec: Arc::new(blah),
+            degree: 1,
+            num_i: 3,
+            num_o: 2,
+        });
+
+        let dense_out = out.map(|p| p.vec()).to_vec();
+
+        assert_eq!(dense_out, expected_out)
+    }
+
+    #[test]
+    fn map_split() {
+        let gen = &mut test_rng();
+        type F = <BandersnatchConfig as CurveConfig>::BaseField;
+        for i in 0..100 {
+            let n_args = 3;
+            fn foo(ins: &[&F; 3]) -> [F; 2] {
+                [
+                    ins[0] + ins[1],
+                    ins[1] + ins[2],
+                ]
+            }
+            fn blah(ins: &[F]) -> Vec<F> {
+                let tmp = ins.iter().collect_vec();
+                let tmp = tmp.as_slice();
+                foo(&TryInto::<&[&F; 3]>::try_into(tmp).unwrap()).to_vec()
+            }
+
+            let data = VecVecPolynomial::rand_points::<BandersnatchConfig, _>(gen, 3, 3);
+            let dense_data = data.iter().map(|p| p.vec()).collect_vec();
+
+            let [out0, out1] = vecvec_map_split(data.as_slice().try_into().unwrap(), Arc::new(foo));
+            let expected_out = map_over_poly(&dense_data.iter().map(|p| p.as_slice()).collect_vec().as_slice(), PolynomialMapping {
+                exec: Arc::new(blah),
+                degree: 1,
+                num_i: 3,
+                num_o: 2,
+            });
+
+            let dense_out = out0.iter().zip_eq(out1.iter()).map(|(l, r)| {
+                l.vec().into_iter().interleave(r.vec().into_iter()).collect_vec()
+            }).collect_vec();
+
+            assert_eq!(dense_out, expected_out);
+            for row in &out0[0].data {
+                assert_eq!(row.len() % 2, 0)
+            }
         }
     }
 }

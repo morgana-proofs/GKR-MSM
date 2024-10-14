@@ -102,7 +102,7 @@ mod tests{
         println!("Non-bucketed msm of size 1024 took {}ms", (t2-t1).as_millis());
         println!("Same msm with 64 different values bucketed took {}ms.", (t3-t2).as_millis());
 
-        assert_eq!(lhs.unwrap(), rhs);
+        assert_eq!(lhs.unwrap().into_affine(), rhs.into_affine());
     }
 
 }

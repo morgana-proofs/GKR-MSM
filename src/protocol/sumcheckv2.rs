@@ -61,6 +61,7 @@ pub trait Sumcheckable<F: PrimeField> {
     fn bind(&mut self, f: F);
     fn unipoly(&mut self) -> UniPoly<F>;
     fn final_evals(&self) -> Vec<F>;
+    fn challenges(&self) -> &[F];
 }
 
 impl<F: PrimeField, const N_INS: usize, const N_OUT: usize> Sumcheckable<F> for Lincomb<F, N_INS, N_OUT> {
@@ -130,7 +131,11 @@ impl<F: PrimeField, const N_INS: usize, const N_OUT: usize> Sumcheckable<F> for 
 
     fn final_evals(&self) -> Vec<F> {
         // self.polys.par_iter().map(|poly| poly[0]).collect()
-        vec![]
+        unreachable!()
+    }
+    
+    fn challenges(&self) -> &[F] {
+        &self.current_point
     }
 }
 

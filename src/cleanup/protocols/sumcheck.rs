@@ -1,9 +1,11 @@
-use std::{iter::repeat, marker::PhantomData, ops::Index, process::Output, ptr};
+use std::{cmp::min, iter::repeat, marker::PhantomData, ops::Index, process::Output, ptr};
 
 use ark_ff::PrimeField;
+use bytemuck::cast_slice_mut;
+use hashcaster::ptr_utils::{AsSharedMutPtr, UnsafeIndexRaw, UnsafeIndexRawMut};
 use itertools::Itertools;
 use liblasso::poly::unipoly::UniPoly;
-use rayon::iter::Fold;
+use rayon::{current_num_threads, current_thread_index, iter::{Fold, IntoParallelIterator, ParallelIterator}};
 use crate::{cleanup::{proof_transcript::{TProverTranscript, TVerifierTranscript}, protocol2::Protocol2}, protocol::sumcheckv2::Sumcheckable};
 
 
@@ -152,6 +154,7 @@ pub trait AlgFn<F: PrimeField> : Clone + Sync + Send {
 #[derive(Clone, Debug)]
 pub struct ExampleSumcheckObjectSO<F: PrimeField, Fun: AlgFnSO<F>> {
     polys: Vec<Vec<F>>,
+    challenges: Vec<F>,
     f: Fun,
     num_vars: usize,
     round_idx: usize,
@@ -165,21 +168,19 @@ impl<F: PrimeField, Fun: AlgFnSO<F>> ExampleSumcheckObjectSO<F, Fun> {
         for i in 0..l {
             assert!(polys[i].len() == 1 << num_vars);
         }
-        Self { polys, f, num_vars, round_idx: 0, cached_unipoly: None }
+        Self { polys, f, num_vars, round_idx: 0, cached_unipoly: None, challenges: vec![] }
     }
 }
 
 pub fn bind_dense_poly<F: PrimeField>(poly: &mut Vec<F>, t: F) {
     let half = poly.len() / 2;
-    for i in 0..half {
-        poly[i] = poly[2*i] + t * (poly[2*i + 1] - poly[2*i]);
-    }
-    poly.truncate(half);
+    *poly = (0..half).into_par_iter().map(|i| poly[2*i] + t * (poly[2*i + 1] - poly[2*i])).collect();
 }
 
 impl<F: PrimeField, Fun: AlgFnSO<F>> Sumcheckable<F> for ExampleSumcheckObjectSO<F, Fun> {
     fn bind(&mut self, t: F) {
         assert!(self.round_idx < self.num_vars, "the protocol has already ended");
+        self.challenges.push(t);
         for poly in &mut self.polys {
             bind_dense_poly(poly, t);
         }
@@ -242,7 +243,122 @@ impl<F: PrimeField, Fun: AlgFnSO<F>> Sumcheckable<F> for ExampleSumcheckObjectSO
         assert!(self.round_idx == self.num_vars, "can only call final evals after the last round");
         self.polys.iter().map(|poly| poly[0]).collect()
     }
+
+    fn challenges(&self) -> &[F] {
+        &self.challenges
+    }
 }
+
+
+
+
+#[derive(Clone, Debug)]
+pub struct DenseSumcheckObjectSO<F: PrimeField, Fun: AlgFnSO<F>> {
+    polys: Vec<Vec<F>>,
+    challenges: Vec<F>,
+    f: Fun,
+    num_vars: usize,
+    round_idx: usize,
+    cached_unipoly: Option<UniPoly<F>>,
+
+    claim: F,
+}
+
+impl<F: PrimeField, Fun: AlgFnSO<F>> DenseSumcheckObjectSO<F, Fun> {
+    pub fn new(polys: Vec<Vec<F>>, f: Fun, num_vars: usize, claim_hint: F) -> Self {
+        let l = polys.len();
+        assert!(l == f.n_ins());
+        for i in 0..l {
+            assert!(polys[i].len() == 1 << num_vars);
+        }
+        Self { polys, f, num_vars, round_idx: 0, cached_unipoly: None, challenges: vec![], claim: claim_hint }
+    }
+}
+
+impl<F: PrimeField, Fun: AlgFnSO<F>> Sumcheckable<F> for DenseSumcheckObjectSO<F, Fun> {
+    fn bind(&mut self, t: F) {
+        assert!(self.round_idx < self.num_vars, "the protocol has already ended");
+        self.challenges.push(t);
+        for poly in &mut self.polys {
+            bind_dense_poly(poly, t);
+        }
+        self.round_idx += 1;
+        match self.cached_unipoly.take() {
+            None => {panic!("should evaluate unipoly before binding - it has an opportunity to change the state due to in-place evaluation")}
+            Some(u) => {self.claim = u.evaluate(&t)}
+        }
+    }
+
+    fn unipoly(&mut self) -> UniPoly<F> {
+        assert!(self.round_idx < self.num_vars, "the protocol has already ended");
+        
+        match self.cached_unipoly.as_ref() {
+            Some(p) => {return p.clone()},
+            None => {
+                let half = 1 << (self.num_vars - self.round_idx - 1);
+                let n_polys = self.polys.len();
+
+                let num_tasks = 8 * current_num_threads();
+
+                let task_size = (half + num_tasks - 1) / num_tasks;
+
+                let acc: Vec<Vec<F>> = (0..num_tasks).into_par_iter().map(|task_idx| {
+                    let mut difs = vec![F::zero(); n_polys];
+                    let mut args = vec![F::zero(); n_polys];
+                    let mut acc = vec![F::zero(); self.f.deg()];
+    
+                    (task_idx * task_size .. min((task_idx + 1) * task_size, half)).map(|i| {
+                        for j in 0..n_polys {
+                            args[j] = self.polys[j][2 * i + 1];
+                        }
+    
+                        acc[0] += self.f.exec(&args);
+    
+                        for j in 0..n_polys {
+                            difs[j] = self.polys[j][2 * i + 1] - self.polys[j][2 * i]
+                        }
+    
+                        for s in 1..self.f.deg() {
+                            for j in 0..n_polys {
+                                args[j] += difs[j];
+                            }
+    
+                            acc[s] += self.f.exec(&args);
+                        }                    
+                    }).count();
+
+                    acc
+                }).collect();
+
+                let mut total_acc = vec![F::zero(); self.f.deg() + 1];
+
+                for i in 0..acc.len() {
+                    for j in 0..self.f.deg() {
+                        total_acc[j+1] += acc[i][j]
+                    }
+                }
+                total_acc[0] = self.claim - total_acc[1];
+
+                self.cached_unipoly = Some(UniPoly::from_evals(&total_acc));
+            }
+        }
+        self.cached_unipoly.as_ref().unwrap().clone()
+        
+    }
+
+
+    fn final_evals(&self) -> Vec<F> {
+        assert!(self.round_idx == self.num_vars, "can only call final evals after the last round");
+        self.polys.iter().map(|poly| poly[0]).collect()
+    }
+
+    fn challenges(&self) -> &[F] {
+        &self.challenges
+    }
+}
+
+
+//pub type DenseSumcheckObject<F, Fun> = ExampleSumcheckObject<F, Fun>; // To be replaced with optimized implementation.
 
 pub struct ExampleSumcheckObject<F: PrimeField, Fun: AlgFn<F>> {
     polys: Vec<Vec<F>>,
@@ -261,6 +377,40 @@ impl<F: PrimeField, Fun: AlgFn<F>> FoldToSumcheckable<F> for ExampleSumcheckObje
     
     fn rlc(self, gamma: F) -> Self::Target {
         Self::Target::new(self.polys, GammaWrapper::new(self.f, gamma), self.num_vars)
+    }
+}
+
+pub fn gamma_rlc<F: PrimeField>(gamma: F, vals: &[F]) -> F {
+    let l = vals.len();
+    if l == 0 {
+        return F::zero();
+    }
+    let mut ret = vals[l-1];
+    for i in 0..l-1 {
+        ret *= gamma;
+        ret += vals[l-i-2];
+    }
+    ret
+}
+
+pub struct DenseSumcheckObject<F: PrimeField, Fun: AlgFn<F>> {
+    polys: Vec<Vec<F>>,
+    f: Fun,
+    num_vars: usize,
+    claim_hint: Vec<F>,
+}
+
+impl<F: PrimeField, Fun: AlgFn<F>> DenseSumcheckObject<F, Fun> {
+    pub fn new(polys: Vec<Vec<F>>, f: Fun, num_vars: usize, claim_hint: Vec<F>) -> Self {
+        Self { polys, f, num_vars, claim_hint }
+    }
+}
+
+impl<F: PrimeField, Fun: AlgFn<F>> FoldToSumcheckable<F> for DenseSumcheckObject<F, Fun> {
+    type Target = DenseSumcheckObjectSO<F, GammaWrapper<F, Fun>>;
+    
+    fn rlc(self, gamma: F) -> Self::Target {
+        Self::Target::new(self.polys, GammaWrapper::new(self.f, gamma), self.num_vars, gamma_rlc(gamma, &self.claim_hint))
     }
 }
 
@@ -501,7 +651,7 @@ mod tests {
 
 
     #[test]
-    fn dense_sumcheck_verifier_accepts_prover_so() {
+    fn example_sumcheck_verifier_accepts_prover_so() {
         let rng = &mut test_rng();
         let dim = 6;
         let polys : Vec<Vec<Fr>> = (0..3).map(|_| (0 .. 1 << dim).map(|_|Fr::rand(rng)).collect()).collect();
@@ -531,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn dense_sumcheck_verifier_accepts_prover_mo() {
+    fn example_sumcheck_verifier_accepts_prover_mo() {
         let rng = &mut test_rng();
         let dim = 6;
         let polys : Vec<Vec<Fr>> = (0..3).map(|_| (0 .. 1 << dim).map(|_|Fr::rand(rng)).collect()).collect();
@@ -563,6 +713,42 @@ mod tests {
         assert_eq!(polys.iter().map(|poly| evaluate(poly, &point)).collect_vec(), evs);
 
     }
+
+
+    #[test]
+    fn dense_sumcheck_verifier_accepts_prover_mo() {
+        let rng = &mut test_rng();
+        let dim = 6;
+        let polys : Vec<Vec<Fr>> = (0..3).map(|_| (0 .. 1 << dim).map(|_|Fr::rand(rng)).collect()).collect();
+                
+        let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
+
+        let f = TestFunction{};
+
+        let mut sum_claims = vec![Fr::zero(); 4];
+
+        (0 .. 1 << dim).map(|i| f.exec(& [0, 1, 2].map(|j| polys[j][i])).zip_eq(sum_claims.iter_mut()).map(|(x, y)| *y += x).count() ).count();
+
+        let sumcheckable = DenseSumcheckObject::new(polys.clone(), f, dim, sum_claims.clone());
+
+        let sum_claims = sum_claims.into_iter().map(|x| SumClaim{sum: x}).collect_vec();
+
+        let simple_combinator_sumcheck  = BareSumcheck::new(f, dim);
+        let (output_claims, _) = simple_combinator_sumcheck.prove(&mut transcript_p, sum_claims.clone(), sumcheckable);
+        
+        let proof = transcript_p.end();
+
+        let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);
+        
+        let expected_output_claims = simple_combinator_sumcheck.verify(&mut transcript_v, sum_claims);
+
+        assert_eq!(output_claims, expected_output_claims);
+
+        let SinglePointClaims { point, evs } = output_claims;
+        assert_eq!(polys.iter().map(|poly| evaluate(poly, &point)).collect_vec(), evs);
+
+    }
+
 
     #[test]
 

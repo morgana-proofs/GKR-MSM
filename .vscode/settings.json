@@ -1,0 +1,7 @@
+{
+    "rust-analyzer.checkOnSave": true,
+    "rust-analyzer.linkedProjects": [
+    
+        "Cargo.toml"
+    ],
+}

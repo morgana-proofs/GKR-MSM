@@ -5,6 +5,7 @@ use std::ptr::read;
 
 use ark_bls12_381::Fr;
 use ark_ff::{BigInt, Field, PrimeField};
+use ark_std::iterable::Iterable;
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
 use hashcaster::ptr_utils::{AsSharedMUMutPtr, UninitArr, UnsafeIndexRawMut};
@@ -98,7 +99,7 @@ pub fn fold_with_coef<F: Field>(evals: &[F], layer_coef: F) -> Vec<F> {
 }
 
 
-pub fn make_gamma_pows<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma: F) -> Vec<F> {
+pub fn make_gamma_pows_legacy<F: PrimeField>(claims: &MultiEvalClaim<F>, gamma: F) -> Vec<F> {
     let num_claims = claims.evs.iter().fold(0, |acc, upd| acc + upd.len());
 
     let mut gamma_pows = vec![F::one(), gamma];
@@ -118,6 +119,36 @@ pub fn make_gamma_pows_static<F: PrimeField, const N_POWS: usize>(gamma: F) -> [
         gamma_pows.push(tmp * gamma);
     };
     gamma_pows.try_into().unwrap_or_else(|v: Vec<F>| panic!("Expected a Vec of length {} but it was {}", N_POWS, v.len()))
+}
+
+pub fn make_gamma_pows<F: PrimeField>(gamma: F, count: usize) -> Vec<F> {
+    let mut gamma_pows = Vec::with_capacity(count);
+    gamma_pows.push(F::one());
+    gamma_pows.push(gamma);
+    for i in 2..count {
+        let tmp = gamma_pows[i - 1];
+        gamma_pows.push(tmp * gamma);
+    };
+    gamma_pows
+}
+
+pub fn zip_with_gamma<F: PrimeField>(gamma: F, vals: &[F]) -> F {
+    let l = vals.len();
+    if l == 0 {
+        return F::zero();
+    }
+    let mut ret = vals[l - 1];
+    for i in 0 .. (l - 1) {
+        ret *= gamma;
+        ret += vals[l - i - 2];
+    };
+    ret
+}
+
+pub fn eq_eval<F: PrimeField>(p1: &[F], p2: &[F]) -> F {
+    p1.iter().zip_eq(p2.iter()).map(|(x1, x2)| {
+        F::one() - x1 - x2 + (*x1 * x2).double()
+    }).product()
 }
 
 pub fn split_into_chunks_balanced<T>(arr: &[T], num_threads: usize) -> impl Iterator<Item = &[T]> + '_ {
@@ -222,6 +253,10 @@ pub fn eq_poly_sequence<F: PrimeField>(pt: &[F]) -> Vec<Vec<F>> {
 
 pub fn eq_poly_sequence_last<F: PrimeField>(pt: &[F]) -> Option<Vec<F>> {
     eq_poly_sequence(pt).pop()
+}
+
+pub fn eq_poly_sequence_from_multiplier_last<F: PrimeField>(mul: F, pt: &[F]) -> Option<Vec<F>> {
+    eq_poly_sequence_from_multiplier(mul, pt).pop()
 }
 
 #[cfg(feature = "memprof")]

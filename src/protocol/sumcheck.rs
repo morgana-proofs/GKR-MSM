@@ -11,7 +11,7 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 use profi::{prof, prof_guard};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, once, ParallelIterator};
 
-use crate::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows, map_over_poly_legacy}};
+use crate::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows_legacy, map_over_poly_legacy}};
 use crate::copoly::{CopolyData, Copolynomial, EqPoly};
 use crate::polynomial::fragmented::{FragmentedPoly, InterOp};
 use crate::utils::{fix_var_bot};
@@ -198,7 +198,7 @@ impl<F: PrimeField> ProtocolProver<F> for SumcheckPolyMapProver<F> {
         match &mut self.sumcheckable {
             None => {
                 let gamma = challenge.value;
-                let gamma_pows = make_gamma_pows(&self.claims, gamma);
+                let gamma_pows = make_gamma_pows_legacy(&self.claims, gamma);
 
 
                 let polys = self.polys.take().unwrap();
@@ -393,7 +393,7 @@ impl<F: PrimeField> ProtocolProver<F> for LameSumcheckPolyMapProver<F> {
         if let None = f_folded {
 
             let gamma = challenge.value;
-            let gamma_pows = make_gamma_pows(claims, gamma);
+            let gamma_pows = make_gamma_pows_legacy(claims, gamma);
 
             *ev_folded = Some(make_folded_claim(claims, &gamma_pows));
             *f_folded = Some(make_folded_f(claims, &gamma_pows, f));
@@ -606,7 +606,7 @@ impl<F: PrimeField> ProtocolVerifier<F> for SumcheckPolyMapVerifier<F> {
         // Detect 0-th round (gamma challenge).
         if let None = current_sum {
             let gamma = challenge.value;
-            let gamma_pows = make_gamma_pows(&claims_to_reduce, gamma);
+            let gamma_pows = make_gamma_pows_legacy(&claims_to_reduce, gamma);
             *current_sum = Some(make_folded_claim(&claims_to_reduce, &gamma_pows));
             *f_folded = Some(make_folded_f(&claims_to_reduce, &gamma_pows, &f));
             sumcheck_round_idx = 0;

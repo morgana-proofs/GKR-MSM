@@ -15,7 +15,7 @@ use profi::{prof, prof_guard};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, once, ParallelIterator};
 
 use crate::transcript::TranscriptSender;
-use crate::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows, map_over_poly_legacy}};
+use crate::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows_legacy, map_over_poly_legacy}};
 use crate::copoly::{CopolyData, Copolynomial, EqPoly};
 use crate::polynomial::fragmented::{FragmentedPoly, InterOp};
 use crate::utils::{fix_var_bot};

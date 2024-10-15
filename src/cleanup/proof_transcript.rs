@@ -1,7 +1,9 @@
 use ark_ec::{CurveGroup, AffineRepr};
-use ark_ff::{PrimeField};
+use ark_ff::{BigInteger, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use merlin::Transcript;
+
+const SUMCHECK_CHALLENGE_SIZE: usize = 128;
 
 #[derive(Debug, Clone, Copy)]
 pub enum PTMode {
@@ -26,7 +28,10 @@ pub trait TProofTranscript2 : Sized {
     fn read_raw_msg(&mut self, bytesize: usize) -> &[u8];
     fn write_raw_msg(&mut self, msg: &[u8]);
 
-
+    fn challenge_sumcheck<F: PrimeField>(&mut self) -> F {
+        F::from_le_bytes_mod_order(&self.raw_challenge(SUMCHECK_CHALLENGE_SIZE / 8))
+    }
+    
     fn challenge<F: PrimeField>(&mut self, bitsize: usize) -> F {
         F::from_le_bytes_mod_order(&self.raw_challenge((bitsize+7) / 8))
     }

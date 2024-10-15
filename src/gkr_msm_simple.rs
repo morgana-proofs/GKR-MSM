@@ -361,15 +361,15 @@ mod tests {
 
     #[test]
     fn gkr_msm_simple_test() {
-        // let gamma = 5;
-        // let log_num_points = 5;
-        // let log_num_scalar_bits = 8;
-        // let log_num_bit_columns = 6;
-
-        let gamma = 6;
-        let log_num_points = 16;
+        let gamma = 5;
+        let log_num_points = 5;
         let log_num_scalar_bits = 8;
-        let log_num_bit_columns = 7;    
+        let log_num_bit_columns = 6;
+
+        // let gamma = 6;
+        // let log_num_points = 16;
+        // let log_num_scalar_bits = 8;
+        // let log_num_bit_columns = 7;    
 
         let num_points = 1 << log_num_points;
         let num_scalar_bits = 1 << log_num_scalar_bits;

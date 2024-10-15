@@ -6,8 +6,8 @@ use hashcaster::ptr_utils::{AsSharedMutPtr, UnsafeIndexRaw, UnsafeIndexRawMut};
 use itertools::Itertools;
 use liblasso::poly::unipoly::UniPoly;
 use rayon::{current_num_threads, current_thread_index, iter::{Fold, IntoParallelIterator, ParallelIterator}};
-use crate::{cleanup::{proof_transcript::{TProverTranscript, TVerifierTranscript}, protocol2::Protocol2}, protocol::sumcheckv2::Sumcheckable};
-
+use crate::{cleanup::protocol2::Protocol2, protocol::sumcheckv2::Sumcheckable};
+use crate::cleanup::proof_transcript::TProofTranscript2;
 
 /// Given polynomial in coefficient form with linear term skipped, and sum P(0) + P(1), recovers full polynomial.
 pub fn decompress_coefficients<F: PrimeField>(coeffs_wo_lin_term: &[F], sum: F) -> Vec<F> {
@@ -59,7 +59,7 @@ impl<I: ExactSizeIterator<Item = usize> + Clone + Send + Sync> SumcheckVerifierC
         self.degrees.len()
     }
 
-    pub fn main_cycle_sumcheck_verifier<PT: TVerifierTranscript, F: PrimeField>(&self, transcript: &mut PT, sum_claim: F) -> (F, Vec<F>) {
+    pub fn main_cycle_sumcheck_verifier<PT: TProofTranscript2, F: PrimeField>(&self, transcript: &mut PT, sum_claim: F) -> (F, Vec<F>) {
         let degrees = self.degrees.clone().into_iter();
         let mut claim = sum_claim;
         let mut r = Vec::with_capacity(self.degrees.len());
@@ -91,13 +91,13 @@ impl<F: PrimeField, I: ExactSizeIterator<Item = usize> + Clone + Send + Sync, S:
     }
 }
 
-impl<F: PrimeField, I: ExactSizeIterator<Item = usize> + Clone + Send + Sync, S: Sumcheckable<F>> Protocol2 for GenericSumcheckProtocol<F, I, S> {
+impl<F: PrimeField, I: ExactSizeIterator<Item = usize> + Clone + Send + Sync, S: Sumcheckable<F>, PT: TProofTranscript2> Protocol2<PT> for GenericSumcheckProtocol<F, I, S> {
     type ProverInput = S;
     type ProverOutput = Vec<F>;
     type ClaimsBefore = F;
     type ClaimsAfter = (F, Vec<F>);
 
-    fn prove<PT: TProverTranscript>(&self, transcript: &mut PT, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
+    fn prove(&self, transcript: &mut PT, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         let degrees = self.config.degrees.clone().into_iter();
         let mut claim = claims;
         let mut sumcheck_object = advice;
@@ -121,7 +121,7 @@ impl<F: PrimeField, I: ExactSizeIterator<Item = usize> + Clone + Send + Sync, S:
 
     }
 
-    fn verify<PT: TVerifierTranscript>(&self, transcript: &mut PT, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
+    fn verify(&self, transcript: &mut PT, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
         self.config.main_cycle_sumcheck_verifier(transcript, claims)
     }
 }
@@ -449,7 +449,7 @@ impl<F: PrimeField, Fun: AlgFnSO<F>, S: Sumcheckable<F>> BareSumcheckSO<F, Fun, 
     }
 }
 
-impl<F: PrimeField, Fun: AlgFnSO<F>, S: Sumcheckable<F>> Protocol2 for BareSumcheckSO<F, Fun, S> {
+impl<F: PrimeField, Fun: AlgFnSO<F>, S: Sumcheckable<F>, PT: TProofTranscript2> Protocol2<PT> for BareSumcheckSO<F, Fun, S> {
     type ProverInput = S;
 
     type ProverOutput = ();
@@ -458,7 +458,7 @@ impl<F: PrimeField, Fun: AlgFnSO<F>, S: Sumcheckable<F>> Protocol2 for BareSumch
 
     type ClaimsAfter = SinglePointClaims<F>;
 
-    fn prove<PT: TProverTranscript>(&self, transcript: &mut PT, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
+    fn prove(&self, transcript: &mut PT, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         let degrees = repeat(self.f.deg()).take(self.num_vars);
         let generic_protocol_config = GenericSumcheckProtocol::new(degrees);
 
@@ -469,7 +469,7 @@ impl<F: PrimeField, Fun: AlgFnSO<F>, S: Sumcheckable<F>> Protocol2 for BareSumch
         (SinglePointClaims {point, evs: poly_evs}, ())
     }
 
-    fn verify<PT: TVerifierTranscript>(&self, transcript: &mut PT, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
+    fn verify(&self, transcript: &mut PT, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
         let degrees = repeat(self.f.deg()).take(self.num_vars);
         let generic_protocol_config = GenericSumcheckProtocol::<F, _, S>::new(degrees);
 
@@ -537,7 +537,7 @@ pub trait FoldToSumcheckable<F: PrimeField> {
     fn rlc(self, gamma: F) -> Self::Target;
 }
 
-impl<F: PrimeField, Fun: AlgFn<F>, S: FoldToSumcheckable<F>> Protocol2 for BareSumcheck<F, Fun, S> {
+impl<F: PrimeField, Fun: AlgFn<F>, S: FoldToSumcheckable<F>, PT: TProofTranscript2> Protocol2<PT> for BareSumcheck<F, Fun, S> {
     type ProverInput = S;
 
     type ProverOutput = ();
@@ -546,7 +546,7 @@ impl<F: PrimeField, Fun: AlgFn<F>, S: FoldToSumcheckable<F>> Protocol2 for BareS
 
     type ClaimsAfter = SinglePointClaims<F>;
 
-    fn prove<PT: TProverTranscript>(&self, transcript: &mut PT, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
+    fn prove(&self, transcript: &mut PT, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         assert!(claims.len() == self.f.n_outs());
 
         let gamma = transcript.challenge(128);
@@ -568,7 +568,7 @@ impl<F: PrimeField, Fun: AlgFn<F>, S: FoldToSumcheckable<F>> Protocol2 for BareS
 
     }
 
-    fn verify<PT: TVerifierTranscript>(&self, transcript: &mut PT, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
+    fn verify(&self, transcript: &mut PT, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
         assert!(claims.len() == self.f.n_outs());
 
         let gamma = transcript.challenge(128);

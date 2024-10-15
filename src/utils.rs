@@ -171,7 +171,7 @@ pub fn padded_eq_poly_sequence<F: PrimeField>(padding_size: usize, pt: &[F]) -> 
             let iter = (0 .. (1 << (i - 1 - padding_size))).into_iter();
 
             #[cfg(feature = "parallel")]
-            todo!();
+            let iter = (0 .. (1 << (i - 1 - padding_size))).into_par_iter();
 
             iter.map(|j|{
                 let w = &last[j];
@@ -201,7 +201,7 @@ pub fn eq_poly_sequence_from_multiplier<F: PrimeField>(multiplier: F, pt: &[F]) 
             let iter = (0 .. (1 << (i - 1))).into_iter();
 
             #[cfg(feature = "parallel")]
-            let iter = (0 .. 1 << (i-1)).into_par_iter();
+            let iter = (0 .. 1 << (i - 1)).into_par_iter();
 
             iter.map(|j|{
                 let w = &last[j];

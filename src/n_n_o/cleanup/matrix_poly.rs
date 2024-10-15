@@ -71,6 +71,15 @@ pub fn inner_prod_hi<F: PrimeField>(large: &[F], small: &[F], pad_large_to_lengt
     acc
 }
 
+fn make_fake_prover_response<F: PrimeField>() -> Vec<F> {
+    todo!()
+}
+
+/// Takes a vector of F-elements, interprets each of these as BigInt, multiplies k-th limb by 2^{64k}, and casts to NNF. 
+pub fn normalize_and_cast_to_nn<F: PrimeField, NNF: PrimeField>(limbs: &[F]) -> NNF {
+    todo!()
+}
+
 /// Matrix-arranged polynomial.
 /// Columns are little-end, i.e. each column is a chunk of length y_size.
 /// x_logsize and y_logsize are "true" log-dimensions of this polynomial, which is assumed to be formally appended with zeroes.
@@ -113,8 +122,7 @@ impl<F: PrimeField, NNF: PrimeField> NNOProtocol<F, NNF> {
 pub struct NNOOutputClaim<F: PrimeField, NNF: PrimeField> {
     pub nn_point_lo: Vec<NNF>, //
     pub nn_point_hi: Vec<NNF>, // point in which our original polynomial was evaluated, split into 2 parts
-    pub r_x: Vec<F>, //
-    pub r_y: Vec<F>, // evaluation point
+    pub r: Vec<F>, // evaluation point
 
     pub native_repr_eval: F, // evaluation of native representation P(r_x, r_y)
 
@@ -132,13 +140,37 @@ impl<F: PrimeField, NNF: PrimeField, PT: TProofTranscript2> Protocol2<PT> for NN
     type ClaimsAfter = NNOOutputClaim<F, NNF>;
 
     fn prove(&self, transcript: &mut PT, nn_opening_claim: Self::ClaimsBefore, native_repr: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
+        let evaluation_with_nonflushed_limbs = make_fake_prover_response::<F>();
+        assert!(evaluation_with_nonflushed_limbs.len() == 3 * (self.y_size-1) + 1);
+        transcript.write_scalars(&evaluation_with_nonflushed_limbs);
+        let t: F = transcript.challenge(128);
+        // here, prover computes inner_prod_lo with 1, t, t^2 ...
+
         todo!()
     }
 
     fn verify(&self, transcript: &mut PT, nn_opening_claim: Self::ClaimsBefore) -> Self::ClaimsAfter {
-        
-        
-        todo!()
+        let evaluation_with_nonflushed_limbs = transcript.read_scalars::<F>(3 * (self.y_size - 1) + 1);
+        assert!(nn_opening_claim.ev == normalize_and_cast_to_nn(&evaluation_with_nonflushed_limbs));
+
+        let t : F = transcript.challenge(128);
+        let sum_claim = UniPoly::from_coeff(evaluation_with_nonflushed_limbs).evaluate(&t);
+
+        let n_vars_a = self.x_logsize / 2;
+        let n_vars_b = self.x_logsize - n_vars_a;
+
+        let triple_prod = TripleProductSumcheck::<F>::new(n_vars_a, n_vars_b);
+
+        let SinglePointClaims { point, evs } = triple_prod.verify(transcript, SumClaim{sum: sum_claim});
+
+        NNOOutputClaim::<F, NNF> {
+            nn_point_hi: nn_opening_claim.point[.. n_vars_a].to_vec(),
+            nn_point_lo: nn_opening_claim.point[n_vars_a ..].to_vec(),
+            r: point,
+            native_repr_eval: evs[0],
+            native_repr_nn_eq_lo_eval: evs[1],
+            native_repr_nn_eq_hi_eval: evs[2],
+        }
     }
 }
 
@@ -176,6 +208,12 @@ pub struct TripleProductSumcheck<F: PrimeField> {
     pub n_vars_a: usize,
     pub n_vars_b: usize,
     _marker: PhantomData<F>,
+}
+
+impl<F: PrimeField> TripleProductSumcheck<F> {
+    pub fn new(n_vars_a: usize, n_vars_b: usize) -> Self {
+        Self { n_vars_a, n_vars_b, _marker: PhantomData }
+    }
 }
 
 /// Sumcheckable for a triple product P(x_hi, x_lo) A(x_hi) B(x_lo)

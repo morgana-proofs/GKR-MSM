@@ -1,6 +1,6 @@
 // Implements partial inner products of dense vector-arranged and matrix arranged polynomials.
 
-use std::marker::PhantomData;
+use std::{iter::repeat, marker::PhantomData, sync::Arc};
 
 use ark_ff::PrimeField;
 use ark_std::log2;
@@ -11,36 +11,47 @@ use rayon::{current_num_threads, iter::{IndexedParallelIterator, IntoParallelIte
 use crate::{cleanup::{protocol2::Protocol2, protocols::sumcheck::{AlgFnSO, BareSumcheckSO, DenseSumcheckObjectSO, GenericSumcheckProtocol, PointClaim, SinglePointClaims, SumClaim}}, protocol::{protocol::EvalClaim, sumcheckv2::Sumcheckable}};
 use crate::cleanup::proof_transcript::TProofTranscript2;
 
-/// Splits large vector of length n into chunks of small size (length m) and computes inner products, arranging them in a vector of size n/m.
-/// If n is not divisible by m, the function will panic. 
-pub fn inner_prod_lo<F: PrimeField>(large: &[F], small: &[F]) -> Vec<F> {
+/// Splits large vector of length n into chunks of small size (length m) and computes inner products, arranging them in a vector of size n/m. n%m must be zero.
+/// Supports an additional padding parameter - large vector can actually be of length < n, and will be formally padded with zeros to length n. This does not actually allocate zeros. 
+pub fn inner_prod_lo<F: PrimeField>(large: &[F], small: &[F], pad_large_to_length: usize) -> Vec<F> {
     let m = small.len();
-    let n = large.len();
+    assert!(large.len() <= pad_large_to_length);
+    let n = pad_large_to_length;
     assert!(m > 0);
     assert!(n % m == 0);
-    large.par_chunks(m).map(|chunk| {
+    let mut ret = large.par_chunks(m).map(|chunk| {
         let mut acc = chunk[0] * small[0];
-        for i in 1..m {
+        for i in 1..chunk.len() {
             acc += chunk[i] * small[i]
         }
         acc
-    }).collect()
+    }).collect::<Vec<F>>();
+    let l = ret.len();
+    ret.extend(repeat(F::zero()).take(n / m - l));
+    ret
 }
 
-fn inner_prod_hi_nonpar<F: PrimeField>(large: &[F], small: &[F]) -> Vec<F> {
+/// Assumes that pad_large_to_length >= large.len(), and pad_large_to_length % small.len == 0.
+fn inner_prod_hi_nonpar_unchecked<F: PrimeField>(large: &[F], small: &[F], pad_large_to_length: usize) -> Vec<F> {
     let m = small.len();
-    let n = large.len();
+    let n = pad_large_to_length;
+    
+    if (n/m) >= large.len() {
+        return large.iter().map(|x| *x * small[0]).chain(repeat(F::zero())).take(n/m).collect()
+    }
+
     let (first, large) = large.split_at(n/m);
     let mut ret = first.iter().map(|x| *x * small[0]).collect_vec();
-    large.chunks(n / m).enumerate().map(|(i, chunk)| for j in 0..(n / m) {ret[j] += chunk[j] * small[i + 1]}).count();
+    large.chunks(n / m).enumerate().map(|(i, chunk)| for j in 0..chunk.len() {ret[j] += chunk[j] * small[i + 1]}).count();
     ret
 }
 
 /// For large vector of length n and small vector of length m, such that m | n,
 /// splits it into m chunks, multiplies i-th chunk by small[i], and adds them together
-pub fn inner_prod_hi<F: PrimeField>(large: &[F], small: &[F]) -> Vec<F> {
+pub fn inner_prod_hi<F: PrimeField>(large: &[F], small: &[F], pad_large_to_length: usize) -> Vec<F> {
     let m = small.len();
-    let n = large.len();
+    assert!(large.len() <= pad_large_to_length);
+    let n = pad_large_to_length;
     assert!(m > 0);
     assert!(n % m == 0);
     if n == 0 {return vec![]}
@@ -49,9 +60,9 @@ pub fn inner_prod_hi<F: PrimeField>(large: &[F], small: &[F]) -> Vec<F> {
     
     let by = (m + factor - 1) / factor;
 
-    let mut results: Vec<Vec<F>> = small.par_chunks(by).zip(large.par_chunks(by * (n / m))).map(|(small, large)| inner_prod_hi_nonpar(large, small)).collect();
+    let mut results: Vec<Vec<F>> = small.par_chunks(by).zip(large.par_chunks(by * (n / m))).map(|(small, large)| inner_prod_hi_nonpar_unchecked(large, small, by * (n / m))).collect();
 
-    let mut acc = results.pop().unwrap();
+    let mut acc = results.pop().unwrap_or(vec![F::zero(); n / m]);
 
     for i in 0..results.len() {
         results[i].par_iter().zip(acc.par_iter_mut()).map(|(res, acc)| *acc += res).count();
@@ -97,6 +108,7 @@ impl<F: PrimeField, NNF: PrimeField> NNOProtocol<F, NNF> {
     }
 }
 
+
 /// Output claim of non native opening protocol.
 pub struct NNOOutputClaim<F: PrimeField, NNF: PrimeField> {
     pub nn_point_lo: Vec<NNF>, //
@@ -124,6 +136,8 @@ impl<F: PrimeField, NNF: PrimeField, PT: TProofTranscript2> Protocol2<PT> for NN
     }
 
     fn verify(&self, transcript: &mut PT, nn_opening_claim: Self::ClaimsBefore) -> Self::ClaimsAfter {
+        
+        
         todo!()
     }
 }
@@ -191,10 +205,10 @@ impl<'a, F: PrimeField> TripleProdSumcheckObject<'a, F> {
         assert!(1 << n_vars_a == a_len);
         assert!(1 << n_vars_b == b_len);
 
-        assert!(a_len * b_len == p.len());
+        assert!(a_len * b_len >= p.len());
         let current_round = 0;
 
-        let pa = inner_prod_hi(p, &a);
+        let pa = inner_prod_hi(p, &a, a_len * b_len);
 
         let f = ProdFn::new();
         let stage_object = DenseSumcheckObjectSO::<F, ProdFn<F>>::new(vec![pa, b], f, n_vars_b, claim_hint);
@@ -223,7 +237,7 @@ impl<'a, F: PrimeField> Sumcheckable<F> for TripleProdSumcheckObject<'a, F> {
             let a = self.a.take().unwrap();
             let eq_b = EqPolynomial::new(pt_lo).evals();
 
-            let p_subst= inner_prod_lo(&self.p, &eq_b);
+            let p_subst= inner_prod_lo(&self.p, &eq_b, self.a_len * self.b_len);
 
             let pa_sum_hint = tmp[0]; // currently useless, will become useful when we optimize DenseSumcheck
             self.b_ev = Some(tmp[1]);
@@ -261,22 +275,61 @@ impl<'a, F: PrimeField> Sumcheckable<F> for TripleProdSumcheckObject<'a, F> {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct MultiProd<const N: usize, F: PrimeField> {
+    _marker: PhantomData<F>
+}
+impl<const N: usize, F: PrimeField> MultiProd<N, F> {
+    pub fn new() -> Self {
+        assert!(N > 0);
+        Self { _marker: PhantomData }
+    }
+}
+
+impl<const N: usize, F: PrimeField> AlgFnSO<F> for MultiProd<N, F> {
+    fn exec(&self, args: &impl std::ops::Index<usize, Output = F>) -> F {
+        let mut ret = args[0];
+        for i in 1 .. N {
+            ret *= args[i]
+        }
+        ret
+    }
+
+    fn deg(&self) -> usize {
+        N
+    }
+
+    fn n_ins(&self) -> usize {
+        N
+    }
+}
 
 impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for TripleProductSumcheck<F> {
-    type ProverInput = (Vec<F>, Vec<F>, Vec<F>);
+    type ProverInput = (Arc<Vec<F>>, Vec<F>, Vec<F>);
 
     type ProverOutput = ();
 
-    type ClaimsBefore = F;
+    type ClaimsBefore = SumClaim<F>;
 
-    type ClaimsAfter = (Vec<F>, F, F, F);
+    type ClaimsAfter = SinglePointClaims<F>; // 3 polynomials
 
-    fn prove(&self, transcript: &mut PT, sum_claim: F, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
-        todo!()
+    fn prove(&self, transcript: &mut PT, sum_claim: SumClaim<F>, p_a_b: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
+        let f = MultiProd::<3, _>::new();
+        let protocol = BareSumcheckSO::<_, MultiProd<3, F>, TripleProdSumcheckObject<F>>::new(f, self.n_vars_a + self.n_vars_b);
+
+        let p = p_a_b.0;
+        let a = p_a_b.1;
+        let b = p_a_b.2;
+
+        let object = TripleProdSumcheckObject::new(self.n_vars_a, self.n_vars_b, &p, a, b, sum_claim.sum);
+
+        protocol.prove(transcript, sum_claim, object)
     }
 
-    fn verify(&self, transcript: &mut PT, sum_claim: F) -> Self::ClaimsAfter {
-        todo!()
+    fn verify(&self, transcript: &mut PT, sum_claim: SumClaim<F>) -> Self::ClaimsAfter {
+        let f = MultiProd::<3, _>::new();
+        let protocol = BareSumcheckSO::<_, MultiProd<3, F>, TripleProdSumcheckObject<F>>::new(f, self.n_vars_a + self.n_vars_b);
+        protocol.verify(transcript, sum_claim)
     }
 }
 
@@ -298,24 +351,32 @@ mod tests {
     fn ips_work() {
         let rng = &mut test_rng();
 
-        let m = 439;
-        let n = m * 384;
-        let large = (0..n).map(|_|Fr::rand(rng)).collect_vec();
-        let small = (0..m).map(|_|Fr::rand(rng)).collect_vec();
+        for c in 0..2 {
 
-        let mut expected_ip_lo = vec![Fr::zero(); n / m];
-        for i in 0..n {
-            expected_ip_lo[i / m] += large[i] * small[i % m]
-        }
-        let ip_lo = inner_prod_lo(&large, &small);
-        assert_eq!(expected_ip_lo, ip_lo);
+            let m = match c {0 => 13, 1 => 19, _ => panic!()};
+            let n = match c {0 => m * 19, 1 => m * 13, _ => panic!()};
 
-        let mut expected_ip_hi = vec![Fr::zero(); n / m];
-        for i in 0..n {
-            expected_ip_hi[i % (n / m)] += large[i] * small[i / (n / m)]
+            let large = (0..n).map(|_|Fr::rand(rng)).collect_vec();
+            let small = (0..m).map(|_|Fr::rand(rng)).collect_vec();
+
+            for s in 0 .. large.len() + 1 {
+
+                let mut expected_ip_lo = vec![Fr::zero(); n / m];
+                for i in 0..s {
+                    expected_ip_lo[i / m] += large[i] * small[i % m]
+                }
+                let ip_lo = inner_prod_lo(&large[..s], &small, n);
+                assert_eq!(expected_ip_lo, ip_lo);
+
+                let mut expected_ip_hi = vec![Fr::zero(); n / m];
+                for i in 0..s {
+                    expected_ip_hi[i % (n / m)] += large[i] * small[i / (n / m)]
+                }
+                let ip_hi = inner_prod_hi(&large[..s], &small, n);
+                assert_eq!(expected_ip_hi, ip_hi);
+
+            }
         }
-        let ip_hi = inner_prod_hi(&large, &small);
-        assert_eq!(expected_ip_hi, ip_hi);
     }
 
 

@@ -8,8 +8,8 @@ use itertools::Itertools;
 use liblasso::poly::{eq_poly::EqPolynomial, unipoly::UniPoly};
 use rayon::{current_num_threads, iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator}, join, scope, slice::ParallelSlice};
 
-use crate::{cleanup::{proof_transcript::{TProverTranscript, TVerifierTranscript}, protocol2::Protocol2, protocols::sumcheck::{AlgFnSO, BareSumcheckSO, DenseSumcheckObjectSO, GenericSumcheckProtocol, PointClaim, SinglePointClaims, SumClaim}}, protocol::{protocol::EvalClaim, sumcheckv2::Sumcheckable}};
-
+use crate::{cleanup::{protocol2::Protocol2, protocols::sumcheck::{AlgFnSO, BareSumcheckSO, DenseSumcheckObjectSO, GenericSumcheckProtocol, PointClaim, SinglePointClaims, SumClaim}}, protocol::{protocol::EvalClaim, sumcheckv2::Sumcheckable}};
+use crate::cleanup::proof_transcript::TProofTranscript2;
 
 /// Splits large vector of length n into chunks of small size (length m) and computes inner products, arranging them in a vector of size n/m.
 /// If n is not divisible by m, the function will panic. 
@@ -110,7 +110,7 @@ pub struct NNOOutputClaim<F: PrimeField, NNF: PrimeField> {
     pub native_repr_nn_eq_hi_eval: F, // evaluation of eq_{nn_point_hi}(r_x[(x_logsize+1)/2 ..], r_y)
 }
 
-impl<F: PrimeField, NNF: PrimeField> Protocol2 for NNOProtocol<F, NNF> {
+impl<F: PrimeField, NNF: PrimeField, PT: TProofTranscript2> Protocol2<PT> for NNOProtocol<F, NNF> {
     type ProverInput = MatrixPoly<u64>;
 
     type ProverOutput = ();
@@ -119,11 +119,11 @@ impl<F: PrimeField, NNF: PrimeField> Protocol2 for NNOProtocol<F, NNF> {
 
     type ClaimsAfter = NNOOutputClaim<F, NNF>;
 
-    fn prove<PT: TProverTranscript>(&self, transcript: &mut PT, nn_opening_claim: Self::ClaimsBefore, native_repr: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
+    fn prove(&self, transcript: &mut PT, nn_opening_claim: Self::ClaimsBefore, native_repr: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         todo!()
     }
 
-    fn verify<PT: TVerifierTranscript>(&self, transcript: &mut PT, nn_opening_claim: Self::ClaimsBefore) -> Self::ClaimsAfter {
+    fn verify(&self, transcript: &mut PT, nn_opening_claim: Self::ClaimsBefore) -> Self::ClaimsAfter {
         todo!()
     }
 }
@@ -262,7 +262,7 @@ impl<'a, F: PrimeField> Sumcheckable<F> for TripleProdSumcheckObject<'a, F> {
 }
 
 
-impl<F: PrimeField> Protocol2 for TripleProductSumcheck<F> {
+impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for TripleProductSumcheck<F> {
     type ProverInput = (Vec<F>, Vec<F>, Vec<F>);
 
     type ProverOutput = ();
@@ -271,11 +271,11 @@ impl<F: PrimeField> Protocol2 for TripleProductSumcheck<F> {
 
     type ClaimsAfter = (Vec<F>, F, F, F);
 
-    fn prove<PT: TProverTranscript>(&self, transcript: &mut PT, sum_claim: F, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
+    fn prove(&self, transcript: &mut PT, sum_claim: F, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         todo!()
     }
 
-    fn verify<PT: TVerifierTranscript>(&self, transcript: &mut PT, sum_claim: F) -> Self::ClaimsAfter {
+    fn verify(&self, transcript: &mut PT, sum_claim: F) -> Self::ClaimsAfter {
         todo!()
     }
 }

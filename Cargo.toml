@@ -36,14 +36,14 @@ num-traits = "0.2.19"
 parallel = []
 multicore = []
 default = [
-    "parallel",
-    "multicore",
 ]
 prof = ["dep:profi", "profi/enable", "profi/attributes", "profi/rayon", "profi/deep-hierarchy"]
 memprof = ["dep:jemalloc-ctl", "dep:jemallocator"]
 
 [dev-dependencies]
 criterion = "0.3.6"
+rstest = "0.23.0"
+
 
 
 [[bench]]

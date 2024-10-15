@@ -16,15 +16,15 @@ pub trait TProofTranscript2 : Sized {
 
     fn mode(&self) -> PTMode;
 
-    fn _start_prover(pparam: Self::PParam) -> Self;
+    fn start_prover(pparam: Self::PParam) -> Self;
     /// Should fail in verifier mode.
-    fn _end(self) -> Self::RawProof;
-    fn _start_verifier(pparam: Self::PParam, proof: Self::RawProof) -> Self;
+    fn end(self) -> Self::RawProof;
+    fn start_verifier(pparam: Self::PParam, proof: Self::RawProof) -> Self;
 
     fn raw_challenge(&mut self, bytesize: usize) -> Vec<u8>;
     
-    fn _read_raw_msg(&mut self, bytesize: usize) -> &[u8];
-    fn _write_raw_msg(&mut self, msg: &[u8]);
+    fn read_raw_msg(&mut self, bytesize: usize) -> &[u8];
+    fn write_raw_msg(&mut self, msg: &[u8]);
 
 
     fn challenge<F: PrimeField>(&mut self, bitsize: usize) -> F {
@@ -36,70 +36,30 @@ pub trait TProofTranscript2 : Sized {
         bytes.chunks(16).map(|chunk| F::from_le_bytes_mod_order(chunk)).collect()
     }
     
-    fn _read_scalars<F: PrimeField>(&mut self, size: usize) -> Vec<F> {
+    fn read_scalars<F: PrimeField>(&mut self, size: usize) -> Vec<F> {
         let mult = F::compressed_size(&F::zero());
-        self._read_raw_msg(size * mult).chunks(mult).map(|chunk| F::deserialize_compressed(chunk).unwrap()).collect()
-    }
-
-    fn _write_scalars<F: PrimeField>(&mut self, msg: &[F]) {
-        let mult = F::compressed_size(&F::zero());
-        let mut writer = Vec::with_capacity(msg.len() * mult);
-        msg.iter().map(|x| x.serialize_compressed(&mut writer)).count();
-        self._write_raw_msg(&writer);
-    }
-
-    fn _read_points<G: CurveGroup>(&mut self, size: usize) -> Vec<<G as CurveGroup>::Affine> {
-        let mult = G::Affine::compressed_size(&G::Affine::generator());
-        self._read_raw_msg(size * mult).chunks(mult).map(|chunk| G::Affine::deserialize_compressed(chunk).unwrap()).collect()
-    }
-    
-    fn _write_points<G: CurveGroup>(&mut self, msg: &[impl Into<G::Affine> + Copy]) {
-        let mult = G::Affine::compressed_size(&G::Affine::generator());
-        let mut writer = Vec::with_capacity(msg.len() * mult);
-        msg.iter().map(|x| (*x).into().serialize_compressed(&mut writer)).count();
-        self._write_raw_msg(&writer);
-    }
-}
-
-pub trait TProverTranscript : TProofTranscript2 {
-    fn start_prover(pparam: Self::PParam) -> Self {
-        Self::_start_prover(pparam)
-    }
-
-    fn write_raw_msg(&mut self, msg: &[u8]) {
-        self._write_raw_msg(msg);
+        self.read_raw_msg(size * mult).chunks(mult).map(|chunk| F::deserialize_compressed(chunk).unwrap()).collect()
     }
 
     fn write_scalars<F: PrimeField>(&mut self, msg: &[F]) {
-        self._write_scalars(msg);
+        let mult = F::compressed_size(&F::zero());
+        let mut writer = Vec::with_capacity(msg.len() * mult);
+        msg.iter().map(|x| x.serialize_compressed(&mut writer)).count();
+        self.write_raw_msg(&writer);
     }
 
-    fn write_points<G: CurveGroup>(&mut self, msg: &[impl Into<G::Affine> + Copy]) {
-        self._write_points::<G>(msg);
-    }
-
-    fn end(self) -> Self::RawProof {
-        self._end()
-    }
-}
-
-pub trait TVerifierTranscript : TProofTranscript2 {
-    fn start_verifier(pparam: Self::PParam, proof: Self::RawProof) -> Self {
-        Self::_start_verifier(pparam, proof)
-    }
-    fn read_raw_msg(&mut self, bytesize: usize) -> &[u8] {
-        self._read_raw_msg(bytesize)
-    }
-    fn read_scalars<F: PrimeField>(&mut self, size: usize) -> Vec<F> {
-        self._read_scalars(size)
-    }
     fn read_points<G: CurveGroup>(&mut self, size: usize) -> Vec<<G as CurveGroup>::Affine> {
-        self._read_points::<G>(size)
+        let mult = G::Affine::compressed_size(&G::Affine::generator());
+        self.read_raw_msg(size * mult).chunks(mult).map(|chunk| G::Affine::deserialize_compressed(chunk).unwrap()).collect()
+    }
+    
+    fn write_points<G: CurveGroup>(&mut self, msg: &[impl Into<G::Affine> + Copy]) {
+        let mult = G::Affine::compressed_size(&G::Affine::generator());
+        let mut writer = Vec::with_capacity(msg.len() * mult);
+        msg.iter().map(|x| (*x).into().serialize_compressed(&mut writer)).count();
+        self.write_raw_msg(&writer);
     }
 }
-
-impl<T : TProofTranscript2> TProverTranscript for T {}
-impl<T : TProofTranscript2> TVerifierTranscript for T {}
 
 pub struct ProofTranscript2 {
     merlin_transcript: Transcript,
@@ -117,17 +77,17 @@ impl TProofTranscript2 for ProofTranscript2 {
         self.mode
     }
 
-    fn _start_prover(pparam: Self::PParam) -> Self {
+    fn start_prover(pparam: Self::PParam) -> Self {
         let merlin_transcript = Transcript::new(&pparam);
         let proof = vec![];
         Self { merlin_transcript, proof, ctr: 0, mode: PTMode::Prover }
     }
 
-    fn _end(self) -> Self::RawProof {
+    fn end(self) -> Self::RawProof {
         self.proof
     }
 
-    fn _start_verifier(pparam: Self::PParam, proof: Self::RawProof) -> Self {
+    fn start_verifier(pparam: Self::PParam, proof: Self::RawProof) -> Self {
         let merlin_transcript = Transcript::new(&pparam);
         Self {merlin_transcript, proof, ctr: 0, mode: PTMode::Verifier}
     }
@@ -138,7 +98,7 @@ impl TProofTranscript2 for ProofTranscript2 {
         ret
     }
 
-    fn _read_raw_msg(&mut self, bytesize: usize) -> &[u8] {
+    fn read_raw_msg(&mut self, bytesize: usize) -> &[u8] {
         match self.mode() {
             PTMode::Prover => panic!(),
             PTMode::Verifier => {
@@ -151,7 +111,7 @@ impl TProofTranscript2 for ProofTranscript2 {
         }
     }
 
-    fn _write_raw_msg(&mut self, msg: &[u8]) {
+    fn write_raw_msg(&mut self, msg: &[u8]) {
         match self.mode() {
             PTMode::Verifier => panic!(),
             PTMode::Prover => {

@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 use std::mem::{transmute, MaybeUninit};
-use std::ops::{Add, Mul};
+use std::ops::{Add, Mul, Sub};
 use std::ptr::read;
 
 use ark_bls12_381::Fr;
@@ -152,7 +152,41 @@ impl<F: Send + Sync> CfgParallel for F {}
 #[cfg(not(feature = "parallel"))]
 impl<F> CfgParallel for F {}
 
-pub fn eq_poly_sequence_from_multiplier<F: CfgParallel + Mul<Output=F> + Add<Output=F> + Clone + Copy>(multiplier: F, pt: &[F]) -> Vec<Vec<F>> {
+
+pub fn padded_eq_poly_sequence<F: PrimeField>(padding_size: usize, pt: &[F]) -> Vec<Vec<F>> {
+    let l = pt.len();
+    let mut ret = Vec::with_capacity(l + 1);
+    ret.push(vec![F::one()]);
+    for i in 1..=padding_size {
+        ret.push(vec![ret[i - 1][0] * (F::one() - pt[i - 1])]);
+    }
+
+    for i in (padding_size + 1)..=l {
+        let last = &ret[i - 1];
+        let multiplier = &pt[i - 1];
+        let mut incoming = UninitArr::<F>::new(1 << (i - padding_size));
+        unsafe {
+            let ptr = incoming.as_shared_mut_ptr();
+            #[cfg(not(feature = "parallel"))]
+            let iter = (0 .. (1 << (i - 1 - padding_size))).into_iter();
+
+            #[cfg(feature = "parallel")]
+            let iter = (0 .. (1 << (i - 1 - padding_size))).into_par_iter();
+
+            iter.map(|j|{
+                let w = &last[j];
+                let m = *multiplier * w;
+                *ptr.get_mut(2 * j) = *w - m;
+                *ptr.get_mut(2 * j + 1) = m;
+            }).count();
+            ret.push(incoming.assume_init());
+        }
+    }
+
+    ret
+}
+
+pub fn eq_poly_sequence_from_multiplier<F: PrimeField>(multiplier: F, pt: &[F]) -> Vec<Vec<F>> {
     let l = pt.len();
     let mut ret = Vec::with_capacity(l + 1);
     ret.push(vec![multiplier]);
@@ -164,16 +198,16 @@ pub fn eq_poly_sequence_from_multiplier<F: CfgParallel + Mul<Output=F> + Add<Out
         unsafe {
             let ptr = incoming.as_shared_mut_ptr();
             #[cfg(not(feature = "parallel"))]
-            let iter = (0 .. (1 << (i-1))).into_iter();
+            let iter = (0 .. (1 << (i - 1))).into_iter();
 
             #[cfg(feature = "parallel")]
-            let iter = (0 .. 1 << (i-1)).into_par_iter();
+            let iter = (0 .. 1 << (i - 1)).into_par_iter();
 
             iter.map(|j|{
                 let w = &last[j];
-                let m = multiplier.clone() * w.clone();
-                *ptr.get_mut(2*j) = w.clone() + m.clone();
-                *ptr.get_mut(2*j + 1) = m;
+                let m = *multiplier * w;
+                *ptr.get_mut(2 * j) = *w - m;
+                *ptr.get_mut(2 * j + 1) = m;
             }).count();
             ret.push(incoming.assume_init());
         }
@@ -182,11 +216,11 @@ pub fn eq_poly_sequence_from_multiplier<F: CfgParallel + Mul<Output=F> + Add<Out
     ret
 }
 
-pub fn eq_poly_sequence<F: Field>(pt: &[F]) -> Vec<Vec<F>> {
+pub fn eq_poly_sequence<F: PrimeField>(pt: &[F]) -> Vec<Vec<F>> {
     eq_poly_sequence_from_multiplier(F::one(), pt)
 }
 
-pub fn eq_poly_sequence_last<F: Field>(pt: &[F]) -> Option<Vec<F>> {
+pub fn eq_poly_sequence_last<F: PrimeField>(pt: &[F]) -> Option<Vec<F>> {
     eq_poly_sequence(pt).pop()
 }
 
@@ -197,4 +231,40 @@ pub fn memprof(l: &str) {
     let allocated = stats::allocated::read().unwrap();
     let resident = stats::resident::read().unwrap();
     println!("{}: {:.3}Gb ({} bytes) allocated / {:.3}Gb ({} bytes) resident", l, allocated as f64 / 1024f64 / 1024f64 / 1024f64, allocated, resident as f64 / 1024f64 / 1024f64 / 1024f64, resident);
+}
+
+
+#[cfg(test)]
+mod test {
+    use ark_ed_on_bls12_381_bandersnatch::Fr;
+    use ark_std::{test_rng, UniformRand};
+    use itertools::Itertools;
+    use num_traits::One;
+    use crate::utils::{eq_poly_sequence_from_multiplier, padded_eq_poly_sequence};
+
+    #[test]
+    fn eq_poly_seq() {
+        let gen = &mut test_rng();
+        let num_vars = 8;
+        let num_padded = 3;
+
+        let point = (0..num_vars).map(|_| Fr::rand(gen)).collect_vec();
+
+        let mut pad_multipliers = point[0..num_padded].to_vec();
+        let total_multiplier = pad_multipliers.iter_mut().fold(Fr::one(), |mut acc, val| {
+            acc *= Fr::one() - *val;
+            *val = acc;
+            acc
+        });
+
+        let row_eq_poly_seq = eq_poly_sequence_from_multiplier(total_multiplier, &point[num_padded..num_vars]);
+
+        let padded_eq_poly_seq = padded_eq_poly_sequence(num_padded, &point);
+        for i in 0..num_padded {
+            assert_eq!(padded_eq_poly_seq[i + 1][0], pad_multipliers[i]);
+        }
+        for i in (num_padded - 1)..num_vars {
+            assert_eq!(padded_eq_poly_seq[i + 1], row_eq_poly_seq[i + 1 - num_padded]);
+        }
+    }
 }

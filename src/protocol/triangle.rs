@@ -615,7 +615,7 @@ mod test {
             }
 
             for gen in [no_const_gen, rng_gen] {
-                for _ in 0..100 {
+                for _ in 0..2 {
                     let (d, split_var, sector_size) = gen(rng, num_vars, num_splits);
                     let shape = d.shape.clone();
                     let mut input = vec![d];

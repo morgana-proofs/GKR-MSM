@@ -8,6 +8,7 @@ use liblasso::poly::unipoly::UniPoly;
 use rayon::{current_num_threads, current_thread_index, iter::{Fold, IntoParallelIterator, ParallelIterator}};
 use crate::{cleanup::protocol2::Protocol2, protocol::sumcheckv2::Sumcheckable};
 use crate::cleanup::proof_transcript::TProofTranscript2;
+use crate::utils::make_gamma_pows_static;
 
 /// Given polynomial in coefficient form with linear term skipped, and sum P(0) + P(1), recovers full polynomial.
 pub fn decompress_coefficients<F: PrimeField>(coeffs_wo_lin_term: &[F], sum: F) -> Vec<F> {
@@ -153,7 +154,7 @@ pub trait AlgFn<F: PrimeField> : Clone + Sync + Send {
 /// Use to test agreement with other protocols.
 #[derive(Clone, Debug)]
 pub struct ExampleSumcheckObjectSO<F: PrimeField, Fun: AlgFnSO<F>> {
-    polys: Vec<Vec<F>>,
+    pub polys: Vec<Vec<F>>,
     challenges: Vec<F>,
     f: Fun,
     num_vars: usize,
@@ -254,14 +255,14 @@ impl<F: PrimeField, Fun: AlgFnSO<F>> Sumcheckable<F> for ExampleSumcheckObjectSO
 
 #[derive(Clone, Debug)]
 pub struct DenseSumcheckObjectSO<F: PrimeField, Fun: AlgFnSO<F>> {
-    polys: Vec<Vec<F>>,
+    pub polys: Vec<Vec<F>>,
     challenges: Vec<F>,
     f: Fun,
     num_vars: usize,
     round_idx: usize,
     cached_unipoly: Option<UniPoly<F>>,
 
-    claim: F,
+    pub claim: F,
 }
 
 impl<F: PrimeField, Fun: AlgFnSO<F>> DenseSumcheckObjectSO<F, Fun> {
@@ -334,7 +335,7 @@ impl<F: PrimeField, Fun: AlgFnSO<F>> Sumcheckable<F> for DenseSumcheckObjectSO<F
 
                 for i in 0..acc.len() {
                     for j in 0..self.f.deg() {
-                        total_acc[j+1] += acc[i][j]
+                        total_acc[j + 1] += acc[i][j]
                     }
                 }
                 total_acc[0] = self.claim - total_acc[1];
@@ -478,7 +479,8 @@ impl<F: PrimeField, Fun: AlgFnSO<F>, S: Sumcheckable<F>, PT: TProofTranscript2> 
         let poly_evs = transcript.read_scalars(self.f.n_ins());
 
         assert_eq!(self.f.exec(&poly_evs), ev, "Final combinator check has failed.");
-        SinglePointClaims {point, evs: poly_evs}    }
+        SinglePointClaims {point, evs: poly_evs}
+    }
 }
 
 #[derive(Clone)]
@@ -589,6 +591,35 @@ impl<F: PrimeField, Fun: AlgFn<F>, S: FoldToSumcheckable<F>, PT: TProofTranscrip
     }
 }
 
+
+#[derive(Clone)]
+pub struct EqWrapper<F: PrimeField, Fun: AlgFnSO<F>> {
+    f: Fun,
+    _pd: PhantomData<F>,
+}
+
+impl<F: PrimeField, Fun: AlgFnSO<F>> EqWrapper<F, Fun> {
+    pub fn new(f: Fun) -> Self {
+        Self {
+            f,
+            _pd: Default::default(),
+        }
+    }
+}
+
+impl <F: PrimeField, Fun: AlgFnSO<F>> AlgFnSO<F> for EqWrapper<F, Fun> {
+    fn exec(&self, args: &impl Index<usize, Output = F>) -> F {
+        self.f.exec(args) * args[self.f.n_ins()]
+    }
+
+    fn deg(&self) -> usize {
+        self.f.deg() + 1
+    }
+
+    fn n_ins(&self) -> usize {
+        self.f.n_ins() + 1
+    }
+}
 
 
 #[cfg(test)]

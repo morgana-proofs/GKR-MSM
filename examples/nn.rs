@@ -16,7 +16,7 @@ use profi::{prof, prof_guard};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, once, ParallelIterator};
 
 use GKR_MSM::transcript::TranscriptSender;
-use GKR_MSM::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows, map_over_poly_legacy}};
+use GKR_MSM::{transcript::{Challenge, TranscriptReceiver}, utils::{make_gamma_pows_legacy, map_over_poly_legacy}};
 use GKR_MSM::copoly::{CopolyData, Copolynomial, EqPoly};
 use GKR_MSM::polynomial::fragmented::{FragmentedPoly, InterOp};
 use GKR_MSM::utils::{fix_var_bot};

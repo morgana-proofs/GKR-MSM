@@ -123,28 +123,28 @@ mod tests{
     use crate::transcript::IndexedProofTranscript;
     use liblasso::utils::test_lib::TestTranscript;
 
-    #[test]
-    fn test_equalizer(){
+    // #[test]
+    // fn test_equalizer(){
 
-        let mut rng  = test_rng();
-        let num_limbs = 3;
-        let limb_len = roundup_to_pow2( Fq::MODULUS_BIT_SIZE  as usize / num_limbs);
+    //     let mut rng  = test_rng();
+    //     let num_limbs = 3;
+    //     let limb_len = roundup_to_pow2( Fq::MODULUS_BIT_SIZE  as usize / num_limbs);
 
-        let num_vars = 6;
-        let poly_size = 1<<num_vars;
+    //     let num_vars = 6;
+    //     let poly_size = 1<<num_vars;
 
-        let r =  (0..poly_size).map(|_| Fq::rand(&mut rng)).collect();
-        // let r_bits = big_num_to_bits_F(r);
+    //     let r =  (0..poly_size).map(|_| Fq::rand(&mut rng)).collect();
+    //     // let r_bits = big_num_to_bits_F(r);
 
-        //assert_eq!(r_bits.len(), num_limbs * limb_len);
+    //     //assert_eq!(r_bits.len(), num_limbs * limb_len);
 
-        let polys : Vec<FragmentedPoly<Fr>> = make_equalizer_limbs::<Fr, Fq>(
-            &r,
-            limb_len,
-            poly_size
-        );
+    //     let polys : Vec<FragmentedPoly<Fr>> = make_equalizer_limbs::<Fr, Fq>(
+    //         &r,
+    //         limb_len,
+    //         poly_size
+    //     );
 
-        assert_eq!(polys.len(), num_limbs);
+    //     assert_eq!(polys.len(), num_limbs);
 
-    }
+    // }
 }

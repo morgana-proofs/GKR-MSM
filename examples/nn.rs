@@ -24,7 +24,7 @@ use GKR_MSM::utils::{fix_var_bot};
 use GKR_MSM::protocol::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier};
 use GKR_MSM::protocol::sumcheck::{SumcheckPolyMap, Splits, FragmentedLincomb, SumcheckPolyMapParams, SumcheckPolyMapProver, SumcheckPolyMapProof, SumcheckPolyMapVerifier, Sumcheckable,};
 
-use GKR_MSM::n_n_o::{*, prover::*, verifier::*};
+// use GKR_MSM::n_n_o::{*, prover::*, verifier::*};
 
 
 use std::sync::{Arc, OnceLock};

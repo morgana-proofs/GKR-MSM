@@ -97,14 +97,6 @@ mod tests{
         let pt: Vec<_> = (1..dim).map(|_| Fq::rand(&mut rng)).collect();
 
         let poly : Eqpoly<Fr> = Eqpoly::new(&pt, limb_size, num_limbs);
-
-
-        println!("{} , {}", Fq::MODULUS_BIT_SIZE  as usize, limb_size * num_limbs);
-
-        println!("{:?}", poly.evals.len());
-        
-
-
     }
 
 }

@@ -356,6 +356,10 @@ impl<F: PrimeField, Fun: AlgFnSO<F>> Sumcheckable<F> for DenseSumcheckObjectSO<F
     fn challenges(&self) -> &[F] {
         &self.challenges
     }
+
+    fn current_round(&self) -> usize {
+        self.round_idx
+    }
 }
 
 

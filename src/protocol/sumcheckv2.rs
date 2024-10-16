@@ -211,6 +211,8 @@ pub trait Sumcheckable<F: PrimeField> {
     fn unipoly(&mut self) -> UniPoly<F>;
     fn final_evals(&self) -> Vec<F>;
     fn challenges(&self) -> &[F];
+
+    fn current_round(&self) -> usize {todo!()}
 }
 
 impl<F: PrimeField, Fun: AlgFn<F>> Sumcheckable<F> for VecVecDeg2SumcheckObjectSO<F, Fun> {

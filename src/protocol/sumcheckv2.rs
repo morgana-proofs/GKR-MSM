@@ -512,7 +512,7 @@ mod test {
 
             impl AlgFn<Fr> for TwistedEdwardsFun {
                 fn deg(&self) -> usize {
-                    3
+                    2
                 }
 
                 fn n_ins(&self) -> usize {

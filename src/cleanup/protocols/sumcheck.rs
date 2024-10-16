@@ -331,7 +331,7 @@ impl<F: PrimeField, Fun: AlgFnSO<F>> Sumcheckable<F> for DenseSumcheckObjectSO<F
                     acc
                 }).collect();
 
-                let mut total_acc = vec![F::zero(); self.f.deg()];
+                let mut total_acc = vec![F::zero(); self.f.deg() + 1];
 
                 for i in 0..acc.len() {
                     for j in 0..self.f.deg() {

@@ -5,9 +5,9 @@ use itertools::Itertools;
 use liblasso::poly::unipoly::UniPoly;
 use rayon::{current_num_threads, iter::{repeatn, IndexedParallelIterator, IntoParallelIterator, ParallelIterator}, slice::{ParallelSlice, ParallelSliceMut}};
 
-use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2}, polynomial::vecvec::VecVecPolynomial, protocol::sumcheckv2::Sumcheckable};
+use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2}, polynomial::vecvec::VecVecPolynomial};
 
-use super::sumcheck::{compress_coefficients, evaluate_poly, AlgFnSO, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig};
+use super::{sumcheck::{compress_coefficients, evaluate_poly, AlgFnSO, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec::Sumcheckable};
 
 #[derive(Clone)]
 pub struct Prod3Fn<F: PrimeField> {

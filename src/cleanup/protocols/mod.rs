@@ -1,4 +1,5 @@
 pub mod sumcheck;
+pub mod sumchecks;
 pub mod split;
-pub mod pushforward;
-mod gkr;
+pub mod splits;
+pub mod gkrs;

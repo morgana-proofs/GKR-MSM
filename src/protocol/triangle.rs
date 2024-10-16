@@ -10,7 +10,7 @@ use itertools::Itertools;
 use profi::prof;
 
 use crate::{protocol::{protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier}, sumcheck::{SumcheckPolyMap as SumcheckPolyMap, SumcheckPolyMapParams, SumcheckPolyMapProof, SumcheckPolyMapProver, SumcheckPolyMapVerifier, to_multieval}, split::{Split, SplitProver, SplitVerifier}}, transcript::{Challenge, TranscriptReceiver}};
-use crate::grand_add::{twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
+use crate::cleanup::utils::twisted_edwards_ops::fns::{twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
 use crate::polynomial::fragmented::{FragmentedPoly, InterOp};
 use crate::protocol::generic_gkr::{ComponentClaimsNew, ComponentLayer, ComponentProof, ComponentProver, ComponentVerifier, GenericGKRParams, GenericGKRProtocol, GenericGKRProver, GenericGKRVerifier, GKRComponentRegistry};
 use crate::protocol::split_at::{SplitAt, SplitAtParams, SplitAtProver, SplitAtVerifier};

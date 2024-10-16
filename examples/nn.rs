@@ -34,7 +34,7 @@ use ark_std::{test_rng, UniformRand};
 
 use liblasso::utils::test_lib::TestTranscript;
 use merlin::Transcript;
-use GKR_MSM::grand_add::affine_twisted_edwards_add_l1;
+use GKR_MSM::cleanup::utils::twisted_edwards_ops::fns::affine_twisted_edwards_add_l1;
 use GKR_MSM::polynomial::fragmented::{Fragment, FragmentContent, Shape};
 
 use GKR_MSM::transcript::{IndexedProofTranscript};

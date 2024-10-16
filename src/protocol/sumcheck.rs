@@ -710,7 +710,7 @@ mod test {
 
     use liblasso::utils::test_lib::TestTranscript;
     use merlin::Transcript;
-    use crate::grand_add::affine_twisted_edwards_add_l1;
+    use crate::cleanup::utils::twisted_edwards_ops::fns::affine_twisted_edwards_add_l1;
     use crate::polynomial::fragmented::{Fragment, FragmentContent, FragmentedPoly, Shape};
 
     use crate::transcript::{IndexedProofTranscript, TranscriptSender};

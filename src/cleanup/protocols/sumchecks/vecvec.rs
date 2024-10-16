@@ -16,12 +16,13 @@ use merlin::Transcript;
 use rayon::iter::{Either, IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
 use crate::copoly::{Copolynomial, EqPoly};
 use crate::polynomial::vecvec::{EQPolyData, VecVecPolynomial};
-use super::protocol::{Claim, EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier};
+use crate::protocol::protocol::{Claim, EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier};
 
 #[cfg(feature = "prof")]
 use profi::{prof, prof_guard};
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
+use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
 use crate::cleanup::protocols::sumcheck::{AlgFn, BareSumcheckSO, DenseSumcheckObject, DenseSumcheckObjectSO, EqWrapper, FoldToSumcheckable, GammaWrapper, GenericSumcheckProtocol, SinglePointClaims, SumClaim};
 use crate::utils::{eq_eval, eq_poly_sequence_from_multiplier_last, eq_poly_sequence_last, make_gamma_pows, zip_with_gamma};
 
@@ -428,7 +429,18 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
     }
 }
 
-// Polyfill
+
+impl<Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> GKRLayer<Transcript, SinglePointClaims<F>, Vec<VecVecPolynomial<F>>> for VecVecDeg2Sumcheck<F, Fun> {
+    fn prove_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>, advice: Vec<VecVecPolynomial<F>>) -> SinglePointClaims<F> {
+        Protocol2::prove(self, transcript, claims.into(), advice.into()).0
+    }
+
+    fn verify_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>) -> SinglePointClaims<F> {
+        Protocol2::verify(self, transcript, claims.into())
+    }
+}
+
+
 #[cfg(test)]
 mod test {
     use std::ops::Index;
@@ -441,18 +453,14 @@ mod test {
     use ark_ff::{Field, PrimeField};
     use ark_std::{test_rng, UniformRand};
     use itertools::{repeat_n, Itertools};
-    use liblasso::poly::eq_poly::EqPolynomial;
-    use log::debug;
     use num_traits::{One, Zero};
     use crate::copoly::{Copolynomial, EqPoly};
-    use crate::grand_add::twisted_edwards_add_l1;
-    use crate::polynomial::fragmented::{Fragment, FragmentContent, FragmentedPoly, Shape};
+    use crate::cleanup::utils::twisted_edwards_ops::algfns::twisted_edwards_add_l1;
     use crate::polynomial::vecvec::{EQPolyData, EQPolyPointParts, VecVecPolynomial};
-    use crate::protocol::protocol::{MultiEvalClaim, PolynomialMapping};
     use crate::protocol::sumcheck::{make_folded_f, FragmentedLincomb, Sumcheckable as OldSumcheckable};
     use crate::utils::{eq_poly_sequence_last, make_gamma_pows_static};
     use super::{VecVecDeg2SumcheckObjectSO, VecVecDeg2SumcheckObject, Sumcheckable as NewSumcheckable, VecVecDeg2SumcheckStage};
-    use crate::cleanup::protocols::sumcheck::{AlgFn, AlgFnSO, ExampleSumcheckObjectSO, FoldToSumcheckable, SumClaim};
+    use crate::cleanup::protocols::sumcheck::{AlgFn, AlgFnSO, EqWrapper, ExampleSumcheckObjectSO, FoldToSumcheckable, GammaWrapper, SumClaim};
 
     enum Denseness {
         Full,
@@ -487,54 +495,10 @@ mod test {
 
             let data = data_l.into_iter().chain(data_r.into_iter()).collect_vec();
 
-            #[derive(Clone)]
-            struct FunctionWrapper {
-                gamma_pows: Vec<Fr>,
-            }
+            let gamma = F::one().double();
+            let gamma_pows = make_gamma_pows_static::<_, 4>(gamma);
 
-            impl AlgFnSO<Fr> for FunctionWrapper {
-                fn deg(&self) -> usize {
-                    3
-                }
-
-                fn n_ins(&self) -> usize {
-                    7
-                }
-
-                fn exec(&self, args: &impl std::ops::Index<usize, Output=Fr>) -> Fr {
-                    let eq = args[6];
-                    let args = (0..6).map(|i| args[i]).collect_vec();
-
-                    twisted_edwards_add_l1(&args).iter().zip_eq(self.gamma_pows.iter()).map(|(v, g)| v * g).sum::<Fr>() * eq
-                }
-            }
-
-            #[derive(Clone)]
-            struct TwistedEdwardsFun {}
-
-            impl AlgFn<Fr> for TwistedEdwardsFun {
-                fn deg(&self) -> usize {
-                    2
-                }
-
-                fn n_ins(&self) -> usize {
-                    6
-                }
-
-                fn n_outs(&self) -> usize {
-                    4
-                }
-
-                fn exec(&self, args: &impl Index<usize, Output=Fr>) -> impl Iterator<Item=Fr> {
-                    let args = (0..6).map(|i| args[i]).collect_vec();
-
-                    twisted_edwards_add_l1(&args).into_iter()
-                }
-            }
-
-            let gamma_pows = make_gamma_pows_static::<_, 4>(F::one().double());
-
-            let f = FunctionWrapper { gamma_pows: gamma_pows.to_vec() };
+            let f = EqWrapper::new(GammaWrapper::new(twisted_edwards_add_l1(), gamma));
             let f2 = f.clone();
 
             let mut dense_data = data.iter().map(|p| p.vec()).collect_vec();
@@ -547,12 +511,12 @@ mod test {
             let sum_claim = (0 .. 1 << num_vars).map(|i| f.exec(& [0, 1, 2, 3, 4, 5, 6].map(|j| dense_data[j][i]))).sum::<Fr>();
 
             let vec_claim: Vec<F> = (0..1 << num_vars).map(|i| {
-                twisted_edwards_add_l1(&[0, 1, 2, 3, 4, 5].map(|j| dense_data[j][i]))
+                twisted_edwards_add_l1().exec(&[0, 1, 2, 3, 4, 5].map(|j| dense_data[j][i])).collect_vec()
             }).enumerate().fold(
                 vec![F::zero(); 4],
                 |mut acc, (i, n)| {
-                    acc.iter_mut().zip_eq(n.iter()).map(|(a, n)| {
-                        *a += (*n * dense_eqpoly[i])
+                    acc.iter_mut().zip_eq(n).map(|(a, n)| {
+                        *a += (n * dense_eqpoly[i])
                     }).count();
                     acc
                 }
@@ -562,7 +526,7 @@ mod test {
 
             let vecvec_sumcheck_builder = VecVecDeg2SumcheckObject::new(
                 data.to_vec(),
-                TwistedEdwardsFun{},
+                twisted_edwards_add_l1(),
                 vec_claim.try_into().unwrap(),
                 point.clone(),
                 num_vertical_vars,

@@ -14,6 +14,7 @@ use liblasso::poly::dense_mlpoly::DensePolynomial;
 #[cfg(feature = "prof")]
 use profi::prof;
 use rayon::prelude::*;
+use crate::cleanup::protocols::sumcheck::bind_dense_poly;
 use crate::protocol::protocol::{MultiEvalClaim, PolynomialMapping};
 
 pub trait TwistedEdwardsConfig {
@@ -172,6 +173,31 @@ pub fn fix_var_bot<F>(vec: &mut Vec<F>, v: F) {
 
 pub fn random_point<F: UniformRand>(gen: &mut impl Rng, num_vars: usize) -> Vec<F> {
     (0..num_vars).map(|_| F::rand(gen)).collect_vec()
+}
+
+pub trait EvaluateAtPoint<F: PrimeField> {
+    fn evaluate(&self, p: &[F]) -> F;
+}
+
+pub trait BindVar<F: PrimeField> {
+    fn bind(self, t: F) -> Self;
+}
+impl<F: PrimeField> BindVar<F> for Vec<F> {
+    fn bind(mut self, t: F) -> Self {
+        bind_dense_poly(&mut self, t);
+        self
+    }
+}
+
+impl<F: PrimeField> EvaluateAtPoint<F> for Vec<F> {
+    fn evaluate(&self, p: &[F]) -> F {
+        assert_eq!(self.len(), 1 << p.len());
+        let mut tmp = Some(self.clone());
+        for f in p.iter().rev() {
+            tmp = Some(tmp.unwrap().bind(*f));
+        }
+        tmp.unwrap()[0]
+    }
 }
 
 #[cfg(feature = "parallel")]

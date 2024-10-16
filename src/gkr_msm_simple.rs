@@ -7,21 +7,21 @@ use itertools::Itertools;
 use liblasso::utils::math::Math;
 #[cfg(feature = "prof")]
 use profi::{prof, prof_guard};
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator, repeatn};
+use rayon::iter::{repeatn, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
     binary_msm::{binary_msm, prepare_coefs},
-    grand_add::{
-        affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2,
-        affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2,
-        twisted_edwards_add_l3,
-    },
     protocol::protocol::{PolynomialMapping, Protocol},
     transcript::{TranscriptReceiver, TranscriptSender},
     utils::TwistedEdwardsConfig,
 };
+use crate::cleanup::utils::twisted_edwards_ops::fns::{
+    affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2,
+    affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2,
+    twisted_edwards_add_l3,
+};
 use crate::polynomial::fragmented::{FragmentedPoly, InterOp, Shape};
-use crate::protocol::bintree::{BintreeProtocol, BintreeParams, BintreeProof, BintreeProver, Layer};
+use crate::protocol::bintree::{BintreeParams, BintreeProof, BintreeProtocol, BintreeProver, Layer};
 use crate::protocol::protocol::{EvalClaim, ProtocolProver};
 use crate::protocol::sumcheck::to_multieval;
 #[cfg(feature = "memprof")]

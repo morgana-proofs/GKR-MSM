@@ -6,10 +6,11 @@ use ark_ff::PrimeField;
 use ark_std::log2;
 use itertools::Itertools;
 use liblasso::poly::{eq_poly::EqPolynomial, unipoly::UniPoly};
-use rayon::{current_num_threads, iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator}, join, scope, slice::ParallelSlice};
+use rayon::{current_num_threads, iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator}, slice::ParallelSlice};
 
-use crate::{cleanup::{protocol2::Protocol2, protocols::sumcheck::{AlgFnSO, BareSumcheckSO, DenseSumcheckObjectSO, GenericSumcheckProtocol, PointClaim, SinglePointClaims, SumClaim}}, protocol::{protocol::EvalClaim, sumcheckv2::Sumcheckable}};
+use crate::cleanup::{protocol2::Protocol2, protocols::sumcheck::{AlgFnSO, BareSumcheckSO, DenseSumcheckObjectSO, PointClaim, SinglePointClaims, SumClaim}};
 use crate::cleanup::proof_transcript::TProofTranscript2;
+use crate::cleanup::protocols::sumchecks::vecvec::Sumcheckable;
 
 /// Splits large vector of length n into chunks of small size (length m) and computes inner products, arranging them in a vector of size n/m. n%m must be zero.
 /// Supports an additional padding parameter - large vector can actually be of length < n, and will be formally padded with zeros to length n. This does not actually allocate zeros. 
@@ -376,12 +377,9 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for TripleProductSumche
 
 #[cfg(test)]
 mod tests {
-    use ark_bls12_381::{G1Affine, G1Projective, g1::Config};
+    use ark_bls12_381::g1::Config;
     use ark_ec::{CurveConfig, Group};
-    use ark_std::{test_rng, UniformRand, Zero, One};
-    use ark_ff::Field;
-    use liblasso::poly::eq_poly::{self, EqPolynomial};
-    use crate::cleanup::{proof_transcript::ProofTranscript2, protocols::sumcheck::ExampleSumcheckObjectSO};
+    use ark_std::{test_rng, UniformRand, Zero};
     use super::*;
     type Fr = <Config as CurveConfig>::ScalarField;
 

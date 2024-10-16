@@ -1,15 +1,13 @@
-use std::{cmp::min, iter::repeat, marker::PhantomData, ops::Index, process::Output, ptr};
+use std::{cmp::min, iter::repeat, marker::PhantomData, ops::Index};
 
 use ark_ff::PrimeField;
-use bytemuck::cast_slice_mut;
 use hashcaster::ptr_utils::{AsSharedMutPtr, UnsafeIndexRaw, UnsafeIndexRawMut};
 use itertools::Itertools;
 use liblasso::poly::unipoly::UniPoly;
-use rayon::{current_num_threads, current_thread_index, iter::{Fold, IntoParallelIterator, ParallelIterator}};
-use crate::{cleanup::protocol2::Protocol2, protocol::sumcheckv2::Sumcheckable};
+use rayon::{current_num_threads, iter::{IntoParallelIterator, ParallelIterator}};
+use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::proof_transcript::TProofTranscript2;
-use crate::utils::make_gamma_pows_static;
-
+use crate::cleanup::protocols::sumchecks::vecvec::Sumcheckable;
 /// Given polynomial in coefficient form with linear term skipped, and sum P(0) + P(1), recovers full polynomial.
 pub fn decompress_coefficients<F: PrimeField>(coeffs_wo_lin_term: &[F], sum: F) -> Vec<F> {
     let l = coeffs_wo_lin_term.len();
@@ -624,11 +622,11 @@ impl <F: PrimeField, Fun: AlgFnSO<F>> AlgFnSO<F> for EqWrapper<F, Fun> {
 
 #[cfg(test)]
 mod tests {
-    use ark_bls12_381::{G1Affine, G1Projective, g1::Config};
+    use ark_bls12_381::g1::Config;
     use ark_ec::{CurveConfig, Group};
-    use ark_std::{test_rng, UniformRand, Zero, One};
+    use ark_std::{test_rng, One, UniformRand, Zero};
     use ark_ff::Field;
-    use liblasso::poly::eq_poly::{self, EqPolynomial};
+    use liblasso::poly::eq_poly::EqPolynomial;
     use crate::cleanup::proof_transcript::ProofTranscript2;
 
     use super::*;

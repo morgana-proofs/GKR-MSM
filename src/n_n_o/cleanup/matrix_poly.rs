@@ -10,7 +10,7 @@ use rayon::{current_num_threads, iter::{IndexedParallelIterator, IntoParallelIte
 
 use crate::cleanup::{protocol2::Protocol2, protocols::sumcheck::{AlgFnSO, BareSumcheckSO, DenseSumcheckObjectSO, PointClaim, SinglePointClaims, SumClaim}};
 use crate::cleanup::proof_transcript::TProofTranscript2;
-use crate::cleanup::protocols::sumchecks::vecvec::Sumcheckable;
+use crate::cleanup::protocols::sumchecks::vecvec_eq::Sumcheckable;
 
 /// Splits large vector of length n into chunks of small size (length m) and computes inner products, arranging them in a vector of size n/m. n%m must be zero.
 /// Supports an additional padding parameter - large vector can actually be of length < n, and will be formally padded with zeros to length n. This does not actually allocate zeros. 

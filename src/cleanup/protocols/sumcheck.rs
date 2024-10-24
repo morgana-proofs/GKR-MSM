@@ -1,5 +1,5 @@
 use std::{cmp::min, iter::repeat, marker::PhantomData, ops::Index};
-
+use ark_bls12_381::Fr;
 use ark_ff::PrimeField;
 use hashcaster::ptr_utils::{AsSharedMutPtr, UnsafeIndexRaw, UnsafeIndexRawMut};
 use itertools::Itertools;
@@ -7,7 +7,7 @@ use liblasso::poly::unipoly::UniPoly;
 use rayon::{current_num_threads, iter::{IntoParallelIterator, ParallelIterator}};
 use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::proof_transcript::TProofTranscript2;
-use crate::cleanup::protocols::sumchecks::vecvec::Sumcheckable;
+use crate::cleanup::protocols::sumchecks::vecvec_eq::Sumcheckable;
 /// Given polynomial in coefficient form with linear term skipped, and sum P(0) + P(1), recovers full polynomial.
 pub fn decompress_coefficients<F: PrimeField>(coeffs_wo_lin_term: &[F], sum: F) -> Vec<F> {
     let l = coeffs_wo_lin_term.len();
@@ -168,6 +168,10 @@ impl<F: PrimeField, Fun: AlgFnSO<F>> ExampleSumcheckObjectSO<F, Fun> {
             assert!(polys[i].len() == 1 << num_vars);
         }
         Self { polys, f, num_vars, round_idx: 0, cached_unipoly: None, challenges: vec![] }
+    }
+
+    pub fn claim(&self) -> F {
+        (0 .. 1 << (self.num_vars - self.round_idx)).map(|i| self.f.exec(&(0..self.f.n_ins()).map(|j| self.polys[j][i]).collect_vec())).sum::<F>()
     }
 }
 
@@ -627,12 +631,18 @@ impl <F: PrimeField, Fun: AlgFnSO<F>> AlgFnSO<F> for EqWrapper<F, Fun> {
 #[cfg(test)]
 mod tests {
     use ark_bls12_381::g1::Config;
-    use ark_ec::{CurveConfig, Group};
+    use ark_ec::{CurveConfig, CurveGroup, Group};
+    use ark_ec::twisted_edwards::{Affine, Projective};
+    use ark_ed_on_bls12_381_bandersnatch::BandersnatchConfig;
     use ark_std::{test_rng, One, UniformRand, Zero};
     use ark_ff::Field;
     use liblasso::poly::eq_poly::EqPolynomial;
+    use rstest::rstest;
     use crate::cleanup::proof_transcript::ProofTranscript2;
-
+    use crate::cleanup::protocols::splits::SplitIdx;
+    use crate::cleanup::utils::twisted_edwards_ops::algfns::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3};
+    use crate::polynomial::vecvec::{vecvec_map, vecvec_map_split, vecvec_map_split_to_dense, VecVecPolynomial};
+    use crate::utils::Densify;
     use super::*;
 
     type Fr = <Config as CurveConfig>::ScalarField;
@@ -782,7 +792,6 @@ mod tests {
 
 
     #[test]
-
     fn gamma_wrapper_works() {
         let f = TestFunction{};
         let rng = &mut test_rng();

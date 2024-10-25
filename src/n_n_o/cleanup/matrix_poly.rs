@@ -101,8 +101,8 @@ fn binomial(n: usize, k: usize) -> u64{
     }
     let mut res = 1;
     for i in 0..k{
-        res *= (n-k);
-        res /= (k+1); 
+        res *= (n-i);
+        res /= (i+1); 
     }
     res as u64
 }
@@ -112,7 +112,13 @@ fn extend_evals<F: PrimeField>(P: &[F], degree: usize) -> F{
     let mut res = F::zero();
     let start_index = P.len() - degree - 1;
     for i in 0..degree+1{
-        res += (P[start_index + i] * F::from(binomial(degree+1, i)));
+        if i %2 == degree % 2{
+            res += (P[start_index + i] * F::from(binomial(degree+1, i)));
+        }
+        else{
+            res -= (P[start_index + i] * F::from(binomial(degree+1, i)));
+        }
+
     }
     res
     
@@ -173,6 +179,28 @@ pub mod test{
 
     }
 
+    #[test]
+    fn test_binomial_things(){
+        let rng = &mut test_rng();
+        let deg: u64 = 5;
+        let coeffs = (0..deg + 1).map(|_| Fq::rand(rng)).collect_vec();
+        //let coeffs = (0..deg + 1).map(|i| Fq::from(i)).collect_vec();
+
+        let true_evals: Vec<_> = (0..deg + 2).map(|i| 
+            coeffs.iter()
+                .rev()
+                .fold(Fq::from(0), |acc, x| Fq::from(i)*acc + x)
+        ).collect();
+
+
+
+        let mut evals = coeffs_to_evals_univar(&coeffs, deg as usize);
+        let last_eval = extend_evals(&evals, deg as usize);
+        evals.push(last_eval);
+
+        //println!("{:?}, \n\n{:?}", evals, true_evals);
+        assert!(evals == true_evals);
+    }
 }
 
 

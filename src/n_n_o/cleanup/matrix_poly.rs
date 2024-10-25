@@ -1,8 +1,9 @@
 // Implements partial inner products of dense vector-arranged and matrix arranged polynomials.
-
-use std::{iter::repeat, marker::PhantomData, sync::Arc};
+#[allow(unused_imports)]
+use std::{iter::repeat, marker::PhantomData, ops::Add, sync::Arc, u64};
 
 use ark_ff::PrimeField;
+use ark_ff::biginteger::BigInteger;
 use ark_std::log2;
 use itertools::Itertools;
 use liblasso::poly::{eq_poly::EqPolynomial, unipoly::UniPoly};
@@ -11,6 +12,8 @@ use rayon::{current_num_threads, iter::{IndexedParallelIterator, IntoParallelIte
 use crate::cleanup::{protocol2::Protocol2, protocols::sumcheck::{AlgFnSO, BareSumcheckSO, DenseSumcheckObjectSO, PointClaim, SinglePointClaims, SumClaim}};
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocols::sumchecks::vecvec::Sumcheckable;
+
+use super::non_native_evs::fe_to_limbs;
 
 /// Splits large vector of length n into chunks of small size (length m) and computes inner products, arranging them in a vector of size n/m. n%m must be zero.
 /// Supports an additional padding parameter - large vector can actually be of length < n, and will be formally padded with zeros to length n. This does not actually allocate zeros. 
@@ -72,14 +75,75 @@ pub fn inner_prod_hi<F: PrimeField>(large: &[F], small: &[F], pad_large_to_lengt
     acc
 }
 
-fn make_fake_prover_response<F: PrimeField>() -> Vec<F> {
-    todo!()
+fn make_fake_prover_response<F: PrimeField>(P1: &[F], P2: &[F], P3: &[F]) -> Vec<F> {
+    todo!();
 }
 
 /// Takes a vector of F-elements, interprets each of these as BigInt, multiplies k-th limb by 2^{64k}, and casts to NNF. 
-pub fn normalize_and_cast_to_nn<F: PrimeField, NNF: PrimeField>(limbs: &[F]) -> NNF {
-    todo!()
+/// Assumes the limb representation is valid; that is, if NNF is smaller than F, then the last limbs need to be zero
+pub fn normalize_and_cast_to_nn<F: PrimeField, NNF: PrimeField>(limbs: &[F]) -> NNF 
+{
+    let ans_bigint = limbs.iter()
+                                                        .enumerate()
+                                                        .fold(NNF::BigInt::from(0_u64), |acc, (k, x)| {
+                                                            let mut temp = acc;
+                                                            let mut x = NNF::BigInt::from(fe_to_limbs(x)[0]);
+                                                            x.muln((64*k) as u32);
+                                                            temp.add_with_carry({
+                                                                &x
+                                                            });
+                                                            temp
+                                                        });
+    NNF::from(ans_bigint)
+    //todo!();
 }
+
+pub mod test{
+    #[allow(unused_imports)]
+
+    use super::*;
+
+    use ark_bls12_381::Fr;
+    use ark_bls12_381::Fq;
+    use ark_bls12_381::G1Projective;
+    use ark_ff::{MontBackend};
+    use ark_ff::{biginteger::BigInteger, biginteger::BigInt};
+    use ark_std::{test_rng, UniformRand};
+    use ark_std::rand::Rng;
+    use itertools::Itertools;
+    use liblasso::utils::math::Math;
+    use crate::protocol::protocol::MultiEvalClaim;
+    use crate::protocol::protocol::{ProtocolVerifier, ProtocolProver};
+    use crate::protocol::sumcheck::{*, SumcheckPolyMapVerifier, SumcheckPolyMapProver};
+    use crate::transcript::Challenge;
+    use crate::transcript::IndexedProofTranscript;
+    use liblasso::utils::test_lib::TestTranscript;
+        
+    #[test]
+    fn test_normalize_and_cast_to_nn(){
+
+        // let limb_size = roundup_to_pow2( Fq::MODULUS_BIT_SIZE  as usize / num_limbs);
+
+        let mut two_to_64 = <Fq as PrimeField>::BigInt::from(2_u64.pow(63));
+        two_to_64.mul2();
+
+        let two_to_64_bis = BigInt::<6>([0, 1, 0, 0, 0, 0]);
+        // let two_to_64_bis = BigInteger384([0, 1, 0, 0, 0, 0]);
+
+        let two_to_63 = <Fq as PrimeField>::BigInt::from(2_u64.pow(63));
+        println!("{:?}, \n\n{:?}, \n\n{:?}, \n\n{:?}", two_to_64, two_to_63, two_to_64_bis, two_to_64_bis == two_to_64);
+
+        let nnf : Fq = normalize_and_cast_to_nn(&[Fr::from(1), Fr::from(5),Fr::from(4),Fr::from(3),Fr::from(2),Fr::from(1)]);
+
+
+        println!("{:?}, \n\n{:?}, \n\n{:?}, \n\n{:?}", nnf, two_to_63, two_to_64_bis, two_to_64_bis == two_to_64);
+
+
+
+    }
+
+}
+
 
 /// Matrix-arranged polynomial.
 /// Columns are little-end, i.e. each column is a chunk of length y_size.

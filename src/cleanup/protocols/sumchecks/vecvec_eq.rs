@@ -384,6 +384,17 @@ pub struct VecVecDeg2Sumcheck<F: PrimeField, Fun: AlgFn<F>> {
     _pd: PhantomData<F>,
 }
 
+impl <F: PrimeField, Fun: AlgFn<F>> VecVecDeg2Sumcheck<F, Fun> {
+    pub fn new(f: Fun, num_vars: usize, num_vertical_vars: usize) -> Self {
+        Self {
+            f,
+            num_vars,
+            num_vertical_vars,
+            _pd: Default::default(),
+        }
+    }
+}
+
 impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Transcript> for  VecVecDeg2Sumcheck<F, Fun> {
     type ProverInput = Vec<VecVecPolynomial<F>>;
     type ProverOutput = ();

@@ -323,14 +323,14 @@ impl<F: PrimeField> VecVecPolynomial<F> {
             Self::new(
                 data[1].take().unwrap(),
                 F::one(),
-                F::zero(),
+                F::one(),
                 row_logsize,
                 col_logsize,
             ),
             Self::new(
                 data[2].take().unwrap(),
                 F::one(),
-                F::zero(),
+                F::one(),
                 row_logsize,
                 col_logsize,
             )
@@ -363,7 +363,7 @@ impl<F: PrimeField> VecVecPolynomial<F> {
             Self::new(
                 data[1].take().unwrap(),
                 F::one(),
-                F::zero(),
+                F::one(),
                 row_logsize,
                 col_logsize,
             ),

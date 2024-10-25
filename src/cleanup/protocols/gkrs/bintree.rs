@@ -7,6 +7,7 @@ use itertools::Itertools;
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::protocols::{splits::SplitAt, sumchecks::vecvec_eq::VecVecDeg2Sumcheck, gkrs::gkr::SimpleGKR};
+use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
 use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
 use crate::cleanup::protocols::splits::SplitIdx;
 use crate::cleanup::protocols::sumcheck::{SinglePointClaims};
@@ -72,12 +73,8 @@ impl<F: PrimeField + TwistedEdwardsConfig> SplitVecVecMapGKRAdvice<F> {
         }
     }
 
-    fn step(&self, fwd_idx: usize, row_logsize: usize, split_last: bool, step: &Step, split_idx: SplitIdx, bundle_size: usize) -> Self {
-        // println!("Layer {} of {}, Step {:?}", fwd_idx, n_iters, step);
-        // println!("Split params: split_last: {}, split_idx: {:?}, bundle_size: {}", split_last, split_idx, bundle_size);
-        // dbg!(&self);
-
-        match (step, fwd_idx, (fwd_idx + 1 == row_logsize) && !split_last) {
+    fn step(&self, fwd_idx: usize, row_logsize: usize, n_adds: usize, split_last: bool, step: &Step, split_idx: SplitIdx, bundle_size: usize) -> Self {
+        match (step, fwd_idx, (fwd_idx + 1 == n_adds) && !split_last) {
             (Step::L1, 0, _) => {
                 self.map(affine_twisted_edwards_add_l1())
             }
@@ -122,7 +119,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> VecVecBintreeAddWG<F> {
 
         for add_idx in 0..num_adds {
             for step_idx in 0..3 {
-                next = advice.step(add_idx, row_logsize, split_last, &step, SplitIdx::LO(0), 3);
+                next = advice.step(add_idx, row_logsize, num_adds, split_last, &step, SplitIdx::LO(0), 3);
                 advices.push(advice);
                 advice = next;
                 step = match step {
@@ -160,7 +157,90 @@ struct VecVecBintreeAdd<F: PrimeField, Transcript: TProofTranscript2> {
     gkr: SimpleGKR<SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>, Transcript, VecVecBintreeAddWG<F>>
 }
 
-impl<F: PrimeField, Transcript: TProofTranscript2> Protocol2<Transcript> for VecVecBintreeAdd<F, Transcript> {
+impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVecBintreeAdd<F, Transcript> {
+    pub fn new(num_vars: usize, num_adds: usize, row_logsize: usize, split_last: bool) -> Self {
+        Self {
+            gkr: SimpleGKR::new(
+                Self::generate_layers(num_vars, num_adds, row_logsize, split_last),
+            )
+        }
+    }
+
+    pub fn generate_layers(num_vars: usize, num_adds: usize, row_logsize: usize, split_last: bool) -> Vec<Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>> {
+        let mut layers: Vec<Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>> = vec![];
+        let mut step = Step::L1;
+        for i in 0..num_adds {
+            for _ in 0..3 {
+                match (i, &step) {
+                    (0, Step::L1) => {
+                        layers.push(Box::new(
+                            VecVecDeg2Sumcheck::new(
+                                affine_twisted_edwards_add_l1(),
+                                num_vars,
+                                num_vars - row_logsize,
+                            )
+                        ));
+                    }
+                    (0, Step::L2) => {
+                        layers.push(Box::new(
+                            VecVecDeg2Sumcheck::new(
+                                affine_twisted_edwards_add_l2(),
+                                num_vars,
+                                num_vars - row_logsize,
+                            )
+                        ));
+                    }
+                    (0, Step::L3) => {
+                        layers.push(Box::new(
+                            VecVecDeg2Sumcheck::new(
+                                affine_twisted_edwards_add_l3(),
+                                num_vars,
+                                num_vars - row_logsize,
+                            )
+                        ));
+                    }
+                    (_, Step::L1) => {
+                        layers.push(Box::new(
+                            VecVecDeg2Sumcheck::new(
+                                twisted_edwards_add_l1(),
+                                num_vars,
+                                num_vars - row_logsize,
+                            )
+                        ));
+                    }
+                    (_, Step::L2) => {
+                        layers.push(Box::new(
+                            VecVecDeg2Sumcheck::new(
+                                twisted_edwards_add_l2(),
+                                num_vars,
+                                num_vars - row_logsize,
+                            )
+                        ));
+                    }
+                    (_, Step::L3) => {
+                        layers.push(Box::new(
+                            VecVecDeg2Sumcheck::new(
+                                twisted_edwards_add_l3(),
+                                num_vars,
+                                num_vars - row_logsize,
+                            )
+                        ));
+                    }
+                }
+                step = match step {
+                    Step::L1 => {Step::L2}
+                    Step::L2 => {Step::L3}
+                    Step::L3 => {Step::L1}
+                }
+            }
+
+
+        }
+        layers
+    }
+}
+
+impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Protocol2<Transcript> for VecVecBintreeAdd<F, Transcript> {
     type ProverInput = VecVecBintreeAddWG<F>;
     type ProverOutput = ();
     type ClaimsBefore = SinglePointClaims<F>;
@@ -185,27 +265,73 @@ mod test {
     use itertools::Itertools;
     use num_traits::{One, Zero};
     use rstest::rstest;
-    use crate::cleanup::protocols::gkrs::bintree::VecVecBintreeAddWG;
+    use crate::cleanup::proof_transcript::{ProofTranscript2, TProofTranscript2};
+    use crate::cleanup::protocol2::Protocol2;
+    use crate::cleanup::protocols::gkrs::bintree::{VecVecBintreeAdd, VecVecBintreeAddWG};
     use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
     use crate::cleanup::protocols::splits::SplitIdx;
+    use crate::cleanup::protocols::sumcheck::SinglePointClaims;
     use crate::cleanup::utils::algfn::IdAlgFn;
     use crate::cleanup::utils::twisted_edwards_ops::algfns::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
     use crate::polynomial::vecvec::{vecvec_map_split, VecVecPolynomial};
     use crate::utils::{DensePolyRndConfig, Densify, RandomlyGeneratedPoly};
 
     #[test]
+    fn prove_and_verify() {
+        let rng = &mut test_rng();
+        type F = <BandersnatchConfig as CurveConfig>::BaseField;
+
+        let row_logsize = 4;
+        let col_logsize = 2;
+        let num_adds = 1;
+        let split_last = false;
+        let num_vars = row_logsize + col_logsize;
+        
+        
+        let points = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
+        let inputs = vecvec_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
+        let witness_gen = VecVecBintreeAddWG::new(SplitVecVecMapGKRAdvice::VecVecMAP(inputs), row_logsize, num_adds, split_last);
+
+        let prover = VecVecBintreeAdd::new(
+            num_vars,
+            num_adds,
+            row_logsize,
+            split_last,
+        );
+
+        let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
+        let last = witness_gen.last.as_ref().unwrap();
+        let evs = match last {
+            SplitVecVecMapGKRAdvice::VecVecMAP(vv) => { vv.to_dense( ())}
+            SplitVecVecMapGKRAdvice::DenseMAP(d) => { d.iter().map(|c| c.to_dense(num_vars - num_adds - 1)).collect_vec() }
+            SplitVecVecMapGKRAdvice::SPLIT(_) => { unreachable!() }
+        }
+            .iter()
+            .map(|c|
+                c.iter().fold(F::zero(), |acc, nxt| acc + nxt)
+            )
+            .collect_vec();
+        
+        let point = (0..(num_vars - num_adds)).map(|_| Fr::rand(rng)).collect_vec();
+        let claims = SinglePointClaims {
+            point,
+            evs,
+        };
+        prover.prove(&mut transcript_p, claims, witness_gen);
+    }
+
+    #[test]
     fn witness_gen() {
         let rng = &mut test_rng();
         type F = <BandersnatchConfig as CurveConfig>::BaseField;
-        
+
         let row_logsize = 4;
         let col_logsize = 2;
-        let num_adds = 2;
+        let num_adds = 5;
         let split_last = false;
         let points = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
         let inputs = vecvec_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
         let smth = VecVecBintreeAddWG::new(SplitVecVecMapGKRAdvice::VecVecMAP(inputs), row_logsize, num_adds, split_last);
-        dbg!(&smth);
         let outs = smth.last.unwrap();
         let densified_out = match outs {
             SplitVecVecMapGKRAdvice::VecVecMAP(vv) => {
@@ -227,16 +353,15 @@ mod test {
                     densified_points[1][idx * group_size + count],
                 );
             }
-            // if !densified_out[2][idx].is_zero() {
-            //     let out = Projective::<BandersnatchConfig>::new_unchecked(
-            //         densified_out[0][idx],
-            //         densified_out[1][idx],
-            //         densified_out[0][idx] * densified_out[1][idx],
-            //         densified_out[2][idx],
-            //     );
-            //     dbg!(&out);
-            //     assert!(out.into_affine().is_on_curve())
-            // }
+            if !densified_out[2][idx].is_zero() {
+                let out = Projective::<BandersnatchConfig>::new_unchecked(
+                    densified_out[0][idx],
+                    densified_out[1][idx],
+                    densified_out[0][idx] * densified_out[1][idx] / densified_out[2][idx],
+                    densified_out[2][idx],
+                );
+                assert!(out.into_affine().is_on_curve())
+            }
         }
     }
 
@@ -291,7 +416,7 @@ mod test {
             let point = Projective::<BandersnatchConfig>::new_unchecked(
                 dense_ans[3 * (idx % 2) + 0][idx / 2],
                 dense_ans[3 * (idx % 2) + 1][idx / 2],
-                dense_ans[3 * (idx % 2) + 0][idx / 2] * dense_ans[3 * (idx % 2) + 1][idx / 2],
+                dense_ans[3 * (idx % 2) + 0][idx / 2] * dense_ans[3 * (idx % 2) + 1][idx / 2] / dense_ans[3 * (idx % 2) + 2][idx / 2],
                 dense_ans[3 * (idx % 2) + 2][idx / 2],
             );
             assert!(point.into_affine().is_on_curve());
@@ -320,13 +445,7 @@ mod test {
 
         let dense_points = (0..(1 << (col_logsize + row_logsize)))
             .filter_map(|idx| {
-                let p = Projective::<BandersnatchConfig>::new_unchecked(
-                    dense_point_coords[0][idx],
-                    dense_point_coords[1][idx],
-                    dense_point_coords[0][idx] * dense_point_coords[1][idx],
-                    dense_point_coords[2][idx],
-                );
-                match p.z.is_zero() {
+                match dense_point_coords[2][idx].is_zero() {
                     true => {
                         assert!(dense_point_coords[0][idx].is_zero());
                         assert!(dense_point_coords[1][idx].is_zero());
@@ -334,6 +453,12 @@ mod test {
                         None
                     }
                     false => {
+                        let p = Projective::<BandersnatchConfig>::new_unchecked(
+                            dense_point_coords[0][idx],
+                            dense_point_coords[1][idx],
+                            dense_point_coords[0][idx] * dense_point_coords[1][idx] / dense_point_coords[2][idx],
+                            dense_point_coords[2][idx],
+                        );
                         match p.into_affine().is_on_curve()
                             {
                                 true => { Some(p) }

@@ -10,7 +10,6 @@ use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2}
 use super::super::{sumcheck::{compress_coefficients, evaluate_univar, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec_eq::Sumcheckable};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 
-
 #[derive(Clone)]
 pub struct Prod3Fn<F: PrimeField> {
     _marker: PhantomData<F>
@@ -354,7 +353,7 @@ mod tests {
             for y in 0..size_y {
                 let y_addr = (y << c) + digits[y][x] as usize;
                 let x_addr = counter[y][x] as usize;
-                
+
                 for i in 0..3 {
                     let val = image[i][y_addr][x_addr].take().unwrap();
                     assert_eq!(val, polys[i][x]);

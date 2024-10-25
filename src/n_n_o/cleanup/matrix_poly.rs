@@ -6,7 +6,7 @@ use ark_ff::PrimeField;
 use ark_ff::biginteger::BigInteger;
 use ark_std::log2;
 use itertools::Itertools;
-use liblasso::poly::{eq_poly::EqPolynomial, unipoly::UniPoly};
+use liblasso::{poly::{eq_poly::EqPolynomial, unipoly::UniPoly}, utils::gaussian_elimination::gaussian_elimination};
 use rayon::{current_num_threads, iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator}, slice::ParallelSlice};
 
 use crate::cleanup::{protocol2::Protocol2, protocols::sumcheck::{AlgFnSO, BareSumcheckSO, DenseSumcheckObjectSO, PointClaim, SinglePointClaims, SumClaim}};
@@ -75,8 +75,51 @@ pub fn inner_prod_hi<F: PrimeField>(large: &[F], small: &[F], pad_large_to_lengt
     acc
 }
 
-fn make_fake_prover_response<F: PrimeField>(P1: &[F], P2: &[F], P3: &[F]) -> Vec<F> {
+
+// given coefficients computes evals at 0, 1, 2, ... , degree
+fn coeffs_to_evals_univar<F: PrimeField>(P: &[F], degree: usize) -> Vec<F>{
+    let mut res = vec![];
+    for i in 0..degree + 1{
+        let mut curr_res = F::zero();
+        let mut curr_deg = F::one();
+        for j in 0..degree + 1{
+            curr_res += P[j] * curr_deg;
+            curr_deg *= F::from(i as u64);
+        }
+        res.push(curr_res)
+    }
+    res
+    //gaussian_elimination();
+}
+
+
+fn binomial(n: usize, k: usize) -> u64{
+    if k > n{
+        return 0}
+    if k > n-k{
+        return binomial(n, n-k)
+    }
+    let mut res = 1;
+    for i in 0..k{
+        res *= (n-k);
+        res /= (k+1); 
+    }
+    res as u64
+}
+
+// given evals at 0, 1, 2, ... , k, evaluates at k+1
+fn extend_evals<F: PrimeField>(P: &[F], degree: usize) -> F{
+    let mut res = F::zero();
+    let start_index = P.len() - degree - 1;
+    for i in 0..degree+1{
+        res += (P[start_index + i] * F::from(binomial(degree+1, i)));
+    }
+    res
     
+}
+
+
+fn make_fake_prover_response<F: PrimeField>(P1: &[F], P2: &[F], P3: &[F]) -> Vec<F> {
     todo!();
 }
 
@@ -126,10 +169,7 @@ pub mod test{
 
         let nnf : Fq = normalize_and_cast_to_nn(&[Fr::from(1), Fr::from(5),Fr::from(4),Fr::from(3),Fr::from(2),Fr::from(1)]);
 
-
         println!("{:?}", nnf);
-
-
 
     }
 

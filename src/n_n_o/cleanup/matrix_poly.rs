@@ -76,6 +76,7 @@ pub fn inner_prod_hi<F: PrimeField>(large: &[F], small: &[F], pad_large_to_lengt
 }
 
 fn make_fake_prover_response<F: PrimeField>(P1: &[F], P2: &[F], P3: &[F]) -> Vec<F> {
+    
     todo!();
 }
 
@@ -120,23 +121,13 @@ pub mod test{
     use liblasso::utils::test_lib::TestTranscript;
         
     #[test]
+    //TODO: better test
     fn test_normalize_and_cast_to_nn(){
-
-        // let limb_size = roundup_to_pow2( Fq::MODULUS_BIT_SIZE  as usize / num_limbs);
-
-        let mut two_to_64 = <Fq as PrimeField>::BigInt::from(2_u64.pow(63));
-        two_to_64.mul2();
-
-        let two_to_64_bis = BigInt::<6>([0, 1, 0, 0, 0, 0]);
-        // let two_to_64_bis = BigInteger384([0, 1, 0, 0, 0, 0]);
-
-        let two_to_63 = <Fq as PrimeField>::BigInt::from(2_u64.pow(63));
-        println!("{:?}, \n\n{:?}, \n\n{:?}, \n\n{:?}", two_to_64, two_to_63, two_to_64_bis, two_to_64_bis == two_to_64);
 
         let nnf : Fq = normalize_and_cast_to_nn(&[Fr::from(1), Fr::from(5),Fr::from(4),Fr::from(3),Fr::from(2),Fr::from(1)]);
 
 
-        println!("{:?}, \n\n{:?}, \n\n{:?}, \n\n{:?}", nnf, two_to_63, two_to_64_bis, two_to_64_bis == two_to_64);
+        println!("{:?}", nnf);
 
 
 
@@ -205,7 +196,7 @@ impl<F: PrimeField, NNF: PrimeField, PT: TProofTranscript2> Protocol2<PT> for NN
     type ClaimsAfter = NNOOutputClaim<F, NNF>;
 
     fn prove(&self, transcript: &mut PT, nn_opening_claim: Self::ClaimsBefore, native_repr: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
-        let evaluation_with_nonflushed_limbs = make_fake_prover_response::<F>();
+        let evaluation_with_nonflushed_limbs: Vec<F> = todo!(); //make_fake_prover_response::<F>();
         assert!(evaluation_with_nonflushed_limbs.len() == 3 * (self.y_size-1) + 1);
         transcript.write_scalars(&evaluation_with_nonflushed_limbs);
         let t: F = transcript.challenge(128);

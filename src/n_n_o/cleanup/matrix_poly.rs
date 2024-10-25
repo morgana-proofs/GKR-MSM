@@ -11,7 +11,7 @@ use rayon::{current_num_threads, iter::{IndexedParallelIterator, IntoParallelIte
 
 use crate::cleanup::{protocol2::Protocol2, protocols::sumcheck::{AlgFnSO, BareSumcheckSO, DenseSumcheckObjectSO, PointClaim, SinglePointClaims, SumClaim}};
 use crate::cleanup::proof_transcript::TProofTranscript2;
-use crate::cleanup::protocols::sumchecks::vecvec::Sumcheckable;
+use crate::cleanup::protocols::sumchecks::vecvec_eq::Sumcheckable;
 
 use super::non_native_evs::fe_to_limbs;
 

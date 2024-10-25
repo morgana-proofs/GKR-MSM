@@ -7,10 +7,11 @@ use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
 use crate::cleanup::protocols::sumcheck::{AlgFn, SinglePointClaims};
 use crate::polynomial::vecvec::VecVecPolynomial;
 use crate::protocol::protocol::EvalClaim;
-use crate::cleanup::protocols::sumchecks::vecvec::VecVecDeg2Sumcheck;
+use crate::cleanup::protocols::sumchecks::vecvec_eq::VecVecDeg2Sumcheck;
 use crate::utils::fix_var_top;
 
 
+#[derive(Debug)]
 pub enum SplitIdx {
     LO(usize),
     HI(usize),

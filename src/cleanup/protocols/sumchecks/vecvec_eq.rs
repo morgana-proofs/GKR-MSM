@@ -73,7 +73,7 @@ impl<F: PrimeField, Fun: AlgFn<F>> FoldToSumcheckable<F> for VecVecDeg2SumcheckO
 }
 
 
-pub struct VecVecDeg2PrefixSumcheckObjectSO<F: PrimeField, Fun: AlgFn<F>> {
+pub struct VecVecDeg2LoSumcheckObjectSO<F: PrimeField, Fun: AlgFn<F>> {
     polys: Vec<VecVecPolynomial<F>>,
     func: Fun,
     gamma_pows: Vec<F>,
@@ -84,7 +84,7 @@ pub struct VecVecDeg2PrefixSumcheckObjectSO<F: PrimeField, Fun: AlgFn<F>> {
 }
 
 pub enum VecVecDeg2SumcheckStage<F: PrimeField, Fun: AlgFn<F>> {
-    Sparse(VecVecDeg2PrefixSumcheckObjectSO<F, Fun>),
+    Sparse(VecVecDeg2LoSumcheckObjectSO<F, Fun>),
     Dense(DenseSumcheckObjectSO<F, EqWrapper<F, GammaWrapper<F, Fun>>>)
 }
 
@@ -103,7 +103,7 @@ impl<F: PrimeField, Fun: AlgFn<F>> VecVecDeg2SumcheckObjectSO<F, Fun> {
         col_logsize: usize,
     ) -> Self {
         Self {
-            sumcheckable: Some(VecVecDeg2SumcheckStage::Sparse(VecVecDeg2PrefixSumcheckObjectSO {
+            sumcheckable: Some(VecVecDeg2SumcheckStage::Sparse(VecVecDeg2LoSumcheckObjectSO {
                 eq_poly_data: EQPolyData::new(
                     point,
                     col_logsize,
@@ -132,7 +132,7 @@ impl<F: PrimeField, Fun: AlgFn<F>> VecVecDeg2SumcheckObjectSO<F, Fun> {
     }
 }
 
-impl<F: PrimeField, Fun: AlgFn<F>> VecVecDeg2PrefixSumcheckObjectSO<F, Fun> {
+impl<F: PrimeField, Fun: AlgFn<F>> VecVecDeg2LoSumcheckObjectSO<F, Fun> {
     pub fn new(
         polys: Vec<VecVecPolynomial<F>>,
         func: Fun,
@@ -182,15 +182,15 @@ impl<F: PrimeField, Fun: AlgFn<F>> VecVecDeg2PrefixSumcheckObjectSO<F, Fun> {
     }
 }
 
-struct UnivarFormat<F> {
+pub struct UnivarFormat<F> {
     _pd: PhantomData<F>
 }
 
 impl<F: PrimeField> UnivarFormat<F> {
     pub fn from12(p1: F, p2: F, eq1: F, previous_claim: F) -> UniPoly<F> {
         let eq0 = F::one() - eq1;
-        let eq2 = eq1.double() - eq0;  // 2 eq0 + 2 delta - eq0
-        let eq3 = eq2.double() - eq1;  // 2 eq0 + 4 delta - eq0 - delta
+        let eq2 = eq1.double() - eq0;
+        let eq3 = eq2.double() - eq1;
 
         let prod1 = p1 * eq1;
         let prod0 = previous_claim - prod1;
@@ -283,7 +283,7 @@ impl<F: PrimeField, Fun: AlgFn<F>> Sumcheckable<F> for VecVecDeg2SumcheckObjectS
     }
 }
 
-impl<F: PrimeField, Fun: AlgFn<F>> Sumcheckable<F> for VecVecDeg2PrefixSumcheckObjectSO<F, Fun> {
+impl<F: PrimeField, Fun: AlgFn<F>> Sumcheckable<F> for VecVecDeg2LoSumcheckObjectSO<F, Fun> {
     fn bind(&mut self, t: F) {
         self.polys.par_iter_mut().map(|v| v.bind_21(t)).count();
         self.current_point.push(t);

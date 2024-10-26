@@ -1,8 +1,8 @@
 // Implements partial inner products of dense vector-arranged and matrix arranged polynomials.
 #[allow(unused_imports)]
-use std::{iter::repeat, marker::PhantomData, ops::Add, sync::Arc, u64};
+use std::{iter::repeat, marker::PhantomData, ops::{Add, AddAssign, SubAssign, Mul, MulAssign}, sync::Arc, u64};
 
-use ark_ff::PrimeField;
+use ark_ff::{PrimeField, Zero, One};
 use ark_ff::biginteger::BigInteger;
 use ark_std::log2;
 use itertools::Itertools;
@@ -75,58 +75,149 @@ pub fn inner_prod_hi<F: PrimeField>(large: &[F], small: &[F], pad_large_to_lengt
     acc
 }
 
+pub mod polynomial_utils{
+    use super::*;
 
-// given coefficients computes evals at 0, 1, 2, ... , degree
-fn coeffs_to_evals_univar<F: PrimeField>(P: &[F], degree: usize) -> Vec<F>{
-    let mut res = vec![];
-    for i in 0..degree + 1{
-        let mut curr_res = F::zero();
-        let mut curr_deg = F::one();
-        for j in 0..degree + 1{
-            curr_res += P[j] * curr_deg;
-            curr_deg *= F::from(i as u64);
+    // given coefficients computes evals at 0, 1, 2, ... , degree
+    pub fn coeffs_to_evals_univar<F1, F2>(P: &[F1], degree: usize) -> Vec<F2>
+    where F1: From<u64> + Mul<Output = F1> + AddAssign + SubAssign + Zero + Copy,
+    F2: From<F1> + From<u64> + MulAssign + AddAssign + SubAssign + Zero + Copy + One{
+        let mut res = vec![];
+        for i in 0..degree + 1{
+            let mut curr_res = F2::zero();
+            let mut curr_deg = F2::one();
+            for j in 0..degree + 1{
+                curr_res += F2::from(P[j]) * curr_deg;
+                curr_deg *= F2::from(i as u64);
+            }
+            res.push(curr_res)
         }
-        res.push(curr_res)
+        res
+        //gaussian_elimination();
     }
-    res
-    //gaussian_elimination();
+
+
+    pub fn binomial(n: usize, k: usize) -> u64{
+        if k > n{
+            return 0}
+        if k > n-k{
+            return binomial(n, n-k)
+        }
+        let mut res = 1;
+        for i in 0..k{
+            res *= (n-i);
+            res /= (i+1); 
+        }
+        res as u64
+    }
+
+    // given evals at 0, 1, 2, ... , k, evaluates at k+1
+    pub fn extend_evals<F1, F2>(P: &[F1], degree: usize) -> F2
+        where F1: From<u64> + Mul<Output = F1> + AddAssign + SubAssign + Zero + Copy,
+        F2: From<F1> + From<u64> + Mul<Output = F2> + AddAssign + SubAssign + Zero + Copy
+    {
+        let mut res = F2::zero();
+        let start_index = P.len() - degree - 1;
+        for i in 0..degree+1{
+            if i %2 == degree % 2{
+                res += (F2::from(P[start_index + i]) * F2::from(binomial(degree+1, i)));
+            }
+            else{
+                res -= (F2::from(P[start_index + i]) * F2::from(binomial(degree+1, i)));
+            }
+
+        }
+        res
+        
+    }
+
+    // given evals at 0, 1, 2, ... , k, evaluates at k+1, ... k+l
+    pub fn extend_evals_by_l<F>(P: &[F], degree: usize, l: usize) -> Vec<F>
+    where F: From<F> + From<u64> + Mul<Output = F> + AddAssign + SubAssign + Zero + Copy,
+    {
+        assert!(P.len() > degree);
+        let mut P: Vec<_> = P.to_vec();
+        for _ in (0..l){
+            P.push(extend_evals(&P, degree));
+        }
+        P
+    }
+
+}
+pub mod overflow_multiplication_utils{
+    /// Returns the least significant 64 bits of a
+    pub fn lo128(a: u128) -> u128 {
+        a & ((1<<64)-1)
+    }
+
+    /// Returns the most significant 64 bits of a
+    pub fn hi128(a: u128) -> u128 {
+        a >> 64
+    }
+
+    /// Returns 2^128 - a (two's complement)
+    pub fn neg128(a: u128) -> u128 {
+        (!a).wrapping_add(1)
+    }
+
+    /// Returns 2^128 / a
+    pub fn div128(a: u128) -> u128 {
+        (neg128(a)/a).wrapping_add(1)
+    }
+
+    /// Returns 2^128 % a
+    pub fn mod128(a: u128) -> u128 {
+        neg128(a) % a
+    }
+
+    /// Returns a+b (wrapping)
+    pub fn add256(a0: u128, a1: u128, b0: u128, b1: u128) -> (u128, u128) {
+        let (r0, overflow) = a0.overflowing_add(b0);
+        let r1 = a1.wrapping_add(b1).wrapping_add(overflow as u128);
+        (r0, r1)
+    }
+
+    /// Returns a*b (in 256 bits)
+    pub fn mul128(a: u128, b: u128) -> [u64;4] {
+        // Split a and b into hi and lo 64-bit parts
+        // a*b = (a1<<64 + a0)*(b1<<64 + b0)
+        // = (a1*b1)<<128 + (a1*b0 + b1*a0)<<64 + a0*b0
+        let (a0, a1) = (lo128(a), hi128(a));
+        let (b0, b1) = (lo128(b), hi128(b));
+        let (x, y) = (a1*b0, b1*a0);
+        
+        let (r0, r1) = (a0*b0, a1*b1);
+        let (r0, r1) = add256(r0, r1, lo128(x)<<64, hi128(x));
+        let (r0, r1) = add256(r0, r1, lo128(y)<<64, hi128(y));
+        [(r0 >> 64) as u64, r0 as u64, (r1 >> 64) as u64, r1 as u64]
+    }
 }
 
+use overflow_multiplication_utils::*;
+use polynomial_utils::*;
 
-fn binomial(n: usize, k: usize) -> u64{
-    if k > n{
-        return 0}
-    if k > n-k{
-        return binomial(n, n-k)
-    }
-    let mut res = 1;
-    for i in 0..k{
-        res *= (n-i);
-        res /= (i+1); 
-    }
-    res as u64
-}
+fn make_fake_prover_response<F: PrimeField>(P1: &[u64], P2: &[u64], P3: &[u64]) -> Vec<F> {
+    let (deg1, deg2, deg3) = (P1.len()-1, P2.len()-1, P3.len()-1);
+    let (evals1, evals2, evals3): (Vec<u128>, Vec<u128>, Vec<F>) = (coeffs_to_evals_univar(P1, deg1), coeffs_to_evals_univar(P2, deg2), coeffs_to_evals_univar(P3, deg3));
 
-// given evals at 0, 1, 2, ... , k, evaluates at k+1
-fn extend_evals<F: PrimeField>(P: &[F], degree: usize) -> F{
-    let mut res = F::zero();
-    let start_index = P.len() - degree - 1;
-    for i in 0..degree+1{
-        if i %2 == degree % 2{
-            res += (P[start_index + i] * F::from(binomial(degree+1, i)));
-        }
-        else{
-            res -= (P[start_index + i] * F::from(binomial(degree+1, i)));
-        }
-
-    }
-    res
+    let evals1: Vec<u128> = extend_evals_by_l(&evals1, deg1, deg2);
+    let evals2: Vec<u128> = extend_evals_by_l(&evals2, deg2, deg1);
+    let evals3: Vec<_> = extend_evals_by_l(&evals3, deg3, deg1 + deg2);
     
-}
+    let prod_evals12: Vec<_> = evals1.iter().zip(evals2).map(|(a, b)| {
+        let limbs = mul128(*a, b);
+        let bi = (0..4).zip(limbs).fold(F::BigInt::from(0_u64), |acc, (i, x)| {
+            let mut acc = acc;
+            acc.muln(64);
+            acc.add_with_carry(&F::BigInt::from(x));
+            acc
+        });
+        F::from_bigint(bi).unwrap()
+    }).collect();
 
-
-fn make_fake_prover_response<F: PrimeField>(P1: &[F], P2: &[F], P3: &[F]) -> Vec<F> {
-    todo!();
+    let prod_evals12: Vec<_>  = extend_evals_by_l(&prod_evals12, deg1 + deg2, deg3);
+    let prod_evals123: Vec<_> = prod_evals12.iter().zip(evals3).map(|(a, b)| *a*b).collect();
+    prod_evals123
 }
 
 /// Takes a vector of F-elements, interprets each of these as BigInt, multiplies k-th limb by 2^{64k}, and casts to NNF. 
@@ -152,6 +243,8 @@ pub mod test{
     #[allow(unused_imports)]
 
     use super::*;
+    use super::polynomial_utils;
+    use super::overflow_multiplication_utils;
 
     use ark_bls12_381::Fr;
     use ark_bls12_381::Fq;
@@ -194,12 +287,27 @@ pub mod test{
 
 
 
-        let mut evals = coeffs_to_evals_univar(&coeffs, deg as usize);
+        let mut evals: Vec<Fq> = coeffs_to_evals_univar(&coeffs, deg as usize);
         let last_eval = extend_evals(&evals, deg as usize);
         evals.push(last_eval);
 
         //println!("{:?}, \n\n{:?}", evals, true_evals);
         assert!(evals == true_evals);
+    }
+
+
+    #[test]
+    //TODO: this doesn't really test anything now
+    fn test_fake_provers_response(){
+        let rng = &mut test_rng();
+        let deg1: u64 = 5;
+        let deg2: u64 = 3;
+        let deg3: u64 = 4;
+        let coeffs1 = (0..deg1 + 1).map(|_| u64::rand(rng)).collect_vec();
+        let coeffs2 = (0..deg2 + 1).map(|_| u64::rand(rng)).collect_vec();
+        let coeffs3 = (0..deg3 + 1).map(|_| u64::rand(rng)).collect_vec();
+    
+        make_fake_prover_response::<Fq>(&coeffs1, &coeffs2, &coeffs3);
     }
 }
 

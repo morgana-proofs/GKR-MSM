@@ -147,8 +147,63 @@ impl<T: TProofTranscript2, F: PrimeField> Protocol2<T> for LayeredProd3Protocol<
     }
 }
 
-// assumes that digits are in range (1 << c).
+/// Returns bucketing image (i.e. sorting of values of poly by buckets) and a counter (counter[y][x] is and address where poly[y][x] lands after bucketing). Assumes that digits are in base 2^c.
+/// Not optimized.
 pub fn compute_bucketing_image<F: PrimeField>(
+    polys: &Vec<Vec<F>>,
+    digits: &Vec<Vec<u32>>,
+    c: usize,
+    n_vars_x: usize,
+    n_vars_y: usize,
+    size_x: usize,
+    size_y: usize,
+
+    row_pad: Vec<F>,
+    col_pad: Vec<F>,
+) -> (Vec<VecVecPolynomial<F>>, Vec<Vec<u32>>) {
+    for poly in polys {
+        assert!(poly.len() == size_x);
+    }
+    assert!(row_pad.len() == polys.len());
+    assert!(col_pad.len() == polys.len());
+    assert!(digits.len() == size_y);
+    for row in digits {
+        assert!(row.len() == size_x);
+    }
+    assert!(1 << n_vars_x >= size_x);
+    assert!(1 << n_vars_y >= size_y);
+
+    let mut counter = vec![vec![0u32; size_x]; size_y];
+    let mut buckets = vec![vec![vec![]; size_y << c]; polys.len()];
+    for x in 0..size_x {
+        for y in 0..size_y {
+            let d = (y << c) + digits[y][x] as usize; // target bucket index
+            counter[y][x] = buckets[0][d].len() as u32;
+            for poly_id in 0..polys.len() {
+                buckets[poly_id][d].push(polys[poly_id][x]);
+            }
+        }
+    }
+
+    (
+        buckets
+            .into_iter()
+            .enumerate()
+            .map(|(i, buckets)| VecVecPolynomial::new(
+                buckets,
+                row_pad[i],
+                col_pad[i],
+                n_vars_x,
+                n_vars_y + c)
+            )
+            .collect_vec(),
+        counter
+    )
+}
+
+// assumes that digits are in range (1 << c).
+// parallelized version, TODO: finish and use as drop-in replacement
+pub fn compute_bucketing_image_wip<F: PrimeField>(
     polys: Vec<Vec<F>>,
     digits: Vec<Vec<u32>>,
     c: usize,
@@ -208,10 +263,11 @@ pub fn compute_bucketing_image<F: PrimeField>(
 mod tests {
     use ark_bls12_381::{G1Affine, G1Projective, g1::Config};
     use ark_ec::{CurveConfig, Group};
-    use ark_std::{test_rng, UniformRand, Zero, One};
+    use ark_std::{log2, test_rng, One, UniformRand, Zero};
     use ark_ff::Field;
     use itertools::Itertools;
     use liblasso::{poly::eq_poly::{self, EqPolynomial}, utils::transcript};
+    use rand::RngCore;
     use crate::cleanup::proof_transcript::ProofTranscript2;
 
     use super::*;
@@ -251,5 +307,65 @@ mod tests {
         let output2 = protocol.verify(&mut transcript, SumClaim { sum : claim_hint });
 
         assert_eq!(output, output2);
+    }
+
+    #[test]
+    fn pushforward_image_works() {
+        let rng = &mut test_rng();
+
+        let mut polys = vec![];
+        let size_x = 13783;
+        let size_y = 32;
+
+        let c = 8;
+
+        for i in 0..3 {
+            polys.push((0..size_x).map(|_| Fr::rand(rng)).collect_vec());
+        }
+
+        let mut digits = vec![vec![0u32; size_x]; size_y];
+
+        for x in 0..size_x {
+            for y in 0..size_y {
+                digits[y][x] = rng.next_u32() % (1 << c);
+            }
+        }
+
+        let (image, counter)
+        = compute_bucketing_image(
+            &polys,
+            &digits,
+            c,
+            log2(size_x) as usize,
+            log2(size_y) as usize,
+            size_x,
+            size_y,
+            vec![Fr::zero(); 3],
+            vec![Fr::zero(); 3]
+        );
+
+        let image = image.into_iter().map(|vv|vv.data).collect_vec();
+
+        let mut image = image.into_iter().map(|vv|vv.into_iter().map(|v|v.into_iter().map(|x| Some(x)).collect_vec()).collect_vec()).collect_vec();
+
+        for x in 0..size_x {
+            for y in 0..size_y {
+                let y_addr = (y << c) + digits[y][x] as usize;
+                let x_addr = counter[y][x] as usize;
+                
+                for i in 0..3 {
+                    let val = image[i][y_addr][x_addr].take().unwrap();
+                    assert_eq!(val, polys[i][x]);
+                }
+            }
+        }
+
+        image.into_iter().map(|vv|vv.into_iter().map(|v| v.into_iter().map(|x|{
+            match x {
+                None => (),
+                Some(x) => assert!(x == Fr::zero()),
+            }
+        }).count()).count()).count();
+
     }
 }

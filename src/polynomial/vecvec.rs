@@ -170,9 +170,9 @@ impl<F: Clone + Debug> Debug for VecVecPolynomial<F> {
 
 impl<F: Clone + Debug> VecVecPolynomial<F> {
     pub fn new(mut data: Vec<Vec<F>>, row_pad: F, col_pad: F, row_logsize: usize, col_logsize: usize) -> Self {
-        assert!(data.len() <= (1 << col_logsize));
+        assert!(data.len() <= (1 << col_logsize), "{} {}", data.len(), col_logsize);
         data.iter_mut().map(|p| {
-            dbg!(&p);
+            //dbg!(&p);
             assert!(p.len() <= 1 << row_logsize);
             if p.len() % 2 == 1 {
                 p.push(row_pad.clone());

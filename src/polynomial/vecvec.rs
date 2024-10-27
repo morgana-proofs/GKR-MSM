@@ -14,7 +14,7 @@ use num_traits::Zero;
 use rayon::prelude::*;
 use crate::cleanup::protocols::splits::SplitIdx;
 use crate::cleanup::protocols::sumcheck::AlgFn;
-use crate::utils::{eq_poly_sequence_from_multiplier, eq_poly_sequence_last, padded_eq_poly_sequence};
+use crate::utils::{eq_poly_sequence_from_multiplier, eq_poly_sequence_last, padded_eq_poly_sequence, Densify};
 
 #[derive(Debug)]
 pub struct EQPolyPointParts {
@@ -172,7 +172,6 @@ impl<F: Clone + Debug> VecVecPolynomial<F> {
     pub fn new(mut data: Vec<Vec<F>>, row_pad: F, col_pad: F, row_logsize: usize, col_logsize: usize) -> Self {
         assert!(data.len() <= (1 << col_logsize), "{} {}", data.len(), col_logsize);
         data.iter_mut().map(|p| {
-            //dbg!(&p);
             assert!(p.len() <= 1 << row_logsize);
             if p.len() % 2 == 1 {
                 p.push(row_pad.clone());
@@ -452,6 +451,22 @@ impl<F: Clone> VecVecPolynomial<F> {
     }
 }
 
+impl<F: Clone> Densify<F> for VecVecPolynomial<F> {
+    type Hint = ();
+
+    fn to_dense(&self, hint: Self::Hint) -> Vec<F> {
+        self.vec()
+    }
+}
+
+impl<F: Clone> Densify<Vec<F>> for Vec<VecVecPolynomial<F>> {
+    type Hint = ();
+
+    fn to_dense(&self, hint: Self::Hint) -> Vec<Vec<F>> {
+        self.iter().map(|r| r.to_dense(hint)).collect_vec()
+    }
+}
+
 pub fn vecvec_map<F: PrimeField, Fnc: AlgFn<F>>(
     polys: &[VecVecPolynomial<F>],
     func: Fnc
@@ -568,6 +583,7 @@ pub fn vecvec_map_split_to_dense<F: PrimeField, Fnc: AlgFn<F>>(
 ) -> Vec<Vec<F>> {
     let num_vars = polys[0].num_vars();
     let row_logsize = polys[0].row_logsize;
+    assert_eq!(row_logsize, 1);
     let col_logsize = polys[0].col_logsize;
     let mut outs = [0, 2].map(|_| {(0..func.n_outs()).map(|_| Vec::with_capacity(1 << polys[0].col_logsize)).collect_vec()});
 
@@ -600,7 +616,7 @@ pub fn vecvec_map_split_to_dense<F: PrimeField, Fnc: AlgFn<F>>(
 
     let [l, r] = outs;
     l.into_iter().enumerate().chunks(bundle_size).into_iter().interleave(r.into_iter().enumerate().chunks(bundle_size).into_iter()).flatten().map(|(idx, mut data)| {
-        data.extend(repeat_n(col_pad[idx], 1 << col_logsize - data.len()));
+        data.extend(repeat_n(col_pad[idx], (1 << col_logsize) - data.len()));
         data
     }).collect_vec()
 }
@@ -739,5 +755,32 @@ mod tests {
 
             assert_eq!(dense_out, expected_out);
         }
+    }
+
+    #[test]
+    fn map_split_to_dense() {
+        let gen = &mut test_rng();
+        let n_args = 3;
+
+        let data = VecVecPolynomial::rand_points::<BandersnatchConfig, _>(gen, 1, 3);
+        let dense_data = data.iter().map(|p| p.vec()).collect_vec();
+
+        let out = vecvec_map_split_to_dense(data.as_slice().try_into().unwrap(), ArcedAlgFn::new(Arc::new(foo), 3, 2, 1), SplitIdx::LO(0), 1);
+        let expected_out = map_over_poly(&dense_data.iter().map(|p| p.as_slice()).collect_vec().as_slice(), PolynomialMapping {
+            exec: Arc::new(blah),
+            degree: 1,
+            num_i: 3,
+            num_o: 2,
+        });
+        let (out0, out1) = out.into_iter().tee();
+        let out0 = out0.step_by(2);
+        let out1 = out1.skip(1).step_by(2);
+
+        let dense_out = out0.zip_eq(out1).map(|(l, r)| {
+            l.into_iter().interleave(r.into_iter()).collect_vec()
+        }).collect_vec();
+
+        assert_eq!(dense_out, expected_out);
+        
     }
 }

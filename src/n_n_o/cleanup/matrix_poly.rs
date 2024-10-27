@@ -1,16 +1,19 @@
 // Implements partial inner products of dense vector-arranged and matrix arranged polynomials.
+#[allow(unused_imports)]
+use std::{iter::repeat, marker::PhantomData, ops::{Add, AddAssign, SubAssign, Mul, MulAssign}, sync::Arc, u64};
 
-use std::{iter::repeat, marker::PhantomData, sync::Arc};
-
-use ark_ff::PrimeField;
+use ark_ff::{PrimeField, Zero, One};
+use ark_ff::biginteger::BigInteger;
 use ark_std::log2;
 use itertools::Itertools;
-use liblasso::poly::{eq_poly::EqPolynomial, unipoly::UniPoly};
+use liblasso::{poly::{eq_poly::EqPolynomial, unipoly::UniPoly}, utils::gaussian_elimination::gaussian_elimination};
 use rayon::{current_num_threads, iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator}, slice::ParallelSlice};
 
 use crate::cleanup::{protocol2::Protocol2, protocols::sumcheck::{AlgFnSO, BareSumcheckSO, DenseSumcheckObjectSO, PointClaim, SinglePointClaims, SumClaim}};
 use crate::cleanup::proof_transcript::TProofTranscript2;
-use crate::cleanup::protocols::sumchecks::vecvec::Sumcheckable;
+use crate::cleanup::protocols::sumchecks::vecvec_eq::Sumcheckable;
+
+use super::non_native_evs::fe_to_limbs;
 
 /// Splits large vector of length n into chunks of small size (length m) and computes inner products, arranging them in a vector of size n/m. n%m must be zero.
 /// Supports an additional padding parameter - large vector can actually be of length < n, and will be formally padded with zeros to length n. This does not actually allocate zeros. 
@@ -72,14 +75,242 @@ pub fn inner_prod_hi<F: PrimeField>(large: &[F], small: &[F], pad_large_to_lengt
     acc
 }
 
-fn make_fake_prover_response<F: PrimeField>() -> Vec<F> {
-    todo!()
+pub mod polynomial_utils{
+    use super::*;
+
+    // given coefficients computes evals at 0, 1, 2, ... , degree
+    pub fn coeffs_to_evals_univar<F1, F2>(P: &[F1], degree: usize) -> Vec<F2>
+    where F1: From<u64> + Mul<Output = F1> + AddAssign + SubAssign + Zero + Copy,
+    F2: From<F1> + From<u64> + MulAssign + AddAssign + SubAssign + Zero + Copy + One{
+        let mut res = vec![];
+        for i in 0..degree + 1{
+            let mut curr_res = F2::zero();
+            let mut curr_deg = F2::one();
+            for j in 0..degree + 1{
+                curr_res += F2::from(P[j]) * curr_deg;
+                curr_deg *= F2::from(i as u64);
+            }
+            res.push(curr_res)
+        }
+        res
+        //gaussian_elimination();
+    }
+
+
+    pub fn binomial(n: usize, k: usize) -> u64{
+        if k > n{
+            return 0}
+        if k > n-k{
+            return binomial(n, n-k)
+        }
+        let mut res = 1;
+        for i in 0..k{
+            res *= (n-i);
+            res /= (i+1); 
+        }
+        res as u64
+    }
+
+    // given evals at 0, 1, 2, ... , k, evaluates at k+1
+    pub fn extend_evals<F1, F2>(P: &[F1], degree: usize) -> F2
+        where F1: From<u64> + Mul<Output = F1> + AddAssign + SubAssign + Zero + Copy,
+        F2: From<F1> + From<u64> + Mul<Output = F2> + AddAssign + SubAssign + Zero + Copy
+    {
+        let mut res = F2::zero();
+        let start_index = P.len() - degree - 1;
+        for i in 0..degree+1{
+            if i %2 == degree % 2{
+                res += (F2::from(P[start_index + i]) * F2::from(binomial(degree+1, i)));
+            }
+            else{
+                res -= (F2::from(P[start_index + i]) * F2::from(binomial(degree+1, i)));
+            }
+
+        }
+        res
+        
+    }
+
+    // given evals at 0, 1, 2, ... , k, evaluates at k+1, ... k+l
+    pub fn extend_evals_by_l<F>(P: &[F], degree: usize, l: usize) -> Vec<F>
+    where F: From<F> + From<u64> + Mul<Output = F> + AddAssign + SubAssign + Zero + Copy,
+    {
+        assert!(P.len() > degree);
+        let mut P: Vec<_> = P.to_vec();
+        for _ in (0..l){
+            P.push(extend_evals(&P, degree));
+        }
+        P
+    }
+
+}
+pub mod overflow_multiplication_utils{
+    /// Returns the least significant 64 bits of a
+    pub fn lo128(a: u128) -> u128 {
+        a & ((1<<64)-1)
+    }
+
+    /// Returns the most significant 64 bits of a
+    pub fn hi128(a: u128) -> u128 {
+        a >> 64
+    }
+
+    /// Returns 2^128 - a (two's complement)
+    pub fn neg128(a: u128) -> u128 {
+        (!a).wrapping_add(1)
+    }
+
+    /// Returns 2^128 / a
+    pub fn div128(a: u128) -> u128 {
+        (neg128(a)/a).wrapping_add(1)
+    }
+
+    /// Returns 2^128 % a
+    pub fn mod128(a: u128) -> u128 {
+        neg128(a) % a
+    }
+
+    /// Returns a+b (wrapping)
+    pub fn add256(a0: u128, a1: u128, b0: u128, b1: u128) -> (u128, u128) {
+        let (r0, overflow) = a0.overflowing_add(b0);
+        let r1 = a1.wrapping_add(b1).wrapping_add(overflow as u128);
+        (r0, r1)
+    }
+
+    /// Returns a*b (in 256 bits)
+    pub fn mul128(a: u128, b: u128) -> [u64;4] {
+        // Split a and b into hi and lo 64-bit parts
+        // a*b = (a1<<64 + a0)*(b1<<64 + b0)
+        // = (a1*b1)<<128 + (a1*b0 + b1*a0)<<64 + a0*b0
+        let (a0, a1) = (lo128(a), hi128(a));
+        let (b0, b1) = (lo128(b), hi128(b));
+        let (x, y) = (a1*b0, b1*a0);
+        
+        let (r0, r1) = (a0*b0, a1*b1);
+        let (r0, r1) = add256(r0, r1, lo128(x)<<64, hi128(x));
+        let (r0, r1) = add256(r0, r1, lo128(y)<<64, hi128(y));
+        [(r0 >> 64) as u64, r0 as u64, (r1 >> 64) as u64, r1 as u64]
+    }
+}
+
+use overflow_multiplication_utils::*;
+use polynomial_utils::*;
+
+fn make_fake_prover_response<F: PrimeField>(P1: &[u64], P2: &[u64], P3: &[u64]) -> Vec<F> {
+    let (deg1, deg2, deg3) = (P1.len()-1, P2.len()-1, P3.len()-1);
+    let (evals1, evals2, evals3): (Vec<u128>, Vec<u128>, Vec<F>) = (coeffs_to_evals_univar(P1, deg1), coeffs_to_evals_univar(P2, deg2), coeffs_to_evals_univar(P3, deg3));
+
+    let evals1: Vec<u128> = extend_evals_by_l(&evals1, deg1, deg2);
+    let evals2: Vec<u128> = extend_evals_by_l(&evals2, deg2, deg1);
+    let evals3: Vec<_> = extend_evals_by_l(&evals3, deg3, deg1 + deg2);
+    
+    let prod_evals12: Vec<_> = evals1.iter().zip(evals2).map(|(a, b)| {
+        let limbs = mul128(*a, b);
+        let bi = (0..4).zip(limbs).fold(F::BigInt::from(0_u64), |acc, (i, x)| {
+            let mut acc = acc;
+            acc.muln(64);
+            acc.add_with_carry(&F::BigInt::from(x));
+            acc
+        });
+        F::from_bigint(bi).unwrap()
+    }).collect();
+
+    let prod_evals12: Vec<_>  = extend_evals_by_l(&prod_evals12, deg1 + deg2, deg3);
+    let prod_evals123: Vec<_> = prod_evals12.iter().zip(evals3).map(|(a, b)| *a*b).collect();
+    prod_evals123
 }
 
 /// Takes a vector of F-elements, interprets each of these as BigInt, multiplies k-th limb by 2^{64k}, and casts to NNF. 
-pub fn normalize_and_cast_to_nn<F: PrimeField, NNF: PrimeField>(limbs: &[F]) -> NNF {
-    todo!()
+/// Assumes the limb representation is valid; that is, if NNF is smaller than F, then the last limbs need to be zero
+pub fn normalize_and_cast_to_nn<F: PrimeField, NNF: PrimeField>(limbs: &[F]) -> NNF 
+{
+    let ans_bigint = limbs.iter()
+                                                        .enumerate()
+                                                        .fold(NNF::BigInt::from(0_u64), |acc, (k, x)| {
+                                                            let mut temp = acc;
+                                                            let mut x = NNF::BigInt::from(fe_to_limbs(x)[0]);
+                                                            x.muln((64*k) as u32);
+                                                            temp.add_with_carry({
+                                                                &x
+                                                            });
+                                                            temp
+                                                        });
+    NNF::from(ans_bigint)
+    //todo!();
 }
+
+pub mod test{
+    #[allow(unused_imports)]
+
+    use super::*;
+    use super::polynomial_utils;
+    use super::overflow_multiplication_utils;
+
+    use ark_bls12_381::Fr;
+    use ark_bls12_381::Fq;
+    use ark_bls12_381::G1Projective;
+    use ark_ff::{MontBackend};
+    use ark_ff::{biginteger::BigInteger, biginteger::BigInt};
+    use ark_std::{test_rng, UniformRand};
+    use ark_std::rand::Rng;
+    use itertools::Itertools;
+    use liblasso::utils::math::Math;
+    use crate::protocol::protocol::MultiEvalClaim;
+    use crate::protocol::protocol::{ProtocolVerifier, ProtocolProver};
+    use crate::protocol::sumcheck::{*, SumcheckPolyMapVerifier, SumcheckPolyMapProver};
+    use crate::transcript::Challenge;
+    use crate::transcript::IndexedProofTranscript;
+    use liblasso::utils::test_lib::TestTranscript;
+        
+    #[test]
+    //TODO: better test
+    fn test_normalize_and_cast_to_nn(){
+
+        let nnf : Fq = normalize_and_cast_to_nn(&[Fr::from(1), Fr::from(5),Fr::from(4),Fr::from(3),Fr::from(2),Fr::from(1)]);
+
+        println!("{:?}", nnf);
+
+    }
+
+    #[test]
+    fn test_binomial_things(){
+        let rng = &mut test_rng();
+        let deg: u64 = 5;
+        let coeffs = (0..deg + 1).map(|_| Fq::rand(rng)).collect_vec();
+        //let coeffs = (0..deg + 1).map(|i| Fq::from(i)).collect_vec();
+
+        let true_evals: Vec<_> = (0..deg + 2).map(|i| 
+            coeffs.iter()
+                .rev()
+                .fold(Fq::from(0), |acc, x| Fq::from(i)*acc + x)
+        ).collect();
+
+
+
+        let mut evals: Vec<Fq> = coeffs_to_evals_univar(&coeffs, deg as usize);
+        let last_eval = extend_evals(&evals, deg as usize);
+        evals.push(last_eval);
+
+        //println!("{:?}, \n\n{:?}", evals, true_evals);
+        assert!(evals == true_evals);
+    }
+
+
+    #[test]
+    //TODO: this doesn't really test anything now
+    fn test_fake_provers_response(){
+        let rng = &mut test_rng();
+        let deg1: u64 = 5;
+        let deg2: u64 = 3;
+        let deg3: u64 = 4;
+        let coeffs1 = (0..deg1 + 1).map(|_| u64::rand(rng)).collect_vec();
+        let coeffs2 = (0..deg2 + 1).map(|_| u64::rand(rng)).collect_vec();
+        let coeffs3 = (0..deg3 + 1).map(|_| u64::rand(rng)).collect_vec();
+    
+        make_fake_prover_response::<Fq>(&coeffs1, &coeffs2, &coeffs3);
+    }
+}
+
 
 /// Matrix-arranged polynomial.
 /// Columns are little-end, i.e. each column is a chunk of length y_size.
@@ -141,7 +372,7 @@ impl<F: PrimeField, NNF: PrimeField, PT: TProofTranscript2> Protocol2<PT> for NN
     type ClaimsAfter = NNOOutputClaim<F, NNF>;
 
     fn prove(&self, transcript: &mut PT, nn_opening_claim: Self::ClaimsBefore, native_repr: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
-        let evaluation_with_nonflushed_limbs = make_fake_prover_response::<F>();
+        let evaluation_with_nonflushed_limbs: Vec<F> = todo!(); //make_fake_prover_response::<F>();
         assert!(evaluation_with_nonflushed_limbs.len() == 3 * (self.y_size-1) + 1);
         transcript.write_scalars(&evaluation_with_nonflushed_limbs);
         let t: F = transcript.challenge(128);

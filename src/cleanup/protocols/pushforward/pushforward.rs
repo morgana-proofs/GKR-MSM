@@ -7,7 +7,9 @@ use rayon::{current_num_threads, iter::{repeatn, IndexedParallelIterator, IntoPa
 
 use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2}, polynomial::vecvec::VecVecPolynomial};
 
-use super::{sumcheck::{compress_coefficients, evaluate_poly, AlgFnSO, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec_eq::Sumcheckable};
+use super::super::{sumcheck::{compress_coefficients, evaluate_poly, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec_eq::Sumcheckable};
+use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
+
 
 #[derive(Clone)]
 pub struct Prod3Fn<F: PrimeField> {

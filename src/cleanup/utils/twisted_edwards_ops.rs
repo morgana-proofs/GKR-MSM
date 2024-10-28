@@ -89,8 +89,8 @@ pub mod algfns {
     use ark_bls12_381::Fr;
     use itertools::Itertools;
     use ark_ff::PrimeField;
-    use crate::cleanup::protocols::sumcheck::AlgFn;
     use crate::utils::TwistedEdwardsConfig;
+    use crate::cleanup::utils::algfn::AlgFn;
 
     macro_rules! make_algfn {
         ($struct_name:ident($deg:expr, $n_ins:expr, $n_outs:expr)) => {

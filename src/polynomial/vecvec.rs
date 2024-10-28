@@ -13,7 +13,7 @@ use liblasso::utils::math::Math;
 use num_traits::Zero;
 use rayon::prelude::*;
 use crate::cleanup::protocols::splits::SplitIdx;
-use crate::cleanup::protocols::sumcheck::AlgFn;
+use crate::cleanup::utils::algfn::AlgFn;
 use crate::utils::{eq_poly_sequence_from_multiplier, eq_poly_sequence_last, padded_eq_poly_sequence, Densify};
 
 #[derive(Debug)]

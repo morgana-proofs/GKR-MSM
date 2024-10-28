@@ -12,12 +12,14 @@ use ark_std::UniformRand;
 use hashcaster::ptr_utils::{AsSharedMUMutPtr, UninitArr, UnsafeIndexRawMut};
 use itertools::{repeat_n, Itertools};
 use liblasso::poly::dense_mlpoly::DensePolynomial;
+use num_traits::PrimInt;
 #[cfg(feature = "prof")]
 use profi::prof;
 use rayon::prelude::*;
 use crate::cleanup::protocols::splits::SplitIdx;
-use crate::cleanup::protocols::sumcheck::{bind_dense_poly, AlgFn};
+use crate::cleanup::protocols::sumcheck::{bind_dense_poly};
 use crate::protocol::protocol::{MultiEvalClaim, PolynomialMapping};
+use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 
 pub trait TwistedEdwardsConfig {
 
@@ -454,6 +456,36 @@ pub fn eq_poly_sequence_from_multiplier_last<F: PrimeField>(mul: F, pt: &[F]) ->
     eq_poly_sequence_from_multiplier(mul, pt).pop()
 }
 
+/// Computes sum of eq(pt, i) for i in (0..k)
+pub fn eq_sum<F: PrimeField>(mut pt: &[F], mut k: usize) -> F {    
+    let mut multiplier = F::one();
+    let mut acc = F::zero();
+
+    if k >= (1 << pt.len()) {
+        if k == 1 << pt.len() {
+            return F::one();
+        } else {
+            panic!();
+        }
+    }
+
+    for i in 0..pt.len() {
+        let left_bit = k >> (pt.len() - i - 1);
+
+        let _multiplier = multiplier;
+        if left_bit == 1 {
+            multiplier *= pt[i];
+            acc += (_multiplier - multiplier);         
+        } else {
+            multiplier *= (F::one() - pt[i]);
+        }
+        k -= left_bit << (pt.len() - i - 1);
+    }
+
+    acc
+}
+
+
 #[cfg(feature = "memprof")]
 pub fn memprof(l: &str) {
     use jemalloc_ctl::{epoch, stats};
@@ -469,14 +501,16 @@ mod test {
     use std::sync::Arc;
     use ark_ec::CurveConfig;
     use ark_ed_on_bls12_381_bandersnatch::{BandersnatchConfig, Fr};
-    use ark_std::{test_rng, UniformRand};
+    use ark_std::{test_rng, UniformRand, Zero};
     use itertools::Itertools;
     use num_traits::One;
     use crate::cleanup::protocols::splits::SplitIdx;
     use crate::cleanup::utils::algfn::ArcedAlgFn;
     use crate::polynomial::vecvec::{vecvec_map_split, VecVecPolynomial};
     use crate::protocol::protocol::PolynomialMapping;
-    use crate::utils::{eq_poly_sequence_from_multiplier, map_over_poly, padded_eq_poly_sequence, DensePolyRndConfig, Densify, MapSplit, RandomlyGeneratedPoly};
+    use crate::utils::{eq_poly_sequence_from_multiplier, eq_sum, map_over_poly, padded_eq_poly_sequence, DensePolyRndConfig, Densify, MapSplit, RandomlyGeneratedPoly};
+
+    use super::eq_poly_sequence;
 
     #[test]
     fn eq_poly_seq() {
@@ -516,6 +550,30 @@ mod test {
         let tmp = tmp.as_slice();
         foo(&tmp)
     }
+
+    #[test]
+    fn eq_sum_works() {
+        let rng = &mut test_rng();
+        let nvars = 7;
+        let point = (0..nvars).map(|_| Fr::rand(rng)).collect_vec();
+
+        let eq_evals = eq_poly_sequence(&point).pop().unwrap();
+        assert!(eq_evals.len() == 1 << nvars);
+
+        let mut expected_sum = vec![Fr::zero()];
+
+        for i in 0..eq_evals.len() {
+            expected_sum.push(
+                expected_sum[i] + eq_evals[i]
+            )
+        }
+
+        for i in 0..eq_evals.len() + 1 {
+            assert!(expected_sum[i] == eq_sum(&point, i), "{}", i)
+        }
+
+    }
+
     #[test]
     fn vec_algfn_map() {
         let gen = &mut test_rng();

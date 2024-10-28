@@ -23,8 +23,10 @@ use profi::{prof, prof_guard};
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
-use crate::cleanup::protocols::sumcheck::{AlgFn, BareSumcheckSO, DenseSumcheckObject, DenseSumcheckObjectSO, EqWrapper, FoldToSumcheckable, GammaWrapper, GenericSumcheckProtocol, SinglePointClaims, SumClaim};
+use crate::cleanup::protocols::sumcheck::{ BareSumcheckSO, DenseSumcheckObject, DenseSumcheckObjectSO, EqWrapper, FoldToSumcheckable, GammaWrapper, GenericSumcheckProtocol, SinglePointClaims, SumClaim};
 use crate::utils::{eq_eval, eq_poly_sequence_from_multiplier_last, eq_poly_sequence_last, make_gamma_pows, zip_with_gamma};
+use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
+
 
 pub struct VecVecDeg2SumcheckObject<F: PrimeField, Fun: AlgFn<F>> {
     polys: Vec<VecVecPolynomial<F>>,
@@ -460,7 +462,8 @@ mod test {
     use crate::protocol::sumcheck::{make_folded_f, FragmentedLincomb, Sumcheckable as OldSumcheckable};
     use crate::utils::{eq_poly_sequence_last, make_gamma_pows_static};
     use super::{VecVecDeg2SumcheckObjectSO, VecVecDeg2SumcheckObject, Sumcheckable as NewSumcheckable, VecVecDeg2SumcheckStage};
-    use crate::cleanup::protocols::sumcheck::{AlgFn, AlgFnSO, EqWrapper, ExampleSumcheckObjectSO, FoldToSumcheckable, GammaWrapper, SumClaim};
+    use crate::cleanup::protocols::sumcheck::{EqWrapper, ExampleSumcheckObjectSO, FoldToSumcheckable, GammaWrapper, SumClaim};
+    use super::*;
 
     enum Denseness {
         Full,

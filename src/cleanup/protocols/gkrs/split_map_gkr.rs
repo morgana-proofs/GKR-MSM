@@ -5,7 +5,7 @@ use crate::{
         protocols::{
             gkrs::gkr::GKRLayer,
             splits::SplitAt,
-            sumcheck::{AlgFn, SinglePointClaims},
+            sumcheck::{SinglePointClaims},
             sumchecks::vecvec_eq::VecVecDeg2Sumcheck
         },
         proof_transcript::TProofTranscript2,
@@ -13,13 +13,15 @@ use crate::{
     },
     polynomial::vecvec::VecVecPolynomial
 };
-use crate::cleanup::protocols::sumcheck::{AlgFnSO, BareSumcheckSO, DenseSumcheckObjectSO, GenericSumcheckProtocol};
+use crate::cleanup::protocols::sumcheck::{BareSumcheckSO, DenseSumcheckObjectSO, GenericSumcheckProtocol};
 use crate::cleanup::protocols::sumchecks::dense_eq::DenseDeg2Sumcheck;
+use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
+
 
 macro_rules! build_advice_into {
-    ($name:ident<$($l:lifetime, )*$($x:ident : $xt:path),+>, $value:ident($holded:ty)) => {
-        impl <$($l, )*$($x : $xt),+> Into<$holded> for $name <$($l, )*$($x),+> {
-            fn into(self) -> $holded {
+    ($name:ident<$($l:lifetime, )*$($x:ident : $xt:path),+>, $value:ident($held:ty)) => {
+        impl <$($l, )*$($x : $xt),+> Into<$held> for $name <$($l, )*$($x),+> {
+            fn into(self) -> $held {
                 match self {
                     $name::$value(ret) => {ret}
                     _ => {unreachable!()}
@@ -32,24 +34,24 @@ macro_rules! build_advice_into {
 
 macro_rules! build_all_advice_intos {
 
-    ($name:ident<$($l:lifetime, )*$($x:ident : $xt:path),+>, $value:ident($holded:ty)) => {
-        build_advice_into!($name <$($l, )*$($x : $xt),+>, $value($holded));
+    ($name:ident<$($l:lifetime, )*$($x:ident : $xt:path),+>, $value:ident($held:ty)) => {
+        build_advice_into!($name <$($l, )*$($x : $xt),+>, $value($held));
     };
 
-    ($name:ident<$($l:lifetime, )*$($x:ident : $xt:path),+>, $value:ident($holded:ty), $($other:ident($ohter_holded:ty)),+) => {
-        build_advice_into!($name <$($l, )*$($x : $xt),+>, $value($holded));
-        build_all_advice_intos!($name <$($l, )*$($x : $xt),+>, $($other($ohter_holded)),*);
+    ($name:ident<$($l:lifetime, )*$($x:ident : $xt:path),+>, $value:ident($held:ty), $($other:ident($other_held:ty)),+) => {
+        build_advice_into!($name <$($l, )*$($x : $xt),+>, $value($held));
+        build_all_advice_intos!($name <$($l, )*$($x : $xt),+>, $($other($other_held)),*);
     };
 }
 
 macro_rules! common_advice {
-    ($name:ident<$($l:lifetime, )*$($x:ident : $xt:path),+>{$($value:ident($holded:ty)),*}) => {
+    ($name:ident<$($l:lifetime, )*$($x:ident : $xt:path),+>{$($value:ident($held:ty)),*}) => {
         #[derive(Debug)]
         pub enum $name <$($l, )*$($x : $xt),+> {
-            $($value($holded)),*
+            $($value($held)),*
         }
 
-        build_all_advice_intos!($name <$($l, )*$($x : $xt),+>, $($value($holded)),*);
+        build_all_advice_intos!($name <$($l, )*$($x : $xt),+>, $($value($held)),*);
     };
 }
 

@@ -7,7 +7,7 @@ use rayon::{current_num_threads, iter::{repeatn, IndexedParallelIterator, IntoPa
 
 use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2}, polynomial::vecvec::VecVecPolynomial};
 
-use super::super::{sumcheck::{compress_coefficients, evaluate_poly, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec_eq::Sumcheckable};
+use super::super::{sumcheck::{compress_coefficients, evaluate_univar, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec_eq::Sumcheckable};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 
 
@@ -122,7 +122,7 @@ impl<T: TProofTranscript2, F: PrimeField> Protocol2<T> for LayeredProd3Protocol<
             let u = object.unipoly().as_vec();
             transcript.write_scalars(&compress_coefficients(&u));
             let t = transcript.challenge(128);
-            claim = evaluate_poly(&u, t);
+            claim = evaluate_univar(&u, t);
             object.bind(t);
         }
         let evs = object.final_evals();

@@ -14,11 +14,16 @@ use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 pub trait GKRLayer<Transcript: TProofTranscript2, Claims, Advice> {
     fn prove_layer(&self, transcript: &mut Transcript, claims: Claims, advice: Advice) -> Claims;
     fn verify_layer(&self, transcript: &mut Transcript, claims: Claims) -> Claims;
+
+    #[cfg(debug_assertions)]
+    fn description(&self) -> String {
+        "Unknown layer".to_string()
+    }
 }
 
 pub struct SimpleGKR<Claims, Advice, Transcript: TProofTranscript2, WitnessGenerator> {
-    layers: Vec<Box<dyn GKRLayer<Transcript, Claims, Advice>>>,
-    _pd: PhantomData<WitnessGenerator>
+    pub layers: Vec<Box<dyn GKRLayer<Transcript, Claims, Advice>>>,
+    pub _pd: PhantomData<WitnessGenerator>
 }
 
 impl<Claims, Advice, Transcript: TProofTranscript2, WitnessGenerator: Iterator<Item=Advice>> SimpleGKR<Claims, Advice, Transcript, WitnessGenerator> {

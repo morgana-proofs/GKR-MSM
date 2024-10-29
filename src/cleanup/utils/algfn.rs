@@ -25,6 +25,11 @@ pub trait AlgFn<F: PrimeField> : Clone + Sync + Send {
     fn n_ins(&self) -> usize;
     /// Declares the expected number of outputs.
     fn n_outs(&self) -> usize;
+    
+    #[cfg(debug_assertions)]
+    fn description(&self) -> String {
+        "Unspecified function".to_string()
+    }
 }
 
 pub struct VerticalIndexing<'a, T> {

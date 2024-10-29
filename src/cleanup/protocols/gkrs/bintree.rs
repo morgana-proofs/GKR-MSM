@@ -176,7 +176,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 affine_twisted_edwards_add_l1(),
-                                num_vars,
+                                num_vars - i,
                                 num_vars - row_logsize,
                             )
                         ));
@@ -185,7 +185,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 affine_twisted_edwards_add_l2(),
-                                num_vars,
+                                num_vars - i,
                                 num_vars - row_logsize,
                             )
                         ));
@@ -194,7 +194,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 affine_twisted_edwards_add_l3(),
-                                num_vars,
+                                num_vars - i,
                                 num_vars - row_logsize,
                             )
                         ));
@@ -203,7 +203,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 twisted_edwards_add_l1(),
-                                num_vars,
+                                num_vars - i,
                                 num_vars - row_logsize,
                             )
                         ));
@@ -212,7 +212,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 twisted_edwards_add_l2(),
-                                num_vars,
+                                num_vars - i,
                                 num_vars - row_logsize,
                             )
                         ));
@@ -221,7 +221,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 twisted_edwards_add_l3(),
-                                num_vars,
+                                num_vars - i,
                                 num_vars - row_logsize,
                             )
                         ));
@@ -233,8 +233,14 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                     Step::L3 => {Step::L1}
                 }
             }
-
-
+            if i != num_adds - 1 || split_last {
+                layers.push(Box::new(
+                    SplitAt::new(
+                        SplitIdx::LO(0),
+                        3,
+                    )
+                ))
+            }
         }
         layers
     }
@@ -257,6 +263,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Protoc
 
 #[cfg(test)]
 mod test {
+    use std::error::Error;
     use ark_bls12_381::Fr;
     use ark_ec::{CurveConfig, CurveGroup};
     use ark_ec::twisted_edwards::{Affine, Projective};
@@ -283,11 +290,11 @@ mod test {
 
         let row_logsize = 4;
         let col_logsize = 2;
-        let num_adds = 1;
-        let split_last = false;
+        let num_adds = 2;
+        let split_last = true;
         let num_vars = row_logsize + col_logsize;
-        
-        
+
+
         let points = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
         let inputs = vecvec_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
         let witness_gen = VecVecBintreeAddWG::new(SplitVecVecMapGKRAdvice::VecVecMAP(inputs), row_logsize, num_adds, split_last);
@@ -298,6 +305,14 @@ mod test {
             row_logsize,
             split_last,
         );
+        prover.gkr.layers
+            .iter()
+            .map(|l| println!("{}", l.description())).interleave(
+            witness_gen.advices
+                .iter()
+                .map(|a| println!("{}", a))
+            )   
+            .count();
 
         let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
         let last = witness_gen.last.as_ref().unwrap();
@@ -311,7 +326,7 @@ mod test {
                 c.iter().fold(F::zero(), |acc, nxt| acc + nxt)
             )
             .collect_vec();
-        
+
         let point = (0..(num_vars - num_adds)).map(|_| Fr::rand(rng)).collect_vec();
         let claims = SinglePointClaims {
             point,

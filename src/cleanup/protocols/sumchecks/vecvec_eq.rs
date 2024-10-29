@@ -58,6 +58,7 @@ impl<F: PrimeField, Fun: AlgFn<F>> FoldToSumcheckable<F> for VecVecDeg2SumcheckO
     type Target = VecVecDeg2SumcheckObjectSO<F, Fun>;
 
     fn rlc(self, gamma: F) -> Self::Target {
+        dbg!(self.func.n_outs(), self.func.n_ins(), self.claims.len());
         let gamma_pows = make_gamma_pows(gamma, self.func.n_outs());
         let mut claim = self.claims[0];
         for i in 1..self.claims.len() {
@@ -378,10 +379,10 @@ impl<F: PrimeField, Fun: AlgFn<F>> Sumcheckable<F> for VecVecDeg2LoSumcheckObjec
 }
 
 pub struct VecVecDeg2Sumcheck<F: PrimeField, Fun: AlgFn<F>> {
-    f: Fun,
-    num_vars: usize,
-    num_vertical_vars: usize,
-    _pd: PhantomData<F>,
+    pub f: Fun,
+    pub num_vars: usize,
+    pub num_vertical_vars: usize,
+    pub _pd: PhantomData<F>,
 }
 
 impl <F: PrimeField, Fun: AlgFn<F>> VecVecDeg2Sumcheck<F, Fun> {
@@ -404,6 +405,9 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
     fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         assert_eq!(self.f.deg(), 2);
 
+        dbg!(self.num_vars, self.num_vertical_vars);
+        dbg!(advice[0].num_vars(), advice[0].col_logsize);
+
         let gamma = transcript.challenge(128);
         let SinglePointClaims { point, evs } = claims;
         let so = VecVecDeg2SumcheckObject::new(
@@ -419,9 +423,10 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
         let degrees = repeat_n(self.f.deg() + 1, self.num_vars);
         let generic_protocol_config = GenericSumcheckProtocol::new(degrees);
 
-        let ((_, point), poly_evs) = generic_protocol_config.prove(transcript, so.claim(), so);
+        let ((_, point), mut poly_evs) = generic_protocol_config.prove(transcript, so.claim(), so);
 
         transcript.write_scalars(&poly_evs);
+        poly_evs.pop();
 
         (SinglePointClaims {point, evs: poly_evs}, ())
     }

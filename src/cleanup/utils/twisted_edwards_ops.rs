@@ -117,6 +117,11 @@ pub mod algfns {
 
                     super::fns::$struct_name(&args).into_iter()
                 }
+                
+                #[cfg(debug_assertions)]
+                fn description(&self) -> String {
+                    stringify!($struct_name).to_string()
+                }
             }
 
             pub const fn $struct_name <F: TwistedEdwardsConfig + PrimeField>() -> $struct_name<F> {

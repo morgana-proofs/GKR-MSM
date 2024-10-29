@@ -20,8 +20,8 @@ pub enum SplitIdx {
 }
 
 pub struct SplitAt<F: PrimeField> {
-    bundle_size: usize,
-    var_idx: SplitIdx,
+    pub bundle_size: usize,
+    pub var_idx: SplitIdx,
     _pd: PhantomData<F>,
 }
 pub struct SplitAtParams<F> {

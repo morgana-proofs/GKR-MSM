@@ -173,8 +173,8 @@ impl<F: PrimeField, Fun: AlgFn<F>> Sumcheckable<F> for DenseDeg2SumcheckObjectSO
 
 
 pub struct DenseDeg2Sumcheck<F: PrimeField, Fun: AlgFn<F>> {
-    f: Fun,
-    num_vars: usize,
+    pub f: Fun,
+    pub num_vars: usize,
     _pd: PhantomData<F>,
 }
 

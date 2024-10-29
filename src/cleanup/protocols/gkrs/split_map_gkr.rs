@@ -87,6 +87,7 @@ impl <F: PrimeField> SplitVecVecMapGKRAdvice<F> {
 
 impl<Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>> for VecVecDeg2Sumcheck<F, Fun> {
     fn prove_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>, advice: SplitVecVecMapGKRAdvice<F>) -> SinglePointClaims<F> {
+        #[cfg(debug_assertions)]
         println!(
             "Proving layer {} with claim point len {}, claim evs len {}, and advice {}",
             <VecVecDeg2Sumcheck<F, Fun> as GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>::description(self),
@@ -109,6 +110,7 @@ impl<Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> GKRLayer<Trans
 
 impl<Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>> for DenseDeg2Sumcheck<F, Fun> {
     fn prove_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>, advice: SplitVecVecMapGKRAdvice<F>) -> SinglePointClaims<F> {
+        #[cfg(debug_assertions)]
         println!(
             "Proving layer {} with claim point len {}, claim evs len {}, and advice {}",
             <DenseDeg2Sumcheck<F, Fun> as GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>::description(self),
@@ -131,6 +133,7 @@ impl<Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> GKRLayer<Trans
 
 impl<Transcript: TProofTranscript2, F: PrimeField> GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>> for SplitAt<F> {
     fn prove_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>, advice: SplitVecVecMapGKRAdvice<F>) -> SinglePointClaims<F> {
+        #[cfg(debug_assertions)]
         println!(
             "Proving layer {} with claim point len {}, claim evs len {}, and advice {}",
             <SplitAt<F> as GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>::description(self),

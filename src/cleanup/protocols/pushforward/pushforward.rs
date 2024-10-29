@@ -260,6 +260,27 @@ pub fn compute_bucketing_image_wip<F: PrimeField>(
 }
 
 
+pub struct PushforwardPolys<F: PrimeField> {
+    pub c: Vec<F>,
+    pub c_pull: Vec<F>,
+    pub d: Vec<F>,
+    pub d_pull: Vec<F>,
+
+    pub p_x: Vec<F>,
+    pub p_y: Vec<F>,
+    
+    pub ac_c: Vec<F>, // access counts
+    pub ac_d: Vec<F>, // access counts
+    
+}
+
+pub struct BucketingProtocol<F: PrimeField> {
+    _marker: PhantomData<F>,
+    
+}
+
+
+
 #[cfg(test)]
 mod tests {
     use ark_bls12_381::{G1Affine, G1Projective, g1::Config};

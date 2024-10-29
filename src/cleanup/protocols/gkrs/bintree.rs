@@ -294,7 +294,6 @@ mod test {
         let split_last = true;
         let num_vars = row_logsize + col_logsize;
 
-
         let points = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
         let inputs = vecvec_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
         let witness_gen = VecVecBintreeAddWG::new(SplitVecVecMapGKRAdvice::VecVecMAP(inputs), row_logsize, num_adds, split_last);

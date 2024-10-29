@@ -9,7 +9,7 @@ use itertools::Itertools;
 use liblasso::{poly::{eq_poly::EqPolynomial, unipoly::UniPoly}, utils::gaussian_elimination::gaussian_elimination};
 use rayon::{current_num_threads, iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator}, slice::ParallelSlice};
 
-use crate::cleanup::{protocol2::Protocol2, protocols::sumcheck::{AlgFnSO, BareSumcheckSO, DenseSumcheckObjectSO, PointClaim, SinglePointClaims, SumClaim}};
+use crate::cleanup::{protocol2::Protocol2, protocols::sumcheck::{BareSumcheckSO, DenseSumcheckObjectSO, PointClaim, SinglePointClaims, SumClaim}, utils::algfn::AlgFnSO};
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocols::sumchecks::vecvec_eq::Sumcheckable;
 

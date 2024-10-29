@@ -9,11 +9,13 @@ use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::protocols::{splits::SplitAt, sumchecks::vecvec_eq::VecVecDeg2Sumcheck, gkrs::gkr::SimpleGKR};
 use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
 use crate::cleanup::protocols::splits::SplitIdx;
-use crate::cleanup::protocols::sumcheck::{AlgFn, SinglePointClaims};
+use crate::cleanup::protocols::sumcheck::{SinglePointClaims};
 use crate::polynomial::vecvec::{vecvec_map, vecvec_map_split, vecvec_map_split_to_dense, VecVecPolynomial};
 use crate::cleanup::utils::twisted_edwards_ops::*;
 use crate::cleanup::utils::twisted_edwards_ops::algfns::*;
 use crate::utils::{MapSplit, TwistedEdwardsConfig};
+use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
+
 
 #[derive(Debug)]
 struct VecVecBintreeAddWG<F: PrimeField> {

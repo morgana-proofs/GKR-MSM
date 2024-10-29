@@ -13,7 +13,7 @@ use liblasso::utils::math::Math;
 use num_traits::Zero;
 use rayon::prelude::*;
 use crate::cleanup::protocols::splits::SplitIdx;
-use crate::cleanup::protocols::sumcheck::AlgFn;
+use crate::cleanup::utils::algfn::AlgFn;
 use crate::utils::{eq_poly_sequence_from_multiplier, eq_poly_sequence_last, padded_eq_poly_sequence, Densify};
 
 #[derive(Debug)]
@@ -170,7 +170,7 @@ impl<F: Clone + Debug> Debug for VecVecPolynomial<F> {
 
 impl<F: Clone + Debug> VecVecPolynomial<F> {
     pub fn new(mut data: Vec<Vec<F>>, row_pad: F, col_pad: F, row_logsize: usize, col_logsize: usize) -> Self {
-        assert!(data.len() <= (1 << col_logsize));
+        assert!(data.len() <= (1 << col_logsize), "{} {}", data.len(), col_logsize);
         data.iter_mut().map(|p| {
             assert!(p.len() <= 1 << row_logsize);
             if p.len() % 2 == 1 {

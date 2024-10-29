@@ -3,7 +3,28 @@ use std::ops::Index;
 use std::sync::Arc;
 use ark_ff::PrimeField;
 use itertools::Itertools;
-use crate::cleanup::protocols::sumcheck::AlgFn;
+
+
+pub trait AlgFnSO<F: PrimeField> : Clone + Sync + Send {
+    /// Executes function.
+    fn exec(&self, args: &impl Index<usize, Output = F>) -> F;
+    /// Declares the degree.
+    fn deg(&self) -> usize;
+    /// Declares the expected number of inputs.
+    fn n_ins(&self) -> usize;
+}
+
+pub trait AlgFn<F: PrimeField> : Clone + Sync + Send {
+    /// Executes function
+    fn exec(&self, args: &impl Index<usize, Output = F>) -> impl Iterator<Item = F>;
+    /// Declares the degree.
+    fn deg(&self) -> usize;
+    /// Declares the expected number of inputs.
+    fn n_ins(&self) -> usize;
+    /// Declares the expected number of outputs.
+    fn n_outs(&self) -> usize;
+}
+
 
 #[derive(Clone)]
 pub struct ArcedAlgFn<F: PrimeField> {

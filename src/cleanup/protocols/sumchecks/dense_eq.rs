@@ -8,10 +8,12 @@ use rayon::iter::IntoParallelRefMutIterator;
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
-use crate::cleanup::protocols::sumcheck::{AlgFn, DenseSumcheckObjectSO, EqWrapper, FoldToSumcheckable, GammaWrapper, GenericSumcheckProtocol, SinglePointClaims};
+use crate::cleanup::protocols::sumcheck::{DenseSumcheckObjectSO, EqWrapper, FoldToSumcheckable, GammaWrapper, GenericSumcheckProtocol, SinglePointClaims};
 use crate::cleanup::protocols::sumchecks::vecvec_eq::{Sumcheckable, UnivarFormat};
 use crate::polynomial::vecvec::{EQPolyData, VecVecPolynomial};
 use crate::utils::{eq_eval, eq_poly_sequence, eq_poly_sequence_from_multiplier_last, eq_poly_sequence_last, make_gamma_pows, zip_with_gamma, BindVar21, Make21};
+use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
+
 
 
 pub struct DenseDeg2SumcheckObject<F: PrimeField, Fun: AlgFn<F>> {
@@ -161,8 +163,7 @@ impl<F: PrimeField, Fun: AlgFn<F>> Sumcheckable<F> for DenseDeg2SumcheckObjectSO
     }
 
     fn final_evals(&self) -> Vec<F> {
-        // self.polys.par_iter().map(|poly| poly[0]).collect()
-        unreachable!()
+        self.polys.iter().map(|poly| poly[0]).collect() // O_O
     }
 
     fn challenges(&self) -> &[F] {
@@ -241,7 +242,8 @@ mod test {
     use crate::cleanup::utils::twisted_edwards_ops::algfns::twisted_edwards_add_l1;
     use crate::utils::{eq_poly_sequence_last, make_gamma_pows_static, DensePolyRndConfig, RandomlyGeneratedPoly};
     use super::{DenseDeg2SumcheckObject, Sumcheckable as NewSumcheckable};
-    use crate::cleanup::protocols::sumcheck::{AlgFn, AlgFnSO, EqWrapper, ExampleSumcheckObjectSO, FoldToSumcheckable, GammaWrapper, SumClaim};
+    use crate::cleanup::protocols::sumcheck::{EqWrapper, ExampleSumcheckObjectSO, FoldToSumcheckable, GammaWrapper, SumClaim};
+    use super::*;
 
     #[test]
     fn check_univars() {
@@ -268,7 +270,7 @@ mod test {
             let f2 = f.clone();
 
             let mut dense_data = data.iter().map(|p| {
-                let mut ret = p.clone();
+                let mut ret : Vec<_> = p.clone();
                 assert_eq!(p.len() % 2, 0);
                 ret.extend(repeat_n(Fr::zero(), (1 << num_vars) - ret.len()));
                 ret

@@ -5,7 +5,7 @@ use ark_ff::{biginteger::{BigInt, BigInteger64 as B1}, BigInteger};
 use ark_ff::PrimeField;
 use liblasso::utils::math::Math;
 
-use super::non_native_equalizer::bit_utils::{*, BitMath};
+use super::cleanup::utils::bit_utils::{*, BitMath};
 
 use rayon::iter::plumbing::UnindexedConsumer;
 use rayon::prelude::*;

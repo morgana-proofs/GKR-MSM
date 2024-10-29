@@ -5,7 +5,7 @@
 #[allow(unused_imports)]
 
 use std::{cmp::min, mem::MaybeUninit, ops::Sub};
-use super::{BitMath};
+use super::utils::bit_utils::{BitMath};
 use ark_ff::{biginteger::{BigInt, BigInteger64 as B1}, BigInteger};
 use ark_ff::{Field, PrimeField};
 use hashcaster::ptr_utils::{AsSharedMUMutPtr, UninitArr, UnsafeIndexMut, UnsafeIndexRawMut};
@@ -18,6 +18,12 @@ use rayon::{current_num_threads, iter::{IntoParallelIterator, ParallelIterator},
 pub fn fe_to_limbs<F: PrimeField>(x: &F) -> Vec<u64>
 {
     x.into_bigint().as_ref().iter().map(|x| *x).collect()
+}
+
+pub fn limbs_to_fe<F: PrimeField>(x: &[u64]) -> F
+{
+    x.iter().rev();
+    todo!();
 }
 
 pub fn native_repr<F: PrimeField, NNF: PrimeField>(poly: &[NNF]) -> Vec<F> {

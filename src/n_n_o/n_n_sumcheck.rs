@@ -10,7 +10,7 @@ use std::iter;
 use ark_std::{One, Zero};
 use std::fmt::Debug;
 
-use super::non_native_equalizer::bit_utils::{*, BitMath};
+use super::cleanup::utils::bit_utils::{*, BitMath};
 use super::polynomial_with_zeros::{PolynomialWithZeros};
 
   

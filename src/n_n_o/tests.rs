@@ -1,5 +1,5 @@
 use super::polynomial_with_zeros::*;
-use super::non_native_equalizer::bit_utils::*;
+use super::cleanup::utils::bit_utils::*;
 use super::non_native_equalizer::*;
 
 use ark_bls12_381::Fr;

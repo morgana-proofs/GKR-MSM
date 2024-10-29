@@ -11,69 +11,7 @@ use std::ops::{Shl, Shr, BitAnd};
 
 
 
-pub mod bit_utils{
-    use liblasso::utils::math::Math;
-
-    use super::*;
-
-    pub trait BitMath {
-        fn to_bits(self, max_bit_len: usize) ->  Vec<bool>;
-      }
-    
-    impl BitMath for usize {
-    fn to_bits(self, max_bit_len: usize) -> Vec<bool> {
-        (0..max_bit_len)
-            .map(|n| (self>>n)%2 == 1 )
-            .collect()
-        
-        }
-    }
-
-     
-
-    pub fn big_num_to_limbs<F1: PrimeField, F2: PrimeField>(x: &F1, limb_len: usize) -> Vec<F2>
-    {
-        let x = x.into_bigint();
-
-        assert_eq!(limb_len%8, 0);
-
-        x.to_bytes_le()
-            .chunks(limb_len)
-            .map(|bytes| F2::from(F2::from_le_bytes_mod_order(bytes)))
-            .collect()
-
-    }
-
-
-    pub fn big_num_to_bits_u64<const N: usize>(x: BigInt<N>) -> Vec<u64>
-    {
-        x.to_bits_le().iter().map(|&b| b as u64).collect()
-    }
-
-
-    pub fn big_num_to_bits_F<F: PrimeField, const N: usize>(x: BigInt<N>) -> Vec<F>
-    { 
-        x.to_bits_le().iter().map(|&b| F::from(b as u64)).collect()
-    }
-
-    
-    pub fn roundup_to_pow2(x: usize) -> usize
-    { 
-        x.log_2().pow2()
-    }
-
-    pub fn transpose<T>(v: Vec<Vec<T>>) -> Vec<Vec<T>> // credit https://stackoverflow.com/questions/64498617/how-to-transpose-a-vector-of-vectors-in-rust
-    where
-        T: Clone,
-    {
-        assert!(!v.is_empty());
-        (0..v[0].len())
-            .map(|i| v.iter().map(|inner| inner[i].clone()).collect::<Vec<T>>())
-            .collect()
-    }
-}
-
-use bit_utils::*;
+use super::cleanup::utils::bit_utils::*;
 
 pub fn make_equalizer_limbs<FNat: PrimeField, FNonNat:  PrimeField>(
     point: &Vec<FNonNat>,

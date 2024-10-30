@@ -7,9 +7,8 @@ use rayon::{current_num_threads, iter::{repeatn, IndexedParallelIterator, IntoPa
 
 use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2}, polynomial::vecvec::VecVecPolynomial};
 
-use super::super::{sumcheck::{compress_coefficients, evaluate_poly, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec_eq::Sumcheckable};
+use super::super::{sumcheck::{compress_coefficients, evaluate_univar, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec_eq::Sumcheckable};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
-
 
 #[derive(Clone)]
 pub struct Prod3Fn<F: PrimeField> {
@@ -122,7 +121,7 @@ impl<T: TProofTranscript2, F: PrimeField> Protocol2<T> for LayeredProd3Protocol<
             let u = object.unipoly().as_vec();
             transcript.write_scalars(&compress_coefficients(&u));
             let t = transcript.challenge(128);
-            claim = evaluate_poly(&u, t);
+            claim = evaluate_univar(&u, t);
             object.bind(t);
         }
         let evs = object.final_evals();
@@ -261,6 +260,27 @@ pub fn compute_bucketing_image_wip<F: PrimeField>(
 }
 
 
+pub struct PushforwardPolys<F: PrimeField> {
+    pub c: Vec<F>,
+    pub c_pull: Vec<F>,
+    pub d: Vec<F>,
+    pub d_pull: Vec<F>,
+
+    pub p_x: Vec<F>,
+    pub p_y: Vec<F>,
+    
+    pub ac_c: Vec<F>, // access counts
+    pub ac_d: Vec<F>, // access counts
+    
+}
+
+pub struct BucketingProtocol<F: PrimeField> {
+    _marker: PhantomData<F>,
+    
+}
+
+
+
 #[cfg(test)]
 mod tests {
     use ark_bls12_381::{G1Affine, G1Projective, g1::Config};
@@ -354,7 +374,7 @@ mod tests {
             for y in 0..size_y {
                 let y_addr = (y << c) + digits[y][x] as usize;
                 let x_addr = counter[y][x] as usize;
-                
+
                 for i in 0..3 {
                     let val = image[i][y_addr][x_addr].take().unwrap();
                     assert_eq!(val, polys[i][x]);

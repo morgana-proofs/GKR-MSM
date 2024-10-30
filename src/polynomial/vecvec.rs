@@ -14,6 +14,7 @@ use num_traits::Zero;
 use rayon::prelude::*;
 use crate::cleanup::protocols::splits::SplitIdx;
 use crate::cleanup::utils::algfn::AlgFn;
+use crate::copoly::PrefixFold;
 use crate::utils::{eq_poly_sequence_from_multiplier, eq_poly_sequence_last, padded_eq_poly_sequence, Densify};
 
 #[derive(Debug)]
@@ -73,6 +74,7 @@ pub struct EQPolyData<F> {
     pub multiplier: F,
     // Coefficients for each row of matrix (corresponding to the most significant variables)
     pub row_eq_coefs: Vec<F>,
+    pub row_eq_coefs_tail_sums: Vec<F>,
     // EQ polys materialized for the longest segment in each fold
     pub row_eq_poly_seq: Vec<Vec<F>>,
     // EQ polys prefix sums to multiply
@@ -91,6 +93,11 @@ impl<F: PrimeField> EQPolyData<F> {
 
         // this use-case can probably be optimised
         let row_eq_coefs = eq_poly_sequence_last(&point[point_parts.vertical_vars_range()]).unwrap();
+        let mut row_eq_coefs_tail_sums = row_eq_coefs.iter().rev().scan(F::zero(), |acc, new| {
+            *acc = *acc + *new;
+            Some(*acc)
+        }).collect_vec();
+        row_eq_coefs_tail_sums.reverse();
 
 
         let row_eq_poly_seq = padded_eq_poly_sequence(point_parts.padded_vars_range().len(), &point[point_parts.row_vars_range()]);
@@ -110,6 +117,7 @@ impl<F: PrimeField> EQPolyData<F> {
             point,
             multiplier: F::one(),
             row_eq_coefs,
+            row_eq_coefs_tail_sums,
             row_eq_poly_seq,
             row_eq_poly_prefix_seq,
             already_bound_vars: 0,
@@ -242,14 +250,14 @@ impl<F: PrimeField> VecVecPolynomial<F> {
             Self::new(
                 data[1].take().unwrap(),
                 F::one(),
-                F::zero(),
+                F::one(),
                 row_logsize,
                 col_logsize,
             ),
             Self::new(
                 data[2].take().unwrap(),
                 F::one(),
-                F::zero(),
+                F::one(),
                 row_logsize,
                 col_logsize,
             )
@@ -283,14 +291,14 @@ impl<F: PrimeField> VecVecPolynomial<F> {
             Self::new(
                 data[1].take().unwrap(),
                 F::one(),
-                F::zero(),
+                F::one(),
                 row_logsize,
                 col_logsize,
             ),
             Self::new(
                 data[2].take().unwrap(),
                 F::one(),
-                F::zero(),
+                F::one(),
                 row_logsize,
                 col_logsize,
             )
@@ -323,14 +331,14 @@ impl<F: PrimeField> VecVecPolynomial<F> {
             Self::new(
                 data[1].take().unwrap(),
                 F::one(),
-                F::zero(),
+                F::one(),
                 row_logsize,
                 col_logsize,
             ),
             Self::new(
                 data[2].take().unwrap(),
                 F::one(),
-                F::zero(),
+                F::one(),
                 row_logsize,
                 col_logsize,
             )
@@ -363,7 +371,7 @@ impl<F: PrimeField> VecVecPolynomial<F> {
             Self::new(
                 data[1].take().unwrap(),
                 F::one(),
-                F::zero(),
+                F::one(),
                 row_logsize,
                 col_logsize,
             ),
@@ -695,6 +703,27 @@ mod tests {
             Some(i) => {assert_eq!(i, eq.point_parts.padded_vars_idx - 1)}
         }
     }
+    
+    #[test]
+    fn col_coef_prefixes() {
+        let gen = &mut test_rng();
+        let num_vars = 8;
+        let num_vertical_vars = 4;
+
+        let eq = EQPolyData::new(
+            &(0..num_vars).map(|_| F::rand(gen)).collect_vec(),
+            num_vertical_vars,
+            3,
+        );
+        
+        assert_eq!(eq.row_eq_coefs_tail_sums.len(), 1 << num_vertical_vars);
+        
+        let mut prefix_sum = F::zero();
+        for i in 0..(1 << num_vertical_vars) {
+            assert_eq!(prefix_sum + eq.row_eq_coefs_tail_sums[i], F::one());
+            prefix_sum = prefix_sum + eq.row_eq_coefs[i];
+        }
+    }
 
     fn foo(ins: &[&F]) -> Vec<F> {
         vec![
@@ -781,6 +810,5 @@ mod tests {
         }).collect_vec();
 
         assert_eq!(dense_out, expected_out);
-        
     }
 }

@@ -31,7 +31,7 @@ pub fn compress_coefficients<F: PrimeField>(coeffs: &[F]) -> Vec<F> {
     ret
 }
 
-pub fn evaluate_poly<F: PrimeField>(coeffs: &[F], x: F) -> F {
+pub fn evaluate_univar<F: PrimeField>(coeffs: &[F], x: F) -> F {
     let l = coeffs.len();
     if l == 0 {return F::zero()}
     let mut ret = coeffs[l-1];
@@ -71,7 +71,7 @@ impl<I: ExactSizeIterator<Item = usize> + Clone + Send + Sync> SumcheckVerifierC
 
             let x = transcript.challenge(128);
             r.push(x);
-            claim = evaluate_poly(&poly, x);
+            claim = evaluate_univar(&poly, x);
         }
         r.reverse();
         (claim, r)
@@ -115,7 +115,7 @@ impl<F: PrimeField, I: ExactSizeIterator<Item = usize> + Clone + Send + Sync, S:
             let x = transcript.challenge(128);
             r.push(x);
             sumcheck_object.bind(x);
-            claim = evaluate_poly(&poly, x);
+            claim = evaluate_univar(&poly, x);
         }
 
         r.reverse();
@@ -903,6 +903,7 @@ mod tests {
     use rstest::rstest;
     use crate::cleanup::proof_transcript::ProofTranscript2;
     use crate::cleanup::protocols::splits::SplitIdx;
+    use crate::cleanup::utils::arith::evaluate_poly;
     use crate::cleanup::utils::twisted_edwards_ops::algfns::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3};
     use crate::polynomial::vecvec::{vecvec_map, vecvec_map_split, vecvec_map_split_to_dense, VecVecPolynomial};
     use crate::utils::{map_over_poly, Densify};
@@ -948,12 +949,6 @@ mod tests {
         }
     }
 
-    fn evaluate<F: PrimeField>(poly: &[F], pt: &[F]) -> F {
-        let e_p = EqPolynomial::new(pt.to_vec());
-        poly.iter().zip_eq(e_p.evals().iter()).map(|(&a, b)| a * b).sum::<F>()
-    }
-
-
     #[test]
     fn example_sumcheck_verifier_accepts_prover_so() {
         let rng = &mut test_rng();
@@ -981,7 +976,7 @@ mod tests {
         assert_eq!(output_claims, expected_output_claims);
 
         let SinglePointClaims { point, evs } = output_claims;
-        assert_eq!(polys.iter().map(|poly| evaluate(poly, &point)).collect_vec(), evs);
+        assert_eq!(polys.iter().map(|poly| evaluate_poly(poly, &point)).collect_vec(), evs);
     }
 
     #[test]
@@ -1014,7 +1009,7 @@ mod tests {
         assert_eq!(output_claims, expected_output_claims);
 
         let SinglePointClaims { point, evs } = output_claims;
-        assert_eq!(polys.iter().map(|poly| evaluate(poly, &point)).collect_vec(), evs);
+        assert_eq!(polys.iter().map(|poly| evaluate_poly(poly, &point)).collect_vec(), evs);
 
     }
 
@@ -1049,7 +1044,7 @@ mod tests {
         assert_eq!(output_claims, expected_output_claims);
 
         let SinglePointClaims { point, evs } = output_claims;
-        assert_eq!(polys.iter().map(|poly| evaluate(poly, &point)).collect_vec(), evs);
+        assert_eq!(polys.iter().map(|poly| evaluate_poly(poly, &point)).collect_vec(), evs);
 
     }
 
@@ -1073,7 +1068,7 @@ mod tests {
         let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
 
 
-        let ev_claims : Vec<Fr> = output.iter().map(|output| evaluate(output, &point)).collect();
+        let ev_claims : Vec<Fr> = output.iter().map(|output| evaluate_poly(output, &point)).collect();
 
         let ev_claims = SinglePointClaims { point, evs: ev_claims };
 
@@ -1090,7 +1085,7 @@ mod tests {
         assert_eq!(output_claims, expected_output_claims);
 
         let SinglePointClaims { point : new_point, evs } = output_claims;
-        assert_eq!(polys.iter().map(|poly| evaluate(poly, &new_point)).collect_vec(), evs);
+        assert_eq!(polys.iter().map(|poly| evaluate_poly(poly, &new_point)).collect_vec(), evs);
 
     }
 

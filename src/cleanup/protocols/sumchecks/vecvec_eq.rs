@@ -23,7 +23,8 @@ use profi::{prof, prof_guard};
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
-use crate::cleanup::protocols::sumcheck::{ BareSumcheckSO, DenseSumcheckObject, DenseSumcheckObjectSO, EqWrapper, FoldToSumcheckable, GammaWrapper, GenericSumcheckProtocol, SinglePointClaims, SumClaim};
+use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
+use crate::cleanup::protocols::sumcheck::{BareSumcheckSO, DenseSumcheckObject, DenseSumcheckObjectSO, EqWrapper, FoldToSumcheckable, GammaWrapper, GenericSumcheckProtocol, SinglePointClaims, SumClaim};
 use crate::utils::{eq_eval, eq_poly_sequence_from_multiplier_last, eq_poly_sequence_last, make_gamma_pows, zip_with_gamma};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 
@@ -58,6 +59,7 @@ impl<F: PrimeField, Fun: AlgFn<F>> FoldToSumcheckable<F> for VecVecDeg2SumcheckO
     type Target = VecVecDeg2SumcheckObjectSO<F, Fun>;
 
     fn rlc(self, gamma: F) -> Self::Target {
+        dbg!(self.func.n_outs(), self.func.n_ins(), self.claims.len());
         let gamma_pows = make_gamma_pows(gamma, self.func.n_outs());
         let mut claim = self.claims[0];
         for i in 1..self.claims.len() {
@@ -160,13 +162,23 @@ impl<F: PrimeField, Fun: AlgFn<F>> VecVecDeg2LoSumcheckObjectSO<F, Fun> {
 
     pub fn bind_into_dense(mut self, t: F) -> DenseSumcheckObjectSO<F, EqWrapper<F, GammaWrapper<F, Fun>>> {
         let tm1 = t - F::one();
-        let mut polys = self.polys.iter().map(|p| p.data.iter().map(|r| {
-            match r.len() {
-                0 => {p.row_pad}
-                2 => {r[1] + tm1 * (r[0] - r[1])}
-                _ => {unreachable!()}
-            }
-        }).chain(repeat(p.col_pad)).take(1 << self.eq_poly_data.point_parts.padded_vars_idx).collect_vec()).collect_vec();
+        let mut polys = self.polys
+            .iter()
+            .map(|p| p.data
+                .iter()
+                .map(|r| {
+                    match r.len() {
+                        0 => {p.row_pad}
+                        2 => {r[1] + tm1 * (r[0] - r[1])}
+                        _ => {unreachable!()}
+                    }
+                })
+                .chain(repeat(p.col_pad))
+                .take(1 << self.eq_poly_data.point_parts.padded_vars_idx)
+                .collect_vec()
+            )
+            .collect_vec();
+        
         polys.push(eq_poly_sequence_from_multiplier_last(
             self.eq_poly_data.multiplier * (F::one() - self.eq_poly_data.point[self.eq_poly_data.point_parts.binding_var_idx.unwrap()] - t + (self.eq_poly_data.point[self.eq_poly_data.point_parts.binding_var_idx.unwrap()] * t).double()),
             &self.eq_poly_data.point[self.eq_poly_data.point_parts.vertical_vars_range()]).unwrap(),
@@ -304,9 +316,14 @@ impl<F: PrimeField, Fun: AlgFn<F>> Sumcheckable<F> for VecVecDeg2LoSumcheckObjec
 
         let pad_results = self.func.exec(&inputs).collect_vec();
 
+        inputs = self.polys.iter().map(|p| p.col_pad).collect_vec();
+
+        let mut col_pad_results = self.func.exec(&inputs).collect_vec();
+
         let mut sum2 = vec![F::zero(); self.func.n_outs()];
         let mut sum1 = vec![F::zero(); self.func.n_outs()];
-        for row_idx in 0..self.polys[0].data.len() {
+        let row_count = self.polys[0].data.len();
+        for row_idx in 0..row_count {
             let mut sum_local2 = vec![F::zero(); self.func.n_outs()];
             let mut sum_local1 = vec![F::zero(); self.func.n_outs()];
             let segment_len = self.polys[0].data[row_idx].len() / 2;
@@ -348,6 +365,15 @@ impl<F: PrimeField, Fun: AlgFn<F>> Sumcheckable<F> for VecVecDeg2LoSumcheckObjec
                 sum1[i] += sum_local1[i];
             }
         }
+        
+        if row_count < (1 << self.eq_poly_data.point_parts.vertical_vars_range().len()) {
+            for (idx, out) in col_pad_results.iter().enumerate() {
+                let res = *out * self.eq_poly_data.row_eq_coefs_tail_sums[row_count];
+                sum2[idx] += res;
+                sum1[idx] += res;
+            }
+        }
+        
 
         let mut total2 = sum2[0];
         let mut total1 = sum1[0];
@@ -378,10 +404,21 @@ impl<F: PrimeField, Fun: AlgFn<F>> Sumcheckable<F> for VecVecDeg2LoSumcheckObjec
 }
 
 pub struct VecVecDeg2Sumcheck<F: PrimeField, Fun: AlgFn<F>> {
-    f: Fun,
-    num_vars: usize,
-    num_vertical_vars: usize,
-    _pd: PhantomData<F>,
+    pub f: Fun,
+    pub num_vars: usize,
+    pub num_vertical_vars: usize,
+    pub _pd: PhantomData<F>,
+}
+
+impl <F: PrimeField, Fun: AlgFn<F>> VecVecDeg2Sumcheck<F, Fun> {
+    pub fn new(f: Fun, num_vars: usize, num_vertical_vars: usize) -> Self {
+        Self {
+            f,
+            num_vars,
+            num_vertical_vars,
+            _pd: Default::default(),
+        }
+    }
 }
 
 impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Transcript> for  VecVecDeg2Sumcheck<F, Fun> {
@@ -392,6 +429,9 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
 
     fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         assert_eq!(self.f.deg(), 2);
+
+        dbg!(self.num_vars, self.num_vertical_vars);
+        dbg!(advice[0].num_vars(), advice[0].col_logsize);
 
         let gamma = transcript.challenge(128);
         let SinglePointClaims { point, evs } = claims;
@@ -408,7 +448,9 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
         let degrees = repeat_n(self.f.deg() + 1, self.num_vars);
         let generic_protocol_config = GenericSumcheckProtocol::new(degrees);
 
-        let ((_, point), poly_evs) = generic_protocol_config.prove(transcript, so.claim(), so);
+        let ((_, point), mut poly_evs) = generic_protocol_config.prove(transcript, so.claim(), so);
+
+        poly_evs.pop();
 
         transcript.write_scalars(&poly_evs);
 
@@ -420,6 +462,7 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
         let gamma = transcript.challenge(128);
         let SinglePointClaims { point: input_point, evs } = claims;
         let folded_claim = zip_with_gamma(gamma, &evs);
+        
         let generic_protocol_config = GenericSumcheckProtocol::<F, _, VecVecDeg2SumcheckObjectSO<F, Fun>>::new(degrees);
 
         let (ev, output_point) = generic_protocol_config.verify(transcript, folded_claim);
@@ -456,13 +499,15 @@ mod test {
     use ark_std::{test_rng, UniformRand};
     use itertools::{repeat_n, Itertools};
     use num_traits::{One, Zero};
+    use crate::cleanup::proof_transcript::ProofTranscript2;
     use crate::copoly::{Copolynomial, EqPoly};
     use crate::cleanup::utils::twisted_edwards_ops::algfns::twisted_edwards_add_l1;
-    use crate::polynomial::vecvec::{EQPolyData, EQPolyPointParts, VecVecPolynomial};
+    use crate::polynomial::vecvec::{vecvec_map, EQPolyData, EQPolyPointParts, VecVecPolynomial};
     use crate::protocol::sumcheck::{make_folded_f, FragmentedLincomb, Sumcheckable as OldSumcheckable};
-    use crate::utils::{eq_poly_sequence_last, make_gamma_pows_static};
+    use crate::utils::{eq_poly_sequence_last, make_gamma_pows_static, Densify};
     use super::{VecVecDeg2SumcheckObjectSO, VecVecDeg2SumcheckObject, Sumcheckable as NewSumcheckable, VecVecDeg2SumcheckStage};
     use crate::cleanup::protocols::sumcheck::{EqWrapper, ExampleSumcheckObjectSO, FoldToSumcheckable, GammaWrapper, SumClaim};
+    use crate::cleanup::utils::arith::evaluate_poly;
     use super::*;
 
     enum Denseness {
@@ -504,7 +549,7 @@ mod test {
             let f = EqWrapper::new(GammaWrapper::new(twisted_edwards_add_l1(), gamma));
             let f2 = f.clone();
 
-            let mut dense_data = data.iter().map(|p| p.vec()).collect_vec();
+            let mut dense_data = data.iter().map(|p| p.to_dense(())).collect_vec();
 
             let mut point = (0..num_vars).map(|_| Fr::rand(rng)).collect_vec();
 
@@ -558,6 +603,67 @@ mod test {
                 vecvec_sumcheckable.bind(t);
                 dense_sumcheckable.bind(t);
             }
+            assert_eq!(vecvec_sumcheckable.final_evals(), dense_sumcheckable.final_evals());
+        }
+    }
+
+    #[rstest]
+    fn vecvec_sumcheck_prover_verifier(
+        #[values(0, 1, 3)]
+        num_vertical_vars: usize,
+        #[values(Denseness::Full, Denseness::Rows, Denseness::Nothing)]
+        denseness: Denseness
+    ) {
+        let rng = &mut test_rng();
+        type F = <BandersnatchConfig as CurveConfig>::BaseField;
+
+        for i in 0..100 {
+            let num_vars = 6;
+
+            let generator = match denseness {
+                Denseness::Full => { VecVecPolynomial::rand_points_dense::< BandersnatchConfig, _ > }
+                Denseness::Rows => { VecVecPolynomial::rand_points_dense_rows::< BandersnatchConfig, _ > }
+                Denseness::Nothing => { VecVecPolynomial::rand_points::< BandersnatchConfig, _ > }
+            };
+
+            let mut data_l = generator(
+                rng,
+                num_vars - num_vertical_vars,
+                num_vertical_vars
+            );
+            let data_r = data_l.clone();
+
+            let polys = data_l.into_iter().chain(data_r.into_iter()).collect_vec();
+
+            let output = vecvec_map(&polys, twisted_edwards_add_l1());
+            let dense_output = output.iter().map(|p| p.to_dense(())).collect_vec();
+            let point = (0..num_vars).map(|_| Fr::rand(rng)).collect_vec();
+            let ev_claims = SinglePointClaims {
+                point: point.clone(),
+                evs: dense_output.iter().map(|output| evaluate_poly(output, &point)).collect(),
+            };
+
+            let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
+
+            let mut sumcheck = VecVecDeg2Sumcheck::new(
+                twisted_edwards_add_l1(),
+                num_vars,
+                num_vertical_vars,
+            );
+
+            let (output_claims, _) = sumcheck.prove(&mut transcript_p, ev_claims.clone(), polys.clone());
+
+            let proof = transcript_p.end();
+
+            let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);
+
+            let expected_output_claims = sumcheck.verify(&mut transcript_v, ev_claims);
+
+            assert_eq!(output_claims, expected_output_claims);
+
+            let SinglePointClaims { point : new_point, evs } = output_claims;
+            assert_eq!(polys.iter().map(|poly| evaluate_poly(&poly.to_dense(()), &new_point)).collect_vec(), evs);
+
         }
     }
 }

@@ -27,11 +27,11 @@ pub mod polynomial_utils{
     }
 
 
-    pub fn vandermonde_matrix(desired_radius: usize) -> Vec<Vec<i128>>{
+    pub fn vandermonde_matrix(desired_len: usize) -> Vec<Vec<i128>>{
         let mut res = vec![];
-        for i in -(desired_radius as i128 + 1)/2..(desired_radius as i128)/2 + 1{
+        for i in -(desired_len as i128 + 1)/2..(desired_len as i128)/2 + 1{
             let mut row = vec![1, i];
-            for j in 1..desired_radius{
+            for j in 1..desired_len{
                 row.push(row[j]*i)
             }
             res.push(row)
@@ -40,10 +40,10 @@ pub mod polynomial_utils{
     }
 
 
-    // given coefficients computes evals at -desired_radius, ..., 0, 1, 2, ... , desired_radius
-    pub fn coeffs_to_evals_with_precompute(P: &[i128], desired_radius: usize) -> Vec<i128>{
+    // given coefficients computes evals at -desired_len/2, ..., 0, 1, 2, ... , desired_len/2
+    pub fn coeffs_to_evals_with_precompute(P: &[i128], desired_len: usize) -> Vec<i128>{
         // let res = vec![];
-        let v = vandermonde_matrix(desired_radius);
+        let v = vandermonde_matrix(desired_len);
         let mut v = v.iter();
 
         (0..v.len()).map(|i|{
@@ -122,6 +122,7 @@ pub mod polynomial_utils{
         // P
     }
 
+
 }
 pub mod overflow_multiplication_utils{
     use std::path::absolute;
@@ -193,6 +194,50 @@ pub mod overflow_multiplication_utils{
             let (r0, r1) = add256(r0, r1, lo128(y)<<64, hi128(y));
             (sign, [(r0 >> 64) as u64, r0 as u64, (r1 >> 64) as u64, r1 as u64])
         }
+
+            /// Adds two 256 bit numbers, assuming no overflow
+    pub fn add_bignums(a: (bool, [u64;4]), b: (bool, [u64;4])) ->(bool, [u64;4]) {
+
+        // if both numbers have the same sign, add with carry;
+        // otherwise, we determine the sign on the outcome, and subtract the one with smaller absolute value
+        let mut  res = zero_256();
+        
+        if a.0 == b.0{
+            res.0 = a.0;
+            let mut carry = false;
+            let mut new_carry = false;
+            for i in 0..4{
+                (res.1[3-i], carry) = a.1[3-i].overflowing_add(carry as u64) ;
+                (res.1[3-i], new_carry) = res.1[3-i].overflowing_add(b.1[3-i]) ;
+                carry = carry || new_carry;
+            } 
+        }
+        else{
+            let (a, b) = match a.0{
+                false => (a, b),
+                _ => (b, a)
+            };
+            res.0 = (a.1[0] < b.1[0]) ||(a.1[0] == b.1[0] && a.1[1] < b.1[1]) ||(a.1[1] == b.1[1] && a.1[2] < b.1[2])||(a.1[2] == b.1[2] && a.1[3] < b.1[3])  ;
+
+            let (a, b) = match res.0{
+                false => (a, b),
+                _ => (b, a)
+            };
+
+            let mut borrow = false;
+            let mut new_borrow = false;
+            for i in 0..4{
+                (res.1[3-i], borrow) = a.1[3-i].overflowing_sub(borrow as u64) ;
+                (res.1[3-i], new_borrow) = res.1[3-i].overflowing_sub(b.1[3-i]) ;
+                borrow = borrow || new_borrow;
+                }
+        }
+        res
+    }
+
+    pub fn zero_256()->(bool, [u64; 4]){
+        (false, [0; 4])
+    }
 }
 
 
@@ -217,6 +262,21 @@ pub mod bit_utils{
         
         }
     }
+
+
+    /// Splits field element into 64-bit limbs
+    pub fn fe_to_limbs<F: PrimeField>(x: &F) -> Vec<u64>
+    {
+        x.into_bigint().as_ref().iter().map(|x| *x).collect()
+    }
+
+    pub fn limbs_to_fe<F: PrimeField>(x: &[u64]) -> F
+    {
+        // let x = x.iter().chain(repeat(&0)).take(F::BigInt::NUM_LIMBS);
+        // F::from_bigint(F::BigInt(x)).unwrap()
+        x.iter().rev().fold(F::zero(), |acc, x| acc + acc*F::from(u64::MAX) + F::from(*x))
+    }
+
 
      
 
@@ -263,7 +323,7 @@ pub mod bit_utils{
 }
 
 
-
+#[cfg(test)]
 pub mod test{
     #[allow(unused_imports)]
 
@@ -352,6 +412,26 @@ pub mod test{
 
         println!("{:?}, \n\n{:?}", evals_even, true_evals_even);
         assert!(evals_even == true_evals_even);
+    }
+
+    use test_case::test_case;
+    #[test_case([(false, [0, 0, 0, 1]), (true, [0, 0, 0, 5]), (true, [0, 0, 0, 4])] ; "one negative one positive")]
+    #[test_case([(true, [0, 0, 0, 1]), (false, [0, 0, 0, 5]), (false, [0, 0, 0, 4])]  ; "one negative one positive, positive result")]
+    #[test_case([(true, [0, 0, 0, 5]), (true, [0, 0, 0, 1]), (true, [0, 0, 0, 6])]  ; "when operands are swapped")]
+    fn test_add_bignums(ins  : [(bool, [u64; 4]) ; 3]) {
+        let [a, b, c] = ins;
+        assert_eq!(add_bignums(a, b), c);
+
+        //TODO: add a random test
+
+        // let rng = &mut test_rng();
+        // let a_digits = (0..4).map(|_|u32::rand(rng) as u64).try_into();
+        // let b_digits = (0..4).map(|_|u32::rand(rng) as u64).try_into();
+        // let a = (true, a_digits);
+        // let b = (true, b_digits);
+        // let c = (true, a_digits.iter().zip(b_digits).map(|(x, y)| x+y).try_into());
+        // assert_eq!(add_bignums(a, b), c);
+
     }
 
 

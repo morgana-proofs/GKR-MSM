@@ -5,7 +5,7 @@
 #[allow(unused_imports)]
 
 use std::{cmp::min, mem::MaybeUninit, ops::Sub};
-use super::utils::bit_utils::{BitMath};
+use super::utils::bit_utils::{BitMath, *};
 use ark_ff::{biginteger::{BigInt, BigInteger64 as B1}, BigInteger};
 use ark_ff::{Field, PrimeField};
 use hashcaster::ptr_utils::{AsSharedMUMutPtr, UninitArr, UnsafeIndexMut, UnsafeIndexRawMut};
@@ -13,18 +13,6 @@ use liblasso::utils::math::Math;
 use ark_std::{One, Zero, UniformRand};
 use rayon::{current_num_threads, iter::{IntoParallelIterator, ParallelIterator}, slice::ParallelSlice};
 
-
-/// Splits field element into 64-bit limbs
-pub fn fe_to_limbs<F: PrimeField>(x: &F) -> Vec<u64>
-{
-    x.into_bigint().as_ref().iter().map(|x| *x).collect()
-}
-
-pub fn limbs_to_fe<F: PrimeField>(x: &[u64]) -> F
-{
-    x.iter().rev();
-    todo!();
-}
 
 pub fn native_repr<F: PrimeField, NNF: PrimeField>(poly: &[NNF]) -> Vec<F> {
     let factor = 8 * current_num_threads();

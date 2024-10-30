@@ -43,6 +43,7 @@ memprof = ["dep:jemalloc-ctl", "dep:jemallocator"]
 [dev-dependencies]
 criterion = "0.3.6"
 rstest = "0.23.0"
+test-case = "3.3.1"
 
 
 

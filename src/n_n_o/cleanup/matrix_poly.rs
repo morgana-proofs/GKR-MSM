@@ -1,5 +1,7 @@
 // Implements partial inner products of dense vector-arranged and matrix arranged polynomials.
 #[allow(unused_imports)]
+#[allow(non_snake_case)]
+
 use std::{iter::repeat, marker::PhantomData, ops::{Add, AddAssign, SubAssign, Sub, Mul, MulAssign}, sync::Arc, u64};
 
 use ark_ff::{PrimeField, Zero, One};
@@ -13,9 +15,9 @@ use crate::cleanup::{protocol2::Protocol2, protocols::sumcheck::{BareSumcheckSO,
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocols::sumchecks::vecvec_eq::Sumcheckable;
 
-use super::non_native_evs::fe_to_limbs;
 use super::utils::overflow_multiplication_utils::*;
 use super::utils::polynomial_utils::*;
+use super::utils::bit_utils::*;
 
 /// Splits large vector of length n into chunks of small size (length m) and computes inner products, arranging them in a vector of size n/m. n%m must be zero.
 /// Supports an additional padding parameter - large vector can actually be of length < n, and will be formally padded with zeros to length n. This does not actually allocate zeros. 
@@ -77,49 +79,48 @@ pub fn inner_prod_hi<F: PrimeField>(large: &[F], small: &[F], pad_large_to_lengt
     acc
 }
 
-fn make_prover_response<F: PrimeField>(P1: &[u64], P2: &[u64], P3: &[u64], num_limbs: usize) -> Vec<F> 
+fn make_prover_response<F: PrimeField>(Pxy: &[u64], Px: &[u64], Py: &[u64], num_limbs: usize) -> Vec<F> 
 // num_limbs should be 6...
 {
     let (deg1, deg2, deg3) = (num_limbs-1, num_limbs-1, num_limbs-1);
 
-    let (P1, P2, P3) = (P1.iter().map(|x| *x as i128).collect_vec(), P2.iter().map(|x| *x as i128).collect_vec(), P3.iter().map(|x| *x as i128).collect_vec());
-    // let (mut evals1, mut evals2, mut evals3) = (coeffs_to_evals_with_precompute(&P1, deg1 + deg2), coeffs_to_evals_with_precompute(&P2, deg1+ deg2), coeffs_to_evals_with_precompute(&P3, deg1 + deg2 + deg3));
-    let evals1: Vec<_> = P1.chunks(deg1)
-                        .map(|c| coeffs_to_evals_with_precompute(c, (deg1 + deg2)/2))
-                        .collect();
+    let (Pxy, Px) = (Pxy.iter().map(|x| *x as i128).collect_vec(), Px.iter().map(|x| *x as i128).collect_vec());
 
-    let evals2: Vec<_> = P2.chunks(deg2)
-                        .map(|c| coeffs_to_evals_with_precompute(c, (deg1 + deg2)/2))
-                        .collect();
+    // multiplying Pxy by Px and summing by x
+    let evalsxy = Pxy.chunks(Px.len())
+        .map(|chunk|
+            chunk.chunks(num_limbs)
+                .zip(Px.chunks(num_limbs))
+                .map(|(a, b)|{
+                    let radius = (deg1 + deg2);
+                    let evals_a = coeffs_to_evals_with_precompute(a, radius);
+                    let evals_b = coeffs_to_evals_with_precompute(b, radius);
+                    println!("{:?}, {:?}", evals_a.len(), evals_b.len());
+                    evals_a.iter().zip(evals_b).map(|(&s, t)| mul_i128(s, t)).collect_vec()
+                })
+                .fold(vec![zero_256(); num_limbs], |acc, x|{
+                    acc.iter().zip(x).map(|(&s, t)| add_bignums(s, t)).collect()
+               })
+               .iter()
+               .map(|(flag, limbs)| 
+                    match flag{
+                        false => limbs_to_fe::<F>(limbs),
+                        _ => limbs_to_fe::<F>(limbs).neg(),
+               })
+               .collect_vec())
+        .collect_vec();
+    
+    let final_evals = evalsxy.iter()
+        .zip(Py.chunks(num_limbs));
+    
 
-    // let mut prod_evals12: Vec<_> = evals1.iter().zip(evals2).map(|(a, b)| {
-    //     let limbs = mul_i128(a, b);
-    //     let bi = (0..4).zip(limbs).fold(F::BigInt::from(0_u64), |acc, (i, x)| {
-    //         let mut acc = acc;
-    //         acc.muln(64);
-    //         acc.add_with_carry(&F::BigInt::from(x));
-    //         acc
-    //     });
-    //     F::from_bigint(bi).unwrap()
-    // }).collect();
+    assert_eq!(evalsxy.len(), Py.len()/ num_limbs);
 
-
+    println!("{:?}", evalsxy);
+    println!("{:?}, {:?}", evalsxy.len(), evalsxy[0].len());
+    println!("{:?}", Pxy);
 
     todo!();
-    // let mut prod_evals12: Vec<_> = evals1.iter().zip(evals2).map(|(a, b)| {
-    //     let limbs = mul128(*a as u128, b as u128);
-    //     let bi = (0..4).zip(limbs).fold(F::BigInt::from(0_u64), |acc, (i, x)| {
-    //         let mut acc = acc;
-    //         acc.muln(64);
-    //         acc.add_with_carry(&F::BigInt::from(x));
-    //         acc
-    //     });
-    //     F::from_bigint(bi).unwrap()
-    // }).collect();
-
-    // extend_evals_by_l(&mut prod_evals12, deg1 + deg2, deg3);
-    // let prod_evals123: Vec<_> = prod_evals12.iter().zip(evals3).map(|(a, b)| *a*b).collect();
-    // prod_evals123
 }
 
 /// Takes a vector of F-elements, interprets each of these as BigInt, multiplies k-th limb by 2^{64k}, and casts to NNF. 
@@ -179,14 +180,30 @@ pub mod test{
     //TODO: this doesn't really test anything now
     fn test_fake_provers_response(){
         let rng = &mut test_rng();
-        let deg1: u64 = 5;
-        let deg2: u64 = 3;
-        let deg3: u64 = 4;
-        let coeffs1 = (0..deg1 + 1).map(|_| u64::rand(rng)).collect_vec();
-        let coeffs2 = (0..deg2 + 1).map(|_| u64::rand(rng)).collect_vec();
-        let coeffs3 = (0..deg3 + 1).map(|_| u64::rand(rng)).collect_vec();
+        let num_limbs = 2;
+        let len1: u64 = num_limbs*3*5;
+        let len2: u64 = num_limbs*3;
+        let len3: u64 = num_limbs*5;
+        let coeffs1 = (0..len1).map(|_| rng.gen_range(0..5)).collect_vec();
+        let coeffs2 = (0..len2).map(|_| rng.gen_range(0..5)).collect_vec();
+        let coeffs3 = (0..len3).map(|_| rng.gen_range(0..5)).collect_vec();
     
-        make_prover_response::<Fq>(&coeffs1, &coeffs2, &coeffs3, 6);
+        make_prover_response::<Fq>(&coeffs1, &coeffs2, &coeffs3, num_limbs as usize);
+    }
+
+            
+    #[test]
+    //TODO: this doesn't really test anything now
+    fn test_fake_provers_response_2(){
+        let rng = &mut test_rng();
+        let len1: u64 = 2*3*5;
+        let len2: u64 = 2*3;
+        let len3: u64 = 2*5;
+        let coeffs1 = (0..len1).map(|_| rng.gen_range(0..5)).collect_vec();
+        let coeffs2 = (0..len2).map(|_| rng.gen_range(0..5)).collect_vec();
+        let coeffs3 = (0..len3).map(|_| rng.gen_range(0..5)).collect_vec();
+
+        make_prover_response::<Fq>(&coeffs1, &coeffs2, &coeffs3, 2);
     }
 }
 

@@ -178,6 +178,16 @@ pub struct DenseDeg2Sumcheck<F: PrimeField, Fun: AlgFn<F>> {
     _pd: PhantomData<F>,
 }
 
+impl<F: PrimeField, Fun: AlgFn<F>> DenseDeg2Sumcheck<F, Fun> {
+    pub fn new(f: Fun, num_vars: usize) -> Self {
+        Self {
+            f,
+            num_vars,
+            _pd: Default::default(),
+        }
+    }
+}
+
 impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Transcript> for DenseDeg2Sumcheck<F, Fun> {
     type ProverInput = Vec<Vec<F>>;
     type ProverOutput = ();

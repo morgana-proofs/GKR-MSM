@@ -11,6 +11,7 @@ use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
 use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
 use crate::cleanup::protocols::splits::SplitIdx;
 use crate::cleanup::protocols::sumcheck::{SinglePointClaims};
+use crate::cleanup::protocols::sumchecks::dense_eq::DenseDeg2Sumcheck;
 use crate::polynomial::vecvec::{vecvec_map, vecvec_map_split, vecvec_map_split_to_dense, VecVecPolynomial};
 use crate::cleanup::utils::twisted_edwards_ops::*;
 use crate::cleanup::utils::twisted_edwards_ops::algfns::*;
@@ -169,60 +170,85 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
     pub fn generate_layers(num_vars: usize, num_adds: usize, row_logsize: usize, split_last: bool) -> Vec<Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>> {
         let mut layers: Vec<Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>> = vec![];
         let mut step = Step::L1;
+        let num_vertical_vars = num_vars - row_logsize;
         for i in 0..num_adds {
             for _ in 0..3 {
-                match (i, &step) {
-                    (0, Step::L1) => {
+                match (i, i + 1< row_logsize, &step) {
+                    (0, _, Step::L1) => {
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 affine_twisted_edwards_add_l1(),
-                                num_vars - i,
-                                num_vars - row_logsize,
+                                num_vars - i - 1,
+                                num_vertical_vars,
                             )
                         ));
                     }
-                    (0, Step::L2) => {
+                    (0, _, Step::L2) => {
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 affine_twisted_edwards_add_l2(),
-                                num_vars - i,
-                                num_vars - row_logsize,
+                                num_vars - i - 1,
+                                num_vertical_vars,
                             )
                         ));
                     }
-                    (0, Step::L3) => {
+                    (0, _, Step::L3) => {
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 affine_twisted_edwards_add_l3(),
-                                num_vars - i,
-                                num_vars - row_logsize,
+                                num_vars - i - 1,
+                                num_vertical_vars,
                             )
                         ));
                     }
-                    (_, Step::L1) => {
+                    (_, true, Step::L1) => {
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 twisted_edwards_add_l1(),
-                                num_vars - i,
-                                num_vars - row_logsize,
+                                num_vars - i - 1,
+                                num_vertical_vars,
                             )
                         ));
                     }
-                    (_, Step::L2) => {
+                    (_, true, Step::L2) => {
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 twisted_edwards_add_l2(),
-                                num_vars - i,
-                                num_vars - row_logsize,
+                                num_vars - i - 1,
+                                num_vertical_vars,
                             )
                         ));
                     }
-                    (_, Step::L3) => {
+                    (_, true, Step::L3) => {
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 twisted_edwards_add_l3(),
-                                num_vars - i,
-                                num_vars - row_logsize,
+                                num_vars - i - 1,
+                                num_vertical_vars,
+                            )
+                        ));
+                    }
+                    (_, false, Step::L1) => {
+                        layers.push(Box::new(
+                            DenseDeg2Sumcheck::new(
+                                twisted_edwards_add_l1(),
+                                num_vars - i - 1,
+                            )
+                        ));
+                    }
+                    (_, false, Step::L2) => {
+                        layers.push(Box::new(
+                            DenseDeg2Sumcheck::new(
+                                twisted_edwards_add_l2(),
+                                num_vars - i - 1,
+                            )
+                        ));
+                    }
+                    (_, false, Step::L3) => {
+                        layers.push(Box::new(
+                            DenseDeg2Sumcheck::new(
+                                twisted_edwards_add_l3(),
+                                num_vars - i - 1,
                             )
                         ));
                     }
@@ -279,19 +305,24 @@ mod test {
     use crate::cleanup::protocols::splits::SplitIdx;
     use crate::cleanup::protocols::sumcheck::SinglePointClaims;
     use crate::cleanup::utils::algfn::IdAlgFn;
+    use crate::cleanup::utils::arith::evaluate_poly;
     use crate::cleanup::utils::twisted_edwards_ops::algfns::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
     use crate::polynomial::vecvec::{vecvec_map_split, VecVecPolynomial};
     use crate::utils::{DensePolyRndConfig, Densify, RandomlyGeneratedPoly};
 
-    #[test]
-    fn prove_and_verify() {
+    #[rstest]
+    #[case(5, 4, 2)]
+    #[case(5, 2, 4)]
+    fn prove_and_verify(
+        #[case] num_adds: usize,
+        #[case] row_logsize: usize,
+        #[case] col_logsize: usize,
+        #[values(true, false)]
+        split_last: bool,
+    ) {
         let rng = &mut test_rng();
         type F = <BandersnatchConfig as CurveConfig>::BaseField;
 
-        let row_logsize = 4;
-        let col_logsize = 2;
-        let num_adds = 2;
-        let split_last = true;
         let num_vars = row_logsize + col_logsize;
 
         let points = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
@@ -315,23 +346,28 @@ mod test {
 
         let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
         let last = witness_gen.last.as_ref().unwrap();
-        let evs = match last {
+        let dense_output = match last {
             SplitVecVecMapGKRAdvice::VecVecMAP(vv) => { vv.to_dense( ())}
-            SplitVecVecMapGKRAdvice::DenseMAP(d) => { d.iter().map(|c| c.to_dense(num_vars - num_adds - 1)).collect_vec() }
+            SplitVecVecMapGKRAdvice::DenseMAP(d) => { d.iter().map(|c| c.to_dense(num_vars - num_adds - match split_last {true => 1, false => 0})).collect_vec() }
             SplitVecVecMapGKRAdvice::SPLIT(_) => { unreachable!() }
-        }
-            .iter()
-            .map(|c|
-                c.iter().fold(F::zero(), |acc, nxt| acc + nxt)
-            )
-            .collect_vec();
-
-        let point = (0..(num_vars - num_adds)).map(|_| Fr::rand(rng)).collect_vec();
-        let claims = SinglePointClaims {
-            point,
-            evs,
         };
-        prover.prove(&mut transcript_p, claims, witness_gen);
+
+        let point = (0..(num_vars - 1 - num_adds + match split_last {true => 0, false => 1})).map(|_| Fr::rand(rng)).collect_vec();
+        println!("{}, {:?}", dense_output.len(), dense_output.iter().map(|x| x.len()).collect_vec());
+        println!("{}", point.len());
+        let claims = SinglePointClaims {
+            point: point.clone(),
+            evs: dense_output.iter().map(|output| evaluate_poly(output, &point)).collect(),
+        };
+        let (output_claims, _) = prover.prove(&mut transcript_p, claims.clone(), witness_gen);
+
+        let proof = transcript_p.end();
+
+        let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);
+
+        let expected_output_claims = prover.verify(&mut transcript_v, claims.clone());
+
+        assert_eq!(output_claims, expected_output_claims);
     }
 
     #[test]
@@ -345,7 +381,7 @@ mod test {
         let split_last = false;
         let points = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
         let inputs = vecvec_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
-        let smth = VecVecBintreeAddWG::new(SplitVecVecMapGKRAdvice::VecVecMAP(inputs), row_logsize, num_adds, split_last);
+        let smth = VecVecBintreeAddWG::new(SplitVecVecMapGKRAdvice::VecVecMAP(inputs.clone()), row_logsize, num_adds, split_last);
         let outs = smth.last.unwrap();
         let densified_out = match outs {
             SplitVecVecMapGKRAdvice::VecVecMAP(vv) => {

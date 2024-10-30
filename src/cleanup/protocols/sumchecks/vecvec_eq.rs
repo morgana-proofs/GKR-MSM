@@ -23,7 +23,8 @@ use profi::{prof, prof_guard};
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
-use crate::cleanup::protocols::sumcheck::{ BareSumcheckSO, DenseSumcheckObject, DenseSumcheckObjectSO, EqWrapper, FoldToSumcheckable, GammaWrapper, GenericSumcheckProtocol, SinglePointClaims, SumClaim};
+use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
+use crate::cleanup::protocols::sumcheck::{BareSumcheckSO, DenseSumcheckObject, DenseSumcheckObjectSO, EqWrapper, FoldToSumcheckable, GammaWrapper, GenericSumcheckProtocol, SinglePointClaims, SumClaim};
 use crate::utils::{eq_eval, eq_poly_sequence_from_multiplier_last, eq_poly_sequence_last, make_gamma_pows, zip_with_gamma};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 
@@ -449,8 +450,9 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
 
         let ((_, point), mut poly_evs) = generic_protocol_config.prove(transcript, so.claim(), so);
 
-        transcript.write_scalars(&poly_evs);
         poly_evs.pop();
+
+        transcript.write_scalars(&poly_evs);
 
         (SinglePointClaims {point, evs: poly_evs}, ())
     }
@@ -460,6 +462,7 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
         let gamma = transcript.challenge(128);
         let SinglePointClaims { point: input_point, evs } = claims;
         let folded_claim = zip_with_gamma(gamma, &evs);
+        
         let generic_protocol_config = GenericSumcheckProtocol::<F, _, VecVecDeg2SumcheckObjectSO<F, Fun>>::new(degrees);
 
         let (ev, output_point) = generic_protocol_config.verify(transcript, folded_claim);
@@ -496,13 +499,15 @@ mod test {
     use ark_std::{test_rng, UniformRand};
     use itertools::{repeat_n, Itertools};
     use num_traits::{One, Zero};
+    use crate::cleanup::proof_transcript::ProofTranscript2;
     use crate::copoly::{Copolynomial, EqPoly};
     use crate::cleanup::utils::twisted_edwards_ops::algfns::twisted_edwards_add_l1;
-    use crate::polynomial::vecvec::{EQPolyData, EQPolyPointParts, VecVecPolynomial};
+    use crate::polynomial::vecvec::{vecvec_map, EQPolyData, EQPolyPointParts, VecVecPolynomial};
     use crate::protocol::sumcheck::{make_folded_f, FragmentedLincomb, Sumcheckable as OldSumcheckable};
     use crate::utils::{eq_poly_sequence_last, make_gamma_pows_static, Densify};
     use super::{VecVecDeg2SumcheckObjectSO, VecVecDeg2SumcheckObject, Sumcheckable as NewSumcheckable, VecVecDeg2SumcheckStage};
     use crate::cleanup::protocols::sumcheck::{EqWrapper, ExampleSumcheckObjectSO, FoldToSumcheckable, GammaWrapper, SumClaim};
+    use crate::cleanup::utils::arith::evaluate_poly;
     use super::*;
 
     enum Denseness {
@@ -598,6 +603,67 @@ mod test {
                 vecvec_sumcheckable.bind(t);
                 dense_sumcheckable.bind(t);
             }
+            assert_eq!(vecvec_sumcheckable.final_evals(), dense_sumcheckable.final_evals());
+        }
+    }
+
+    #[rstest]
+    fn vecvec_sumcheck_prover_verifier(
+        #[values(0, 1, 3)]
+        num_vertical_vars: usize,
+        #[values(Denseness::Full, Denseness::Rows, Denseness::Nothing)]
+        denseness: Denseness
+    ) {
+        let rng = &mut test_rng();
+        type F = <BandersnatchConfig as CurveConfig>::BaseField;
+
+        for i in 0..100 {
+            let num_vars = 6;
+
+            let generator = match denseness {
+                Denseness::Full => { VecVecPolynomial::rand_points_dense::< BandersnatchConfig, _ > }
+                Denseness::Rows => { VecVecPolynomial::rand_points_dense_rows::< BandersnatchConfig, _ > }
+                Denseness::Nothing => { VecVecPolynomial::rand_points::< BandersnatchConfig, _ > }
+            };
+
+            let mut data_l = generator(
+                rng,
+                num_vars - num_vertical_vars,
+                num_vertical_vars
+            );
+            let data_r = data_l.clone();
+
+            let polys = data_l.into_iter().chain(data_r.into_iter()).collect_vec();
+
+            let output = vecvec_map(&polys, twisted_edwards_add_l1());
+            let dense_output = output.iter().map(|p| p.to_dense(())).collect_vec();
+            let point = (0..num_vars).map(|_| Fr::rand(rng)).collect_vec();
+            let ev_claims = SinglePointClaims {
+                point: point.clone(),
+                evs: dense_output.iter().map(|output| evaluate_poly(output, &point)).collect(),
+            };
+
+            let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
+
+            let mut sumcheck = VecVecDeg2Sumcheck::new(
+                twisted_edwards_add_l1(),
+                num_vars,
+                num_vertical_vars,
+            );
+
+            let (output_claims, _) = sumcheck.prove(&mut transcript_p, ev_claims.clone(), polys.clone());
+
+            let proof = transcript_p.end();
+
+            let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);
+
+            let expected_output_claims = sumcheck.verify(&mut transcript_v, ev_claims);
+
+            assert_eq!(output_claims, expected_output_claims);
+
+            let SinglePointClaims { point : new_point, evs } = output_claims;
+            assert_eq!(polys.iter().map(|poly| evaluate_poly(&poly.to_dense(()), &new_point)).collect_vec(), evs);
+
         }
     }
 }

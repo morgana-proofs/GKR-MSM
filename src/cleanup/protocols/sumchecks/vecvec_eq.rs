@@ -161,13 +161,23 @@ impl<F: PrimeField, Fun: AlgFn<F>> VecVecDeg2LoSumcheckObjectSO<F, Fun> {
 
     pub fn bind_into_dense(mut self, t: F) -> DenseSumcheckObjectSO<F, EqWrapper<F, GammaWrapper<F, Fun>>> {
         let tm1 = t - F::one();
-        let mut polys = self.polys.iter().map(|p| p.data.iter().map(|r| {
-            match r.len() {
-                0 => {p.row_pad}
-                2 => {r[1] + tm1 * (r[0] - r[1])}
-                _ => {unreachable!()}
-            }
-        }).chain(repeat(p.col_pad)).take(1 << self.eq_poly_data.point_parts.padded_vars_idx).collect_vec()).collect_vec();
+        let mut polys = self.polys
+            .iter()
+            .map(|p| p.data
+                .iter()
+                .map(|r| {
+                    match r.len() {
+                        0 => {p.row_pad}
+                        2 => {r[1] + tm1 * (r[0] - r[1])}
+                        _ => {unreachable!()}
+                    }
+                })
+                .chain(repeat(p.col_pad))
+                .take(1 << self.eq_poly_data.point_parts.padded_vars_idx)
+                .collect_vec()
+            )
+            .collect_vec();
+        
         polys.push(eq_poly_sequence_from_multiplier_last(
             self.eq_poly_data.multiplier * (F::one() - self.eq_poly_data.point[self.eq_poly_data.point_parts.binding_var_idx.unwrap()] - t + (self.eq_poly_data.point[self.eq_poly_data.point_parts.binding_var_idx.unwrap()] * t).double()),
             &self.eq_poly_data.point[self.eq_poly_data.point_parts.vertical_vars_range()]).unwrap(),
@@ -305,9 +315,14 @@ impl<F: PrimeField, Fun: AlgFn<F>> Sumcheckable<F> for VecVecDeg2LoSumcheckObjec
 
         let pad_results = self.func.exec(&inputs).collect_vec();
 
+        inputs = self.polys.iter().map(|p| p.col_pad).collect_vec();
+
+        let mut col_pad_results = self.func.exec(&inputs).collect_vec();
+
         let mut sum2 = vec![F::zero(); self.func.n_outs()];
         let mut sum1 = vec![F::zero(); self.func.n_outs()];
-        for row_idx in 0..self.polys[0].data.len() {
+        let row_count = self.polys[0].data.len();
+        for row_idx in 0..row_count {
             let mut sum_local2 = vec![F::zero(); self.func.n_outs()];
             let mut sum_local1 = vec![F::zero(); self.func.n_outs()];
             let segment_len = self.polys[0].data[row_idx].len() / 2;
@@ -349,6 +364,15 @@ impl<F: PrimeField, Fun: AlgFn<F>> Sumcheckable<F> for VecVecDeg2LoSumcheckObjec
                 sum1[i] += sum_local1[i];
             }
         }
+        
+        if row_count < (1 << self.eq_poly_data.point_parts.vertical_vars_range().len()) {
+            for (idx, out) in col_pad_results.iter().enumerate() {
+                let res = *out * self.eq_poly_data.row_eq_coefs_tail_sums[row_count];
+                sum2[idx] += res;
+                sum1[idx] += res;
+            }
+        }
+        
 
         let mut total2 = sum2[0];
         let mut total1 = sum1[0];
@@ -476,7 +500,7 @@ mod test {
     use crate::cleanup::utils::twisted_edwards_ops::algfns::twisted_edwards_add_l1;
     use crate::polynomial::vecvec::{EQPolyData, EQPolyPointParts, VecVecPolynomial};
     use crate::protocol::sumcheck::{make_folded_f, FragmentedLincomb, Sumcheckable as OldSumcheckable};
-    use crate::utils::{eq_poly_sequence_last, make_gamma_pows_static};
+    use crate::utils::{eq_poly_sequence_last, make_gamma_pows_static, Densify};
     use super::{VecVecDeg2SumcheckObjectSO, VecVecDeg2SumcheckObject, Sumcheckable as NewSumcheckable, VecVecDeg2SumcheckStage};
     use crate::cleanup::protocols::sumcheck::{EqWrapper, ExampleSumcheckObjectSO, FoldToSumcheckable, GammaWrapper, SumClaim};
     use super::*;
@@ -520,7 +544,7 @@ mod test {
             let f = EqWrapper::new(GammaWrapper::new(twisted_edwards_add_l1(), gamma));
             let f2 = f.clone();
 
-            let mut dense_data = data.iter().map(|p| p.vec()).collect_vec();
+            let mut dense_data = data.iter().map(|p| p.to_dense(())).collect_vec();
 
             let mut point = (0..num_vars).map(|_| Fr::rand(rng)).collect_vec();
 

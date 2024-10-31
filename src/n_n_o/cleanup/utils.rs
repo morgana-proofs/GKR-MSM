@@ -29,7 +29,7 @@ pub mod polynomial_utils{
 
     pub fn vandermonde_matrix(desired_len: usize) -> Vec<Vec<i128>>{
         let mut res = vec![];
-        for i in -(desired_len as i128 + 1)/2..(desired_len as i128)/2 + 1{
+        for i in -(desired_len as i128)/2..(desired_len as i128 + 1)/2{
             let mut row = vec![1, i];
             for j in 1..desired_len{
                 row.push(row[j]*i)
@@ -73,17 +73,16 @@ pub mod polynomial_utils{
     // given evals at m, m+1, m+2, ... , k, evaluates at k+1
     pub fn extend_evals<F1, F2>(P: &[F1], degree: usize) -> F2
         where F1: From<u64> + Mul<Output = F1> + AddAssign + Add + SubAssign + Sub + Zero + Copy,
-        F2: From<F1> + From<u64> + Mul<Output = F2> + AddAssign + SubAssign + Zero + Copy
+        F2: From<F1> + From<u64> + Mul<Output = F2> + AddAssign + SubAssign + Zero + Copy + std::fmt::Debug,
     {
         let mut res = F2::zero();
-        let start_index = P.len() - degree - 1;
-        for i in 0..degree+1{
-            if i %2 == degree % 2{
-                res += (F2::from(P[start_index + i]) * F2::from(binomial(degree+1, i)));
-            }
-            else{
-                res -= (F2::from(P[start_index + i]) * F2::from(binomial(degree+1, i)));
-            }
+        // let start_index = P.len() - degree - 1;
+        for i in (0..degree).step_by(2){
+            res += (F2::from(P[P.len() - i - 1]) * F2::from(binomial(degree+1, i + 1)));
+            res -= (F2::from(P[P.len() - i - 2]) * F2::from(binomial(degree+1, i + 2)));
+        }
+        if degree%2 == 0{
+            res += (F2::from(P[P.len() - degree - 1]));
         }
         res
         
@@ -97,13 +96,13 @@ pub mod polynomial_utils{
         F2: From<F1> + From<u64> + Mul<Output = F2> + AddAssign + SubAssign + Zero + Copy
     {
         let mut res = F2::zero();
-        for i in 0..degree+1{
-            if i %2 == 0{
-                res += (F2::from(P[i]) * F2::from(binomial(degree+1, i+1)));
-            }
-            else{
-                res -= (F2::from(P[i]) * F2::from(binomial(degree+1, i + 1)));
-            }
+        for i in (0..degree).step_by(2){
+            res += (F2::from(P[i]) * F2::from(binomial(degree+1, i+1)));
+            res -= (F2::from(P[i+1]) * F2::from(binomial(degree+1, i + 2)));
+            
+        }
+        if degree %2 == 0{
+            res += (F2::from(P[degree]));
         }
         res
         
@@ -112,7 +111,7 @@ pub mod polynomial_utils{
 
     // given evals at 0, 1, 2, ... , k, evaluates at k+1, ... k+l
     pub fn extend_evals_by_l<F>(P: &mut Vec<F>, degree: usize, l: usize)
-    where F: From<F> + From<u64> + Mul<Output = F> + AddAssign + SubAssign + Add + Sub + Zero + Copy,
+    where F: From<F> + From<u64> + Mul<Output = F> + AddAssign + SubAssign + Add + Sub + Zero + Copy + std::fmt::Debug,
     {
         assert!(P.len() > degree);
         // let mut P: Vec<_> = P.to_vec();
@@ -120,6 +119,22 @@ pub mod polynomial_utils{
             P.push(extend_evals(&P, degree));
         }
         // P
+    }
+
+    // given evals at 0, 1, 2, ... , k, evaluates at k+1, ... k+l
+    pub fn extend_evals_by_2l_symmetric<F>(P: &[F], degree: usize, l: usize) -> Vec<F>
+    where F: From<F> + From<u64> + Mul<Output = F> + AddAssign + SubAssign + Add + Sub + Zero + Copy + std::fmt::Debug,
+    {
+        assert!(P.len() > degree);
+        let mut P: Vec<_> = P.to_vec();
+        for _ in (0..l/2){
+            P.push(extend_evals(&P, degree));
+            P.insert(0, extend_evals_backwards(&P, degree));
+        }
+        if l%2 == 1{
+            P.insert(0, extend_evals_backwards(&P, degree));
+        }
+        P
     }
 
 
@@ -173,7 +188,7 @@ pub mod overflow_multiplication_utils{
         let (r0, r1) = (a0*b0, a1*b1);
         let (r0, r1) = add256(r0, r1, lo128(x)<<64, hi128(x));
         let (r0, r1) = add256(r0, r1, lo128(y)<<64, hi128(y));
-        [(r0 >> 64) as u64, r0 as u64, (r1 >> 64) as u64, r1 as u64]
+        [r0 as u64, (r0 >> 64) as u64, r1 as u64, (r1 >> 64) as u64]
     }
 
         /// Returns sign and a*b (in 256 bits)
@@ -181,18 +196,10 @@ pub mod overflow_multiplication_utils{
             // Split a and b into hi and lo 64-bit parts
             // a*b = (a1<<64 + a0)*(b1<<64 + b0)
             // = (a1*b1)<<128 + (a1*b0 + b1*a0)<<64 + a0*b0
-            let sign = (a > 0) ^ (b < 0);
+            let sign = ((a > 0) != (b > 0));
 
             let (a, b) = (a.abs() as u128, b.abs() as u128);
-
-            let (a0, a1) = (lo128(a), hi128(a));
-            let (b0, b1) = (lo128(b), hi128(b));
-            let (x, y) = (a1*b0, b1*a0);
-            
-            let (r0, r1) = (a0*b0, a1*b1);
-            let (r0, r1) = add256(r0, r1, lo128(x)<<64, hi128(x));
-            let (r0, r1) = add256(r0, r1, lo128(y)<<64, hi128(y));
-            (sign, [(r0 >> 64) as u64, r0 as u64, (r1 >> 64) as u64, r1 as u64])
+            (sign, mul128(a, b))
         }
 
             /// Adds two 256 bit numbers, assuming no overflow
@@ -207,8 +214,8 @@ pub mod overflow_multiplication_utils{
             let mut carry = false;
             let mut new_carry = false;
             for i in 0..4{
-                (res.1[3-i], carry) = a.1[3-i].overflowing_add(carry as u64) ;
-                (res.1[3-i], new_carry) = res.1[3-i].overflowing_add(b.1[3-i]) ;
+                (res.1[i], carry) = a.1[i].overflowing_add(carry as u64) ;
+                (res.1[i], new_carry) = res.1[i].overflowing_add(b.1[i]) ;
                 carry = carry || new_carry;
             } 
         }
@@ -217,7 +224,7 @@ pub mod overflow_multiplication_utils{
                 false => (a, b),
                 _ => (b, a)
             };
-            res.0 = (a.1[0] < b.1[0]) ||(a.1[0] == b.1[0] && a.1[1] < b.1[1]) ||(a.1[1] == b.1[1] && a.1[2] < b.1[2])||(a.1[2] == b.1[2] && a.1[3] < b.1[3])  ;
+            res.0 = (a.1[3] < b.1[3]) ||(a.1[3] == b.1[3] && a.1[2] < b.1[2]) ||(a.1[2] == b.1[2] && a.1[1] < b.1[1])||(a.1[1] == b.1[1] && a.1[0] < b.1[0])  ;
 
             let (a, b) = match res.0{
                 false => (a, b),
@@ -227,8 +234,8 @@ pub mod overflow_multiplication_utils{
             let mut borrow = false;
             let mut new_borrow = false;
             for i in 0..4{
-                (res.1[3-i], borrow) = a.1[3-i].overflowing_sub(borrow as u64) ;
-                (res.1[3-i], new_borrow) = res.1[3-i].overflowing_sub(b.1[3-i]) ;
+                (res.1[i], borrow) = a.1[i].overflowing_sub(borrow as u64) ;
+                (res.1[i], new_borrow) = res.1[i].overflowing_sub(b.1[i]) ;
                 borrow = borrow || new_borrow;
                 }
         }
@@ -239,8 +246,6 @@ pub mod overflow_multiplication_utils{
         (false, [0; 4])
     }
 }
-
-
 
 
 pub mod bit_utils{
@@ -276,7 +281,18 @@ pub mod bit_utils{
         // F::from_bigint(F::BigInt(x)).unwrap()
         x.iter().rev().fold(F::zero(), |acc, x| acc + acc*F::from(u64::MAX) + F::from(*x))
     }
+    
 
+    
+    pub fn i128_to_fe<F: PrimeField>(x: i128) -> F{
+        
+        let x_limbs = [x.abs() as u64, (x.abs()>>64) as u64];
+        let res = match x > 0{
+            true => limbs_to_fe::<F>(&x_limbs),
+            _ => limbs_to_fe::<F>(&x_limbs).neg(),
+        };
+        res
+    }
 
      
 
@@ -325,6 +341,8 @@ pub mod bit_utils{
 
 #[cfg(test)]
 pub mod test{
+    use core::i128;
+
     #[allow(unused_imports)]
 
     use super::{polynomial_utils::{*}, overflow_multiplication_utils::{*}};
@@ -366,52 +384,68 @@ pub mod test{
         let last_eval = extend_evals(&evals, deg as usize);
         evals.push(last_eval);
 
-        //println!("{:?}, \n\n{:?}", evals, true_evals);
         assert!(evals == true_evals);
     }
 
     #[test]
     fn test_vandermonde(){
         let rng = &mut test_rng();
-        let deg_odd = 5;
-        let deg_even = 6;
-        let coeffs_odd = (0..deg_odd + 1).map(|_| i16::rand(rng) as i128).collect_vec();
-        let coeffs_even = (0..deg_even + 1).map(|i| i16::rand(rng) as i128).collect_vec();
+        for _ in 0..10{
+            let deg_odd = 2*rng.gen_range(3..6) + 1;
+            let deg_even = 2*rng.gen_range(3..6);
+            let coeffs_odd = (0..deg_odd + 1).map(|_| i16::rand(rng) as i128).collect_vec();
+            let coeffs_even = (0..deg_even + 1).map(|_| i16::rand(rng) as i128).collect_vec();
 
-        let true_evals_odd: Vec<_> = ((-deg_odd - 1)/2 - 1..deg_odd/2 + 2).map(|i| 
-            coeffs_odd.iter()
-                .rev()
-                .fold(0, |acc, x| i*acc + x)
-        ).collect();
-
-
-
-        let mut evals_odd = coeffs_to_evals_with_precompute(&coeffs_odd, deg_odd as usize);
-        let last_eval_odd = extend_evals(&evals_odd, deg_odd as usize);
-        let first_eval_odd = extend_evals_backwards(&evals_odd, deg_odd as usize);
-        evals_odd.push(last_eval_odd);
-        evals_odd.insert(0, first_eval_odd);
-
-        println!("{:?}, \n\n{:?}", evals_odd, true_evals_odd);
-        assert!(evals_odd == true_evals_odd);
-
-        let true_evals_even: Vec<_> = ((-deg_even - 1)/2- 1..deg_even/2 + 2).map(|i| 
-            coeffs_even.iter()
-                .rev()
-                .fold(0, |acc, x| i*acc + x)
-        ).collect();
+            let true_evals_odd: Vec<_> = ((-deg_odd - 1)/2 - 1..deg_odd/2 + 2).map(|i| 
+                coeffs_odd.iter()
+                    .rev()
+                    .fold(0, |acc, x| i*acc + x)
+            ).collect();
 
 
+            let mut evals_odd = coeffs_to_evals_with_precompute(&coeffs_odd, deg_odd as usize + 1);
+            assert_eq!(evals_odd.len(), deg_odd as usize + 1);
+            let last_eval_odd = extend_evals(&evals_odd, deg_odd as usize);
+            let first_eval_odd = extend_evals_backwards(&evals_odd, deg_odd as usize);
+            
+            let evals_odd_copy = evals_odd.clone();
+            let evals_odd_copy = extend_evals_by_2l_symmetric(&evals_odd_copy, deg_odd as usize, 2);
 
-        let mut evals_even = coeffs_to_evals_with_precompute(&coeffs_even, deg_even as usize);
-        let first_eval_even = extend_evals_backwards(&evals_even, deg_even as usize);
-        let last_eval_even = extend_evals(&evals_even, deg_even as usize);
-        evals_even.push(last_eval_even);
-        evals_even.insert(0, first_eval_even);
+    
+            evals_odd.push(last_eval_odd);
+            evals_odd.insert(0, first_eval_odd);
+
+            println!("{:?}, \n\n{:?}", evals_odd, true_evals_odd);
+            println!("{:?}, \n\n{:?}", evals_odd, evals_odd_copy);
+            assert!(evals_odd == true_evals_odd);
+            // assert!(evals_odd_copy == true_evals_odd);
+
+            let true_evals_even: Vec<_> = ((-deg_even - 1)/2- 1..deg_even/2 + 2).map(|i| 
+                coeffs_even.iter()
+                    .rev()
+                    .fold(0, |acc, x| i*acc + x)
+            ).collect();
 
 
-        println!("{:?}, \n\n{:?}", evals_even, true_evals_even);
-        assert!(evals_even == true_evals_even);
+
+            let mut evals_even = coeffs_to_evals_with_precompute(&coeffs_even, deg_even as usize + 1);
+            assert_eq!(evals_even.len(), deg_even as usize + 1);
+            let first_eval_even = extend_evals_backwards(&evals_even, deg_even as usize);
+            let last_eval_even = extend_evals(&evals_even, deg_even as usize);
+
+            let evals_even_copy = evals_even.clone();
+            let evals_even_copy = extend_evals_by_2l_symmetric(&evals_even_copy, deg_even as usize, 2);
+
+            evals_even.push(last_eval_even);
+            assert_eq!(first_eval_even, extend_evals_backwards(&evals_even, deg_even as usize));
+            evals_even.insert(0, first_eval_even);
+
+
+            println!("{:?}, \n\n{:?}", evals_even, true_evals_even);
+            println!("{:?}, \n\n{:?}", evals_even, evals_even_copy);
+            assert!(evals_even == true_evals_even);
+            assert!(evals_even_copy == true_evals_even);
+        }
     }
 
     use test_case::test_case;
@@ -433,6 +467,29 @@ pub mod test{
         // assert_eq!(add_bignums(a, b), c);
 
     }
+
+    #[test_case(-1, -1, (false, [1, 0, 0, 0]) ; "two negatives")]
+    #[test_case(u64::MAX as i128 + 1, - 1 - u64::MAX as i128, (true, [0, 0, 1, 0])  ; "one negative one positive")]
+    #[test_case(-1 - u64::MAX as i128, 1 + u64::MAX as i128, (true, [0, 0, 1, 0])  ; "one negative one positive, different order")]
+    #[test_case(i128::pow(2, 126), i128::pow(2, 66), (false, [0, 0, 0, 1])  ; "both positive")]
+    // #[test_case(i128::MAX, i128::MAX, (true, [0, 0, 0, 1])  ; "very big")]
+
+
+    fn test_mul_bignums(a  : i128 , b  : i128 , c  : (bool, [u64; 4]) , ) {
+        assert_eq!(mul_i128(a, b), c);
+
+        //TODO: add a random test
+
+        // let rng = &mut test_rng();
+        // let a_digits = (0..4).map(|_|u32::rand(rng) as u64).try_into();
+        // let b_digits = (0..4).map(|_|u32::rand(rng) as u64).try_into();
+        // let a = (true, a_digits);
+        // let b = (true, b_digits);
+        // let c = (true, a_digits.iter().zip(b_digits).map(|(x, y)| x+y).try_into());
+        // assert_eq!(add_bignums(a, b), c);
+
+    }
+
 
 
 }

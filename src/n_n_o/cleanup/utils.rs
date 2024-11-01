@@ -137,6 +137,21 @@ pub mod polynomial_utils{
         P
     }
 
+    pub fn multiply_two_polys_coeffs<F>(P1: &[F], P2:&[F]) -> Vec<F>
+    where F: From<F> + From<u64> + Mul<Output = F> + AddAssign + SubAssign + Add + Sub + Zero + Copy,
+    {
+        //TODO: karatsuba ?
+        let mut acc = vec![F::zero(); P1.len() + P2.len() - 1];
+        for i in 0..P1.len(){
+            for j in 0..P2.len(){
+                acc[i+j] += (P1[i]*P2[j])
+            }
+        }
+        acc
+
+
+    }
+
 
 }
 pub mod overflow_multiplication_utils{

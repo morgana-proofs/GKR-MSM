@@ -1,3 +1,4 @@
+#![feature(bigint_helper_methods)]
 pub mod pullback;
 pub mod msm_nonaffine;
 pub mod gkr_msm_simple;

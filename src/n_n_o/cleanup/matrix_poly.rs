@@ -2,6 +2,7 @@
 #[allow(unused_imports)]
 #[allow(non_snake_case)]
 
+
 use std::{iter::repeat, marker::PhantomData, ops::{Add, AddAssign, SubAssign, Sub, Mul, MulAssign}, sync::Arc, u64};
 
 use ark_ff::{PrimeField, Zero, One};
@@ -79,83 +80,73 @@ pub fn inner_prod_hi<F: PrimeField>(large: &[F], small: &[F], pad_large_to_lengt
     acc
 }
 
+fn add_with_carry(acc: [u64;3], x: (u64, u64)) -> [u64;3]{
+    let [a0, a1, carry] = acc;
+    let (x0, x1) = x;
+
+    let (b0, c0) = a0.overflowing_add(x0);
+    let (b1, c1) = a1.overflowing_add(x1);
+    let (b1, c1) = b1.overflowing_add(c0 as u64);
+    let carry = carry + c1 as u64;
+
+    [b0, b1, carry]
+}
+
 fn make_prover_response<F: PrimeField>(Pxy: &[u64], Px: &[u64], Py: &[u64], num_limbs: usize) -> Vec<F> 
 // num_limbs should be 6...
 {
-    let deg = num_limbs - 1;
 
-    let (Pxy, Px, Py) = (Pxy.iter().map(|x| *x as i128).collect_vec(), Px.iter().map(|x| *x as i128).collect_vec(), Py.iter().map(|x| *x as i128).collect_vec());
-
-    let degree_of_first_product = 2*deg;
-    let degree_of_second_product = 3*deg;
+    assert_eq!(Px.len()% num_limbs, 0);
+    assert_eq!(Py.len()% num_limbs, 0);
+    
+    let n = Px.len() / num_limbs;
+    let m = Py.len() / num_limbs;
+    assert_eq!(Pxy.len(), m*n);
 
     // multiplying Pxy by Px and summing by x
-    let evalsxy = Pxy.chunks(Px.len())
-        .map(|chunk|
-            chunk.chunks(num_limbs)
-                .zip(Px.chunks(num_limbs))
-                .map(|(a, b)|{
-                    let evals_a = coeffs_to_evals_with_precompute(a, degree_of_first_product + 1);
-                    let evals_b = coeffs_to_evals_with_precompute(b, degree_of_first_product + 1);
-                    println!("{:?}, {:?}", evals_a, evals_b);
-                    let m = evals_a.iter().zip(evals_b).map(|(&s, t)| mul_i128(s, t)).collect_vec();
-                    println!("{:?}", m);
-                    m
 
-                })
-                .fold(vec![zero_256(); degree_of_first_product+1], |acc, x|{
-                    acc.iter().zip(x).map(|(&s, t)| add_bignums(s, t)).collect()
-               })
-               .iter()
-               .map(|(flag, limbs)| 
-                    match flag{
-                        false => limbs_to_fe::<F>(limbs),
-                        _ => limbs_to_fe::<F>(limbs).neg(),
-               })
-            //    .map(|(flag, limbs)| match flag{
-            //     false => - (limbs.iter().sum::<u64>() as i128),
-            //     _ => (limbs.iter().sum::<u64>() as i128),
-            //    })
-               .collect_vec())
-        .collect_vec();
-    
-    let final_evals = evalsxy.iter()
-        .zip(Py.chunks(num_limbs))
-        .map(|(a, b)|{
-            let a = extend_evals_by_2l_symmetric(&a, degree_of_first_product, deg);
-            let b = coeffs_to_evals_with_precompute(b, degree_of_second_product + 1);
-            println!("{:?}, {:?}", a, b);
-            let res = a.iter()
-                .zip(b)
-                .map(|(s, t)| {
-                    i128_to_fe::<F>(t)*s
-                })
-                .collect_vec();
-            println!("{:?}", res);
-            res
-        })
-        .fold( vec![F::zero(); degree_of_second_product + 1], | acc, x|{
-            acc.iter().zip(x).map(|(x, y)| *x + y).collect()
-        });
-        final_evals
-//    todo!();
+    let mut acc = vec![[0_u64; 3]; Py.len()];
+    let mut b = false;
+    for i in (0..n){
+        for j in (0..num_limbs){
+            for k in (0..m){
+                let incr = Px[i*num_limbs + j].widening_mul( Pxy[i + n*k]);
+                acc[k*num_limbs + j] = add_with_carry(acc[k*num_limbs + j] , incr);
+            }
+        }
+    }
+
+    let mut res = vec![F::zero(); 2*num_limbs - 1];
+
+    for k in 0..m{
+        let P1 = acc[k*num_limbs .. k*num_limbs + num_limbs].iter().map(|limbs| limbs_to_fe(limbs)).collect_vec();
+        let P2 = Py[k*num_limbs.. k*num_limbs + num_limbs].iter().map(|limb| F::from(*limb)).collect_vec();
+        let product = multiply_two_polys_coeffs(&P1, &P2);
+        for j in 0..res.len(){
+            res[j] += product[j];
+        }
+    }
+    println!("{:?}", acc);
+    println!("{:?}", res);
+    res
 }
+
 
 /// Takes a vector of F-elements, interprets each of these as BigInt, multiplies k-th limb by 2^{64k}, and casts to NNF. 
 /// Assumes the limb representation is valid; that is, if NNF is smaller than F, then the last limbs need to be zero
 pub fn normalize_and_cast_to_nn<F: PrimeField, NNF: PrimeField>(limbs: &[F]) -> NNF 
 {
     let ans_bigint = limbs.iter()
-                                                        .enumerate()
-                                                        .fold(NNF::BigInt::from(0_u64), |acc, (k, x)| {
-                                                            let mut temp = acc;
-                                                            let mut x = NNF::BigInt::from(fe_to_limbs(x)[0]);
-                                                            x.muln((64*k) as u32);
-                                                            temp.add_with_carry({
-                                                                &x
-                                                            });
-                                                            temp
-                                                        });
+                        .enumerate()
+                        .fold(NNF::BigInt::from(0_u64), |acc, (k, x)| {
+                            let mut temp = acc;
+                            let mut x = NNF::BigInt::from(fe_to_limbs(x)[0]);
+                            x.muln((64*k) as u32);
+                            temp.add_with_carry({
+                                &x
+                            });
+                            temp
+                        });
     NNF::from(ans_bigint)
     //todo!();
 }
@@ -198,8 +189,8 @@ pub mod test{
     //TODO: this doesn't really test anything now
     fn test_fake_provers_response(){
         let rng = &mut test_rng();
-        let num_limbs = 6;
-        let len1: u64 = num_limbs*2*3;
+        let num_limbs = 4;
+        let len1: u64 = 2*3;
         let len2: u64 = num_limbs*2;
         let len3: u64 = num_limbs*3;
         // let coeffs1 = (0..len1).map(|_| rng.gen_range(0..5)).collect_vec();
@@ -207,16 +198,9 @@ pub mod test{
         // let coeffs3 = (0..len3).map(|_| rng.gen_range(0..5)).collect_vec();
 
         
-        let coeffs1 = repeat([0, 1, 0, 0, 0, 0]).take((len1/num_limbs) as usize).flatten().collect_vec();
-        let coeffs2 = repeat([0, 1, 0, 0, 0, 0]).take((len2/num_limbs) as usize).flatten().collect_vec();
-        let coeffs3 = repeat([0, 1, 0, 0, 0, 0]).take((len3/num_limbs) as usize).flatten().collect_vec();
-    
-        let r = make_prover_response::<Fq>(&coeffs1, &coeffs2, &coeffs3, num_limbs as usize);
-        println!("{:?}", r);
-        
-        let coeffs1 = repeat([0, 0, 1, 0, 0, 0]).take((len1/num_limbs) as usize).flatten().collect_vec();
-        let coeffs2 = repeat([0, 0, 1, 0, 0, 0]).take((len2/num_limbs) as usize).flatten().collect_vec();
-        let coeffs3 = repeat([0, 0, 1, 0, 0, 0]).take((len3/num_limbs) as usize).flatten().collect_vec();
+        let coeffs1 = (1..len1 + 1).map(|x| x*x).collect_vec();
+        let coeffs2 = (1..len2 + 1).collect_vec();
+        let coeffs3 = (len3..2*len3).collect_vec();
     
         let r = make_prover_response::<Fq>(&coeffs1, &coeffs2, &coeffs3, num_limbs as usize);
         println!("{:?}", r);

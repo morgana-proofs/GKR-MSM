@@ -33,6 +33,11 @@ impl<Claims, Advice, Transcript: TProofTranscript2, WitnessGenerator: Iterator<I
             _pd: Default::default(),
         }
     }
+    
+    #[cfg(debug_assertions)]
+    pub fn description(&self) -> String {
+        format!("GKR protocol:\n{}\nEnd of GKR protocol", self.layers.iter().map(|layer| format!("| {}", layer.description())).join("\n")).to_string()
+    }
 }
 
 impl<Claims, Advice, Transcript: TProofTranscript2, AdviceIterator: Iterator<Item=Advice>> Protocol2<Transcript> for SimpleGKR<Claims, Advice, Transcript, AdviceIterator> {

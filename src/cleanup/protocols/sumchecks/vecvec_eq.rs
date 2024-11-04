@@ -462,7 +462,7 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
         let gamma = transcript.challenge(128);
         let SinglePointClaims { point: input_point, evs } = claims;
         let folded_claim = zip_with_gamma(gamma, &evs);
-        
+
         let generic_protocol_config = GenericSumcheckProtocol::<F, _, VecVecDeg2SumcheckObjectSO<F, Fun>>::new(degrees);
 
         let (ev, output_point) = generic_protocol_config.verify(transcript, folded_claim);

@@ -2,6 +2,7 @@ pub mod fns {
     use ark_ff::Field;
     #[allow(unused_imports)]
     use ark_std::iterable::Iterable;
+    use itertools::Itertools;
     #[allow(unused_imports)]
     use rayon::prelude::*;
 
@@ -62,6 +63,21 @@ pub mod fns {
             z2_d_xy * z2_p_d_xy,
         ]
     }
+    
+    pub fn triangle_twisted_edwards_add_l1<F: Field + TwistedEdwardsConfig>(pts: &[F]) -> Vec<F> {
+            assert_eq!(pts.len(), 3 * 4);
+            let first = pts.first_chunk::<6>().unwrap();
+            let last = pts.last_chunk::<6>().unwrap();
+            let a = first.first_chunk::<3>().unwrap();
+            let b = first.last_chunk::<3>().unwrap();
+            let c = last.first_chunk::<3>().unwrap();
+            let d = last.last_chunk::<3>().unwrap();
+
+            let mut ret = twisted_edwards_add_l1(&a.iter().chain(c.iter()).collect_vec());
+            ret.extend(twisted_edwards_add_l1(&b.iter().chain(d.iter()).collect_vec()));
+            ret.extend(twisted_edwards_add_l1(last));
+            ret
+        }
 }
 
 pub mod e2e {
@@ -120,7 +136,7 @@ pub mod algfns {
                 
                 #[cfg(debug_assertions)]
                 fn description(&self) -> String {
-                    stringify!($struct_name).to_string()
+                    format!("{} {}->{} with deg {}", stringify!($struct_name), stringify!($n_ins), stringify!($n_outs), stringify!($deg)).to_string()
                 }
             }
 
@@ -138,4 +154,5 @@ pub mod algfns {
     make_algfn!(twisted_edwards_add_l1(2, 6, 4));
     make_algfn!(twisted_edwards_add_l2(2, 4, 4));
     make_algfn!(twisted_edwards_add_l3(2, 4, 3));
+    make_algfn!(triangle_twisted_edwards_add_l1(2, 12, 12)); 
 }

@@ -153,3 +153,66 @@ impl<Transcript: TProofTranscript2, F: PrimeField> GKRLayer<Transcript, SinglePo
         format!("Split: at {:?}, by {}", self.var_idx, self.bundle_size).to_string()
     }
 }
+
+
+common_advice!(
+    SplitMapGKRAdvice<F: PrimeField>{
+        DenseMAP(Vec<Vec<F>>),
+        SPLIT(())
+    }
+);
+
+impl <F: PrimeField> Display for SplitMapGKRAdvice<F> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DenseMAP(_) => {write!(f, "DenseMAP")}
+            Self::SPLIT(_) => {write!(f, "SPLIT")}
+        }
+    }
+}
+
+impl<Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> GKRLayer<Transcript, SinglePointClaims<F>, SplitMapGKRAdvice<F>> for DenseDeg2Sumcheck<F, Fun> {
+    fn prove_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>, advice: SplitMapGKRAdvice<F>) -> SinglePointClaims<F> {
+        // #[cfg(debug_assertions)]
+        // println!(
+        //     "Proving layer {} with claim point len {}, claim evs len {}, and advice {}",
+        //     <DenseDeg2Sumcheck<F, Fun> as GKRLayer<Transcript, SinglePointClaims<F>, SplitMapGKRAdvice<F>>>::description(self),
+        //     claims.point.len(),
+        //     claims.evs.len(),
+        //     advice.describe()
+        // );
+        Protocol2::prove(self, transcript, claims.into(), advice.into()).0
+    }
+
+    fn verify_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>) -> SinglePointClaims<F> {
+        Protocol2::verify(self, transcript, claims.into())
+    }
+
+    #[cfg(debug_assertions)]
+    fn description(&self) -> String {
+        format!("Dense: {} nvars {} {}->{}, deg: {}", self.f.description(), self.num_vars, self.f.n_ins(), self.f.n_outs(), self.f.deg()).to_string()
+    }
+}
+
+impl<Transcript: TProofTranscript2, F: PrimeField> GKRLayer<Transcript, SinglePointClaims<F>, SplitMapGKRAdvice<F>> for SplitAt<F> {
+    fn prove_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>, advice: SplitMapGKRAdvice<F>) -> SinglePointClaims<F> {
+        #[cfg(debug_assertions)]
+        // println!(
+        //     "Proving layer {} with claim point len {}, claim evs len {}, and advice {}",
+        //     <SplitAt<F> as GKRLayer<Transcript, SinglePointClaims<F>, SplitMapGKRAdvice<F>>>::description(self),
+        //     claims.point.len(),
+        //     claims.evs.len(),
+        //     advice.describe()
+        // );
+        Protocol2::prove(self, transcript, claims.into(), advice.into()).0
+    }
+
+    fn verify_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>) -> SinglePointClaims<F> {
+        Protocol2::verify(self, transcript, claims.into())
+    }
+
+    #[cfg(debug_assertions)]
+    fn description(&self) -> String {
+        format!("Split: at {:?}, by {}", self.var_idx, self.bundle_size).to_string()
+    }
+}

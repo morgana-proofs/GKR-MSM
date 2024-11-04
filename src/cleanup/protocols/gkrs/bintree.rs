@@ -35,11 +35,17 @@ impl<F: PrimeField> Display for VecVecBintreeAddWG<F> {
 }
 
 
-#[derive(Debug)]
-enum Step {
+#[derive(Debug, Copy, Clone)]
+pub enum AdditionStep {
     L1,
     L2,
     L3,
+}
+
+impl AdditionStep {
+    pub fn all() -> [AdditionStep; 3]{
+        [Self::L1, Self::L2, Self::L3]
+    }
 }
 
 impl<F: PrimeField + TwistedEdwardsConfig> SplitVecVecMapGKRAdvice<F> {
@@ -74,39 +80,38 @@ impl<F: PrimeField + TwistedEdwardsConfig> SplitVecVecMapGKRAdvice<F> {
         }
     }
 
-    fn step(&self, fwd_idx: usize, row_logsize: usize, n_adds: usize, split_last: bool, step: &Step, split_idx: SplitIdx, bundle_size: usize) -> Self {
+    fn step(&self, fwd_idx: usize, row_logsize: usize, n_adds: usize, split_last: bool, step: &AdditionStep, split_idx: SplitIdx, bundle_size: usize) -> Self {
         match (step, fwd_idx, (fwd_idx + 1 == n_adds) && !split_last) {
-            (Step::L1, 0, _) => {
+            (AdditionStep::L1, 0, _) => {
                 self.map(affine_twisted_edwards_add_l1())
             }
-            (Step::L2, 0, _) => {
+            (AdditionStep::L2, 0, _) => {
                 self.map(affine_twisted_edwards_add_l2())
             }
-            (Step::L3, 0, true) => {
+            (AdditionStep::L3, 0, true) => {
                 self.map(affine_twisted_edwards_add_l3())
             }
-            (Step::L3, 0, false) => {
+            (AdditionStep::L3, 0, false) => {
                 self.map_split(affine_twisted_edwards_add_l3(), fwd_idx, row_logsize, split_idx, bundle_size)
             }
-            (Step::L1, _, _) => {
+            (AdditionStep::L1, _, _) => {
                 self.map(twisted_edwards_add_l1())
             }
-            (Step::L2, _, _) => {
+            (AdditionStep::L2, _, _) => {
                 self.map(twisted_edwards_add_l2())
             }
-            (Step::L3, _, true) => {
+            (AdditionStep::L3, _, true) => {
                 self.map(twisted_edwards_add_l3())
             }
-            (Step::L3, _, false) => {
+            (AdditionStep::L3, _, false) => {
                 self.map_split(twisted_edwards_add_l3(), fwd_idx, row_logsize, split_idx, bundle_size)
             }
         }
     }
 }
 
-
 impl<F: PrimeField + TwistedEdwardsConfig> VecVecBintreeAddWG<F> {
-    pub fn new(
+    pub fn new_common(
         mut advice: SplitVecVecMapGKRAdvice<F>,
         row_logsize: usize,
         num_adds: usize,
@@ -115,7 +120,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> VecVecBintreeAddWG<F> {
         assert!(num_adds > 0);
         let mut advices = vec![];
 
-        let mut step = Step::L1;
+        let mut step = AdditionStep::L1;
         let mut next;
 
         for add_idx in 0..num_adds {
@@ -124,17 +129,17 @@ impl<F: PrimeField + TwistedEdwardsConfig> VecVecBintreeAddWG<F> {
                 advices.push(advice);
                 advice = next;
                 step = match step {
-                    Step::L1 => {
-                        Step::L2
+                    AdditionStep::L1 => {
+                        AdditionStep::L2
                     }
-                    Step::L2 => {
-                        Step::L3
+                    AdditionStep::L2 => {
+                        AdditionStep::L3
                     }
-                    Step::L3 => {
+                    AdditionStep::L3 => {
                         if add_idx + 1 != num_adds || split_last {
                             advices.push(SplitVecVecMapGKRAdvice::SPLIT(()));
                         }
-                        Step::L1
+                        AdditionStep::L1
                     }
                 };
             }
@@ -143,6 +148,20 @@ impl<F: PrimeField + TwistedEdwardsConfig> VecVecBintreeAddWG<F> {
             advices,
             last: Some(advice),
         }
+    }
+    
+    fn new(
+        inputs: Vec<VecVecPolynomial<F>>,
+        row_logsize: usize,
+        num_adds: usize,
+        split_last: bool,
+    ) -> Self {
+        Self::new_common(
+            SplitVecVecMapGKRAdvice::VecVecMAP(inputs),
+            row_logsize,
+            num_adds,
+            split_last,
+        )
     }
 }
 
@@ -159,7 +178,7 @@ struct VecVecBintreeAdd<F: PrimeField, Transcript: TProofTranscript2> {
 }
 
 impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVecBintreeAdd<F, Transcript> {
-    pub fn new(num_vars: usize, num_adds: usize, row_logsize: usize, split_last: bool) -> Self {
+    pub fn new(num_adds: usize, num_vars: usize, row_logsize: usize, split_last: bool) -> Self {
         Self {
             gkr: SimpleGKR::new(
                 Self::generate_layers(num_vars, num_adds, row_logsize, split_last),
@@ -169,12 +188,12 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
 
     pub fn generate_layers(num_vars: usize, num_adds: usize, row_logsize: usize, split_last: bool) -> Vec<Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>> {
         let mut layers: Vec<Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>> = vec![];
-        let mut step = Step::L1;
+        let mut step = AdditionStep::L1;
         let num_vertical_vars = num_vars - row_logsize;
         for i in 0..num_adds {
             for _ in 0..3 {
                 match (i, i + 1< row_logsize, &step) {
-                    (0, _, Step::L1) => {
+                    (0, _, AdditionStep::L1) => {
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 affine_twisted_edwards_add_l1(),
@@ -183,7 +202,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                             )
                         ));
                     }
-                    (0, _, Step::L2) => {
+                    (0, _, AdditionStep::L2) => {
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 affine_twisted_edwards_add_l2(),
@@ -192,7 +211,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                             )
                         ));
                     }
-                    (0, _, Step::L3) => {
+                    (0, _, AdditionStep::L3) => {
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 affine_twisted_edwards_add_l3(),
@@ -201,7 +220,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                             )
                         ));
                     }
-                    (_, true, Step::L1) => {
+                    (_, true, AdditionStep::L1) => {
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 twisted_edwards_add_l1(),
@@ -210,7 +229,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                             )
                         ));
                     }
-                    (_, true, Step::L2) => {
+                    (_, true, AdditionStep::L2) => {
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 twisted_edwards_add_l2(),
@@ -219,7 +238,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                             )
                         ));
                     }
-                    (_, true, Step::L3) => {
+                    (_, true, AdditionStep::L3) => {
                         layers.push(Box::new(
                             VecVecDeg2Sumcheck::new(
                                 twisted_edwards_add_l3(),
@@ -228,7 +247,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                             )
                         ));
                     }
-                    (_, false, Step::L1) => {
+                    (_, false, AdditionStep::L1) => {
                         layers.push(Box::new(
                             DenseDeg2Sumcheck::new(
                                 twisted_edwards_add_l1(),
@@ -236,7 +255,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                             )
                         ));
                     }
-                    (_, false, Step::L2) => {
+                    (_, false, AdditionStep::L2) => {
                         layers.push(Box::new(
                             DenseDeg2Sumcheck::new(
                                 twisted_edwards_add_l2(),
@@ -244,7 +263,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                             )
                         ));
                     }
-                    (_, false, Step::L3) => {
+                    (_, false, AdditionStep::L3) => {
                         layers.push(Box::new(
                             DenseDeg2Sumcheck::new(
                                 twisted_edwards_add_l3(),
@@ -254,9 +273,9 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
                     }
                 }
                 step = match step {
-                    Step::L1 => {Step::L2}
-                    Step::L2 => {Step::L3}
-                    Step::L3 => {Step::L1}
+                    AdditionStep::L1 => { AdditionStep::L2}
+                    AdditionStep::L2 => { AdditionStep::L3}
+                    AdditionStep::L3 => { AdditionStep::L1}
                 }
             }
             if i != num_adds - 1 || split_last {
@@ -327,11 +346,11 @@ mod test {
 
         let points = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
         let inputs = vecvec_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
-        let witness_gen = VecVecBintreeAddWG::new(SplitVecVecMapGKRAdvice::VecVecMAP(inputs), row_logsize, num_adds, split_last);
+        let witness_gen = VecVecBintreeAddWG::new_common(SplitVecVecMapGKRAdvice::VecVecMAP(inputs), row_logsize, num_adds, split_last);
 
         let prover = VecVecBintreeAdd::new(
-            num_vars,
             num_adds,
+            num_vars,
             row_logsize,
             split_last,
         );
@@ -381,7 +400,7 @@ mod test {
         let split_last = false;
         let points = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
         let inputs = vecvec_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
-        let smth = VecVecBintreeAddWG::new(SplitVecVecMapGKRAdvice::VecVecMAP(inputs.clone()), row_logsize, num_adds, split_last);
+        let smth = VecVecBintreeAddWG::new_common(SplitVecVecMapGKRAdvice::VecVecMAP(inputs.clone()), row_logsize, num_adds, split_last);
         let outs = smth.last.unwrap();
         let densified_out = match outs {
             SplitVecVecMapGKRAdvice::VecVecMAP(vv) => {

@@ -156,4 +156,103 @@ impl<F: PrimeField> AlgFn<F> for IdAlgFn<F> {
     fn n_outs(&self) -> usize {
         self.n_ins
     }
+
+    #[cfg(debug_assertions)]
+    fn description(&self) -> String {
+        format!("Identity function on {} inputs", self.n_ins).to_string()
+    }
+}
+
+struct OffsetIndexer<'a, F: PrimeField, T: Index<usize, Output=F>> {
+    index: &'a T,
+    offset: usize,
+}
+
+impl<'a, F:PrimeField, T: Index<usize, Output=F>> OffsetIndexer<'a, F, T> {
+    fn new(index: &'a T, offset: usize) -> Self {
+        Self { offset, index }
+    }
+}
+
+impl<'a, F:PrimeField, T: Index<usize, Output=F>> Index<usize> for OffsetIndexer<'a, F, T> {
+    type Output = F;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.index.index(index + self.offset)
+    }
+}
+
+#[derive(Clone)]
+pub struct RepeatedAlgFn<F: PrimeField, Fun: AlgFn<F>> {
+    fun: Fun,
+    count: usize,
+    _pd: PhantomData<F>
+}
+
+impl<F: PrimeField, Fun: AlgFn<F>> RepeatedAlgFn<F, Fun> {
+    pub fn new(fun: Fun, count: usize) -> Self {
+        Self { fun, count, _pd: Default::default() }
+    }
+}
+
+impl<F: PrimeField, Fun: AlgFn<F>> AlgFn<F> for RepeatedAlgFn<F, Fun> {
+    fn exec(&self, args: &impl Index<usize, Output=F>) -> impl Iterator<Item=F> {
+        (0..self.count)
+            .map(|i|
+                self.fun.exec(&OffsetIndexer::new(args, i * self.fun.n_ins())).collect_vec()
+            )
+            .flatten()
+    }
+
+    fn deg(&self) -> usize {
+        self.fun.deg()
+    }
+
+    fn n_ins(&self) -> usize {
+        self.fun.n_ins() * self.count
+    }
+
+    fn n_outs(&self) -> usize {
+        self.fun.n_outs() * self.count
+    }
+
+    #[cfg(debug_assertions)]
+    fn description(&self) -> String {
+        format!("Repeated {} of [{}]", self.count, self.fun.description())
+    }
+}
+
+#[derive(Clone)]
+pub struct StackedAlgFn<F: PrimeField, Fun1: AlgFn<F>, Fun2: AlgFn<F>> {
+    fun1: Fun1,
+    fun2: Fun2,
+    _pd: PhantomData<F>
+}
+
+impl<F: PrimeField, Fun1: AlgFn<F>, Fun2: AlgFn<F>> StackedAlgFn<F, Fun1, Fun2> {
+    pub fn new(fun1: Fun1, fun2: Fun2) -> Self {
+        Self { fun1, fun2, _pd: Default::default() }
+    }
+}
+impl<F: PrimeField, Fun1: AlgFn<F>, Fun2: AlgFn<F>> AlgFn<F> for StackedAlgFn<F, Fun1, Fun2> {
+    fn exec(&self, args: &impl Index<usize, Output=F>) -> impl Iterator<Item=F> {
+        self.fun1.exec(args).chain(self.fun2.exec(&OffsetIndexer::new(args, self.fun1.n_ins())).collect_vec().into_iter())
+    }
+
+    fn deg(&self) -> usize {
+        self.fun1.deg().max(self.fun2.deg())
+    }
+
+    fn n_ins(&self) -> usize {
+        self.fun1.n_ins() + self.fun2.n_ins()
+    }
+
+    fn n_outs(&self) -> usize {
+        self.fun1.n_outs() + self.fun2.n_outs()
+    }
+
+    #[cfg(debug_assertions)]
+    fn description(&self) -> String {
+        format!("Stacked [{}] [{}]", self.fun1.description(), self.fun2.description())
+    }
 }

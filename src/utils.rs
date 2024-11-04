@@ -12,6 +12,7 @@ use ark_std::UniformRand;
 use hashcaster::ptr_utils::{AsSharedMUMutPtr, UninitArr, UnsafeIndexRawMut};
 use itertools::{repeat_n, Itertools};
 use liblasso::poly::dense_mlpoly::DensePolynomial;
+use liblasso::utils::math::Math;
 use num_traits::PrimInt;
 #[cfg(feature = "prof")]
 use profi::prof;
@@ -251,39 +252,27 @@ pub trait MapSplit<F: PrimeField>: Sized {
 }
 impl<F: PrimeField> MapSplit<F> for Vec<F> {
     fn algfn_map_split<Fnc: AlgFn<F>>(polys: &[Self], func: Fnc, var_idx: SplitIdx, bundle_size: usize) -> Vec<Self> {
-        let mut l_outs = (0..func.n_outs()).map(|_| UninitArr::new(polys[0].len() / 2)).collect_vec();
-        let mut r_outs = (0..func.n_outs()).map(|_| UninitArr::new(polys[0].len() / 2)).collect_vec();
-        
-        let chunk_size = 3;
-        
-        let mut iter_l_out = l_outs.iter_mut().map(|i| i.chunks_mut(chunk_size)).collect_vec();
-        let mut iter_r_out = r_outs.iter_mut().map(|i| i.chunks_mut(chunk_size)).collect_vec();
-        let mut iter_ins = polys.iter().map(|i| i.chunks(2 * chunk_size)).collect_vec();
+        let mut outs = [
+            (0..func.n_outs()).map(|_| Vec::with_capacity(polys[0].len() / 2)).collect_vec(),
+            (0..func.n_outs()).map(|_| Vec::with_capacity(polys[0].len() / 2)).collect_vec(),
+        ];
 
-        for _ in 0..iter_ins[0].len() {
-            let input_chunks = iter_ins.iter_mut().map(|c| c.next().unwrap()).collect_vec();
-            let mut inputs = input_chunks.iter().map(|c| c[0]).collect_vec();
-            let mut l_output_chunks = iter_l_out.iter_mut().map(|c| c.next().unwrap()).collect_vec();
-            let mut r_output_chunks = iter_r_out.iter_mut().map(|c| c.next().unwrap()).collect_vec();
+        let segment_size = 1 << (match var_idx {
+            SplitIdx::LO(var_idx) => { var_idx }
+            SplitIdx::HI(var_idx) => { polys[0].len().log_2() - 1 - var_idx }
+        });
 
-            for idx in 0..input_chunks[0].len() {
-                let out = func.exec(&inputs);
-                for (tgt, val) in out.enumerate() {
-                    if (idx % 2 == 0) {
-                        l_output_chunks[tgt][idx / 2].write(val);
-                    } else {
-                        r_output_chunks[tgt][idx / 2].write(val);
-                    }
-                }
-                if idx + 1 < input_chunks[0].len() {
-                    inputs = input_chunks.iter().map(|c| c[idx + 1]).collect_vec();
-                }
+        let mut inputs = polys.iter().map(|_| F::zero()).collect_vec();
+
+        for idx in 0..polys[0].len() {
+            inputs = polys.iter().map(|p| p[idx]).collect_vec();
+            for (data, ret) in outs[(idx / segment_size) % 2].iter_mut().zip_eq(func.exec(&inputs)) {
+                data.push(ret)
             }
         }
 
-        l_outs.into_iter().chunks(bundle_size).into_iter().interleave(r_outs.into_iter().chunks(bundle_size).into_iter()).flatten().map(|data| {
-            unsafe { data.assume_init() }    
-        }).collect_vec()
+        let [l, r] = outs;
+        l.into_iter().chunks(bundle_size).into_iter().interleave(r.into_iter().chunks(bundle_size).into_iter()).flatten().collect_vec()
     }
 
     fn algfn_map<Fnc: AlgFn<F>>(polys: &[Self], func: Fnc) -> Vec<Self> {
@@ -329,7 +318,9 @@ impl<F: PrimeField> RandomlyGeneratedPoly<F> for Vec<F> {
     type Config = DensePolyRndConfig;
 
     fn rand_points<CC: TECurveConfig<BaseField=F>, RNG: Rng>(rng: &mut RNG, cfg: Self::Config) -> [Self; 3] {
-        let data = (0..(rng.next_u64() as usize % ((1 << (cfg.num_vars - 1)) + 1)) * 2).map(|_| {
+        // let count = (0..(rng.next_u64() as usize % ((1 << (cfg.num_vars - 1)) + 1)) * 2);
+        let count = 0..(1 << cfg.num_vars);
+        let data = count.map(|_| {
             let p = Projective::<CC>::rand(rng);
             (p.x, p.y, p.z)
         }).collect_vec();
@@ -599,7 +590,7 @@ mod test {
     }
 
     #[test]
-    fn map_split() {
+    fn map_split_lo() {
         let gen = &mut test_rng();
         let num_vars = 5; 
         for i in 0..100 {
@@ -621,6 +612,35 @@ mod test {
 
             let dense_out = out0.zip_eq(out1).map(|(l, r)| {
                 l.to_dense(num_vars - 1).into_iter().interleave(r.to_dense(num_vars - 1).into_iter()).collect_vec()
+            }).collect_vec();
+
+            assert_eq!(dense_out, expected_out);
+        }
+    }
+    
+    #[test]
+    fn map_split_hi() {
+        let gen = &mut test_rng();
+        let num_vars = 5; 
+        for i in 0..100 {
+            let n_args = 3;
+
+            let data = Vec::rand_points::<BandersnatchConfig, _>(gen, DensePolyRndConfig {num_vars});
+            let dense_data = data.iter().map(|p| p.to_dense(num_vars)).collect_vec();
+
+            let out = Vec::algfn_map_split(data.as_slice().try_into().unwrap(), ArcedAlgFn::new(Arc::new(foo), 3, 2, 1), SplitIdx::HI(0), 1);
+            let expected_out = map_over_poly(&dense_data.iter().map(|p| p.as_slice()).collect_vec().as_slice(), PolynomialMapping {
+                exec: Arc::new(blah),
+                degree: 1,
+                num_i: 3,
+                num_o: 2,
+            });
+            let (out0, out1) = out.iter().tee();
+            let out0 = out0.step_by(2);
+            let out1 = out1.skip(1).step_by(2);
+
+            let dense_out = out0.zip_eq(out1).map(|(l, r)| {
+                l.to_dense(num_vars - 1).into_iter().chain(r.to_dense(num_vars - 1).into_iter()).collect_vec()
             }).collect_vec();
 
             assert_eq!(dense_out, expected_out);

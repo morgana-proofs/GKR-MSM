@@ -354,12 +354,13 @@ mod test {
             row_logsize,
             split_last,
         );
+        #[cfg(debug_assertions)]
         prover.gkr.layers
             .iter()
-            .map(|l| println!("{}", l.description())).interleave(
+            .map(|l| { dbg!("{}", l.description()); }).interleave(
             witness_gen.advices
                 .iter()
-                .map(|a| println!("{}", a))
+                .map(|a| { dbg!("{}", a); })
             )   
             .count();
 
@@ -372,8 +373,8 @@ mod test {
         };
 
         let point = (0..(num_vars - 1 - num_adds + match split_last {true => 0, false => 1})).map(|_| Fr::rand(rng)).collect_vec();
-        println!("{}, {:?}", dense_output.len(), dense_output.iter().map(|x| x.len()).collect_vec());
-        println!("{}", point.len());
+        dbg!("{}, {:?}", dense_output.len(), dense_output.iter().map(|x| x.len()).collect_vec());
+        dbg!("{}", point.len());
         let claims = SinglePointClaims {
             point: point.clone(),
             evs: dense_output.iter().map(|output| evaluate_poly(output, &point)).collect(),

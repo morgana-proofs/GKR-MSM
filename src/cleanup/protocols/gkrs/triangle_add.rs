@@ -38,7 +38,6 @@ impl<F: PrimeField + TwistedEdwardsConfig> TriangleAddWG<F> {
         for layer_idx in 0..=num_layers {
             for step in AdditionStep::all() {
                 let next = Self::step(&advice, step, layer_idx, num_layers, split_idx);
-                #[cfg(debug_assertions)]
                 advices.push(SplitMapGKRAdvice::DenseMAP(advice));
 
                 advice = next;
@@ -281,14 +280,14 @@ mod test {
         ];
         // let inputs = Vec::rand_points::<BandersnatchConfig, _>(rng, DensePolyRndConfig { num_vars: num_vars + 2 }).to_vec();
 
-        println!("{}", prettify_coords(&point_map, &inputs));
+        dbg!("{}", prettify_coords(&point_map, &inputs));
         let inputs = Vec::algfn_map_split(&inputs, IdAlgFn::new(3), split_var, 3);
-        println!("{}", prettify_coords(&point_map, &inputs));
+        dbg!("{}", prettify_coords(&point_map, &inputs));
         let inputs = Vec::algfn_map_split(&inputs, IdAlgFn::new(6), split_var, 3);
 
         let mut wg = TriangleAddWG::new(inputs, num_vars - 2, split_var);
 
-        println!("{}", wg.advices.iter().step_by(4).filter_map(|a| match a {
+        dbg!("{}", wg.advices.iter().step_by(4).filter_map(|a| match a {
             SplitMapGKRAdvice::DenseMAP(d) => {
                 Some(
                     prettify_coords(&point_map, d)
@@ -300,7 +299,7 @@ mod test {
 
         let last: Vec<Vec<F>> = wg.last.take().unwrap().into();
 
-        println!("{}", prettify_coords(&point_map, &last));
+        dbg!("{}", prettify_coords(&point_map, &last));
 
         let point_results = build_points(&last);
         
@@ -343,9 +342,9 @@ mod test {
         let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
 
         let prover: TriangleAdd<F, ProofTranscript2> = TriangleAdd::new(num_vars, split_var);
-        
+
         #[cfg(debug_assertions)]
-        println!("{}", prover.describe());
+        dbg!("{}", prover.describe());
 
         let point = (0..split_var.hi_usize(num_vars)).map(|_| Fr::rand(rng)).collect_vec();
         let dense_output = match wg.last.take().unwrap() {

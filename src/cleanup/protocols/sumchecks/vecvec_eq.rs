@@ -59,7 +59,6 @@ impl<F: PrimeField, Fun: AlgFn<F>> FoldToSumcheckable<F> for VecVecDeg2SumcheckO
     type Target = VecVecDeg2SumcheckObjectSO<F, Fun>;
 
     fn rlc(self, gamma: F) -> Self::Target {
-        dbg!(self.func.n_outs(), self.func.n_ins(), self.claims.len());
         let gamma_pows = make_gamma_pows(gamma, self.func.n_outs());
         let mut claim = self.claims[0];
         for i in 1..self.claims.len() {
@@ -429,9 +428,6 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
 
     fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         assert_eq!(self.f.deg(), 2);
-
-        dbg!(self.num_vars, self.num_vertical_vars);
-        dbg!(advice[0].num_vars(), advice[0].col_logsize);
 
         let gamma = transcript.challenge(128);
         let SinglePointClaims { point, evs } = claims;

@@ -252,6 +252,9 @@ pub trait MapSplit<F: PrimeField>: Sized {
 }
 impl<F: PrimeField> MapSplit<F> for Vec<F> {
     fn algfn_map_split<Fnc: AlgFn<F>>(polys: &[Self], func: Fnc, var_idx: SplitIdx, bundle_size: usize) -> Vec<Self> {
+        #[cfg(debug_assertions)]
+        println!("SPLIT MAP with {}", func.description());
+        
         let mut outs = [
             (0..func.n_outs()).map(|_| Vec::with_capacity(polys[0].len() / 2)).collect_vec(),
             (0..func.n_outs()).map(|_| Vec::with_capacity(polys[0].len() / 2)).collect_vec(),
@@ -276,6 +279,9 @@ impl<F: PrimeField> MapSplit<F> for Vec<F> {
     }
 
     fn algfn_map<Fnc: AlgFn<F>>(polys: &[Self], func: Fnc) -> Vec<Self> {
+        #[cfg(debug_assertions)]
+        println!("..... MAP with {}", func.description());
+        
         let mut outs = (0..func.n_outs()).map(|_| UninitArr::new(polys[0].len())).collect_vec();
         let mut iter_ins = polys.iter().map(|i| i.chunks(1)).collect_vec();
         let mut iter_out = outs.iter_mut().map(|i| i.chunks_mut(1)).collect_vec();
@@ -495,6 +501,7 @@ mod test {
     use ark_std::{test_rng, UniformRand, Zero};
     use itertools::Itertools;
     use num_traits::One;
+    use rstest::rstest;
     use crate::cleanup::protocols::splits::SplitIdx;
     use crate::cleanup::utils::algfn::ArcedAlgFn;
     use crate::polynomial::vecvec::{vecvec_map_split, VecVecPolynomial};
@@ -618,12 +625,23 @@ mod test {
         }
     }
     
-    #[test]
-    fn map_split_hi() {
+    #[rstest]
+    fn map_split(
+        #[values(
+            SplitIdx::LO(0), 
+            SplitIdx::LO(1),
+            SplitIdx::LO(2),
+            SplitIdx::HI(0), 
+            SplitIdx::HI(1),
+            SplitIdx::HI(2),
+        )]
+        split_idx: SplitIdx
+    ) {
         let gen = &mut test_rng();
         let num_vars = 5; 
         for i in 0..100 {
             let n_args = 3;
+            let split_idx = SplitIdx::HI(0);
 
             let data = Vec::rand_points::<BandersnatchConfig, _>(gen, DensePolyRndConfig {num_vars});
             let dense_data = data.iter().map(|p| p.to_dense(num_vars)).collect_vec();
@@ -639,8 +657,16 @@ mod test {
             let out0 = out0.step_by(2);
             let out1 = out1.skip(1).step_by(2);
 
+            let segment_size = 1 << (match split_idx {
+                SplitIdx::LO(var_idx) => { var_idx }
+                SplitIdx::HI(var_idx) => { num_vars - 1 - var_idx }
+            });
+            
             let dense_out = out0.zip_eq(out1).map(|(l, r)| {
-                l.to_dense(num_vars - 1).into_iter().chain(r.to_dense(num_vars - 1).into_iter()).collect_vec()
+                l.to_dense(num_vars - 1).into_iter().chunks(segment_size).into_iter()
+                    .interleave(r.to_dense(num_vars - 1).into_iter().chunks(segment_size).into_iter())
+                    .flatten()
+                    .collect_vec()
             }).collect_vec();
 
             assert_eq!(dense_out, expected_out);

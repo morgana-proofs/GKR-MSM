@@ -13,10 +13,26 @@ use crate::cleanup::protocols::sumchecks::vecvec_eq::VecVecDeg2Sumcheck;
 use crate::utils::fix_var_top;
 
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum SplitIdx {
     LO(usize),
     HI(usize),
+}
+
+impl SplitIdx {
+    pub fn to_hi(&self, num_vars: usize) -> Self {
+        SplitIdx::HI(match self {
+            SplitIdx::LO(lo) => {num_vars - lo - 1}
+            SplitIdx::HI(hi) => {*hi}
+        })
+    }
+    
+    pub fn hi_usize(&self, num_vars: usize) -> usize {
+        match self.to_hi(num_vars) {
+            SplitIdx::HI(hi) => hi,
+            SplitIdx::LO(lo) => unreachable!(),
+        }
+    }
 }
 
 pub struct SplitAt<F: PrimeField> {

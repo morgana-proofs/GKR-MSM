@@ -5,7 +5,7 @@ use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::protocols::gkrs::bintree::AdditionStep;
 use crate::cleanup::protocols::gkrs::gkr::{GKRLayer, SimpleGKR};
-use crate::cleanup::protocols::gkrs::split_map_gkr::{SplitMapGKRAdvice, SplitVecVecMapGKRAdvice};
+use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
 use crate::cleanup::protocols::splits::{SplitAt, SplitIdx};
 use crate::cleanup::protocols::sumcheck::{DenseEqSumcheck, SinglePointClaims};
 use crate::cleanup::protocols::sumchecks::dense_eq::DenseDeg2Sumcheck;
@@ -15,8 +15,8 @@ use crate::utils::{MapSplit, TwistedEdwardsConfig};
 
 #[derive(Debug)]
 pub struct TriangleAddWG<F: PrimeField> {
-    pub advices:  Vec<SplitMapGKRAdvice<F>>,
-    pub last: Option<SplitMapGKRAdvice<F>>,
+    pub advices:  Vec<SplitVecVecMapGKRAdvice<F>>,
+    pub last: Option<SplitVecVecMapGKRAdvice<F>>,
 }
 impl<F: PrimeField> Display for TriangleAddWG<F> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -38,18 +38,18 @@ impl<F: PrimeField + TwistedEdwardsConfig> TriangleAddWG<F> {
         for layer_idx in 0..=num_layers {
             for step in AdditionStep::all() {
                 let next = Self::step(&advice, step, layer_idx, num_layers, split_idx);
-                advices.push(SplitMapGKRAdvice::DenseMAP(advice));
+                advices.push(SplitVecVecMapGKRAdvice::DenseMAP(advice));
 
                 advice = next;
             }
             if layer_idx < num_layers {
-                advices.push(SplitMapGKRAdvice::SPLIT(()))
+                advices.push(SplitVecVecMapGKRAdvice::SPLIT(()))
             }
         }
 
         Self {
             advices,
-            last: Some(SplitMapGKRAdvice::DenseMAP(advice))
+            last: Some(SplitVecVecMapGKRAdvice::DenseMAP(advice))
         }
     }
 
@@ -95,7 +95,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> TriangleAddWG<F> {
 }
 
 impl<F: PrimeField> Iterator for TriangleAddWG<F> {
-    type Item = SplitMapGKRAdvice<F>;
+    type Item = SplitVecVecMapGKRAdvice<F>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.advices.pop()
@@ -103,8 +103,8 @@ impl<F: PrimeField> Iterator for TriangleAddWG<F> {
 }
 
 
-struct TriangleAdd<F: PrimeField, Transcript: TProofTranscript2> {
-    gkr: SimpleGKR<SinglePointClaims<F>, SplitMapGKRAdvice<F>, Transcript, TriangleAddWG<F>>,
+pub struct TriangleAdd<F: PrimeField, Transcript: TProofTranscript2> {
+    gkr: SimpleGKR<SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>, Transcript, TriangleAddWG<F>>,
     split_var: SplitIdx,
 }
 
@@ -137,7 +137,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Triang
         }
     }
 
-    fn step(addition_step: AdditionStep, layer_idx: usize, num_vars: usize) -> Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitMapGKRAdvice<F>>> {
+    fn step(addition_step: AdditionStep, layer_idx: usize, num_vars: usize) -> Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>> {
         match addition_step {
             AdditionStep::L1 => {
                 Box::new(DenseDeg2Sumcheck::new(
@@ -202,8 +202,8 @@ mod test {
     use ark_ec::twisted_edwards::Projective;
     use crate::cleanup::protocols::gkrs::triangle_add::{TriangleAdd, TriangleAddWG};
     use crate::cleanup::protocols::splits::SplitIdx;
-    use crate::cleanup::utils::algfn::{AlgFnUtils, IdAlgFn};
-    use crate::utils::{DensePolyRndConfig, MapSplit, RandomlyGeneratedPoly};
+    use crate::cleanup::utils::algfn::{AlgFnUtils, IdAlgFn, RepeatedAlgFn};
+    use crate::utils::{build_points, prettify_coords, prettify_points, DensePolyRndConfig, MapSplit, RandomlyGeneratedPoly};
     use ark_ed_on_bls12_381_bandersnatch::BandersnatchConfig;
     use ark_ff::Field;
     use ark_std::iterable::Iterable;
@@ -212,47 +212,11 @@ mod test {
     use num_traits::{One, Zero};
     use crate::cleanup::proof_transcript::{ProofTranscript2, TProofTranscript2};
     use crate::cleanup::protocol2::Protocol2;
-    use crate::cleanup::protocols::gkrs::split_map_gkr::SplitMapGKRAdvice;
+    use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
     use crate::cleanup::protocols::sumcheck::SinglePointClaims;
     use crate::cleanup::utils::arith::evaluate_poly;
 
     type F = <BandersnatchConfig as CurveConfig>::BaseField;
-
-    fn prettify_points(point_map: &HashMap<Projective<BandersnatchConfig>, usize>, v: &Vec<Projective<BandersnatchConfig>>) -> String {
-        v.iter().map(|p| point_map.get(p).map(|v| format!("{}", v).to_string()).unwrap_or("Unknown".to_string())).join(", ")
-    }
-    
-    fn build_points_from_chunk(chunk: &[Vec<F>]) -> Vec<Projective<BandersnatchConfig>> {
-        (0..chunk[0].len())
-            .map(|i| {
-                Projective::<BandersnatchConfig>::new_unchecked(
-                    chunk[0][i],
-                    chunk[1][i],
-                    chunk[0][i] * chunk[1][i] / chunk[2][i],
-                    chunk[2][i],
-                )
-            })
-            .collect_vec()
-    }
-    
-    fn prettify_coords_chunk(point_map: &HashMap<Projective<BandersnatchConfig>, usize>, chunk: &[Vec<F>]) -> String {
-        prettify_points(
-            point_map,
-            &build_points_from_chunk(chunk)
-        )
-    }
-    
-    fn build_points(coords: &[Vec<F>]) -> Vec<Vec<Projective<BandersnatchConfig>>> {
-        coords.chunks(3).map(|chunk| {
-            build_points_from_chunk(chunk)
-        }).collect_vec()
-    }
-    
-    fn prettify_coords(point_map: &HashMap<Projective<BandersnatchConfig>, usize>, coords: &[Vec<F>]) -> String {
-        coords.chunks(3).map(|chunk| {
-            prettify_coords_chunk(point_map, chunk)
-        }).join(" || ")
-    }
     
     #[test]
     fn witness_gen() {
@@ -272,6 +236,9 @@ mod test {
         let input_points = (0..(1 << (num_vars)) as u64).map(|i| {
             Projective::<BandersnatchConfig>::generator() * <BandersnatchConfig as CurveConfig>::ScalarField::from(i)
         }).collect_vec();
+        // let input_points = (0..(1 << (num_vars)) as u64).map(|i| {
+        //     Projective::<BandersnatchConfig>::rand(rng)
+        // }).collect_vec();
         
         let inputs = vec![
             input_points.iter().map(|p| p.x).collect_vec(),
@@ -280,26 +247,26 @@ mod test {
         ];
         // let inputs = Vec::rand_points::<BandersnatchConfig, _>(rng, DensePolyRndConfig { num_vars: num_vars + 2 }).to_vec();
 
-        dbg!("{}", prettify_coords(&point_map, &inputs));
+        // println!("{}", prettify_coords(&point_map, &inputs));
         let inputs = Vec::algfn_map_split(&inputs, IdAlgFn::new(3), split_var, 3);
-        dbg!("{}", prettify_coords(&point_map, &inputs));
-        let inputs = Vec::algfn_map_split(&inputs, IdAlgFn::new(6), split_var, 3);
+        // println!("{}", prettify_coords(&point_map, &inputs));
+        let inputs = Vec::algfn_map_split(&inputs, RepeatedAlgFn::new(IdAlgFn::new(3), 2), split_var, 3);
 
         let mut wg = TriangleAddWG::new(inputs, num_vars - 2, split_var);
 
-        dbg!("{}", wg.advices.iter().step_by(4).filter_map(|a| match a {
-            SplitMapGKRAdvice::DenseMAP(d) => {
-                Some(
-                    prettify_coords(&point_map, d)
-                )
-            }
-            SplitMapGKRAdvice::SPLIT(_) => {None}
-        }).join("\n"));
+        // println!("{}", wg.advices.iter().step_by(4).filter_map(|a| match a {
+        //     SplitVecVecMapGKRAdvice::DenseMAP(d) => {
+        //         Some(
+        //             prettify_coords(&point_map, d)
+        //         )
+        //     }
+        //     _ => {None}
+        // }).join("\n"));
 
 
         let last: Vec<Vec<F>> = wg.last.take().unwrap().into();
 
-        dbg!("{}", prettify_coords(&point_map, &last));
+        // println!("{}", prettify_coords(&point_map, &last));
 
         let point_results = build_points(&last);
         
@@ -308,16 +275,16 @@ mod test {
         for idx in 0..(1 << split_var.hi_usize(num_vars)) {
             let mut sum = Projective::zero();
             for i in 0..chunk_size {
-                    sum = sum + input_points[idx * chunk_size + i] * <BandersnatchConfig as CurveConfig>::ScalarField::from((i + 1) as u64);
+                    sum = sum + input_points[idx * chunk_size + i] * <BandersnatchConfig as CurveConfig>::ScalarField::from((i) as u64);
             }
             target_sum.push(sum);
         }
         
         let mut resulting_sums = vec![];
         for idx in 0..(1 << (split_var.hi_usize(num_vars))) {
-            let mut coef = <BandersnatchConfig as CurveConfig>::ScalarField::from(2);
-            let mut resulting_sum = point_results[0][idx] + point_results[1][idx] * coef;
-            for i in 2..point_results.len() {
+            let mut resulting_sum = Projective::zero();
+            let mut coef = <BandersnatchConfig as CurveConfig>::ScalarField::from(1);
+            for i in 1..point_results.len() {
                 resulting_sum += point_results[i][idx] * coef;
                 coef = coef.double();
             }
@@ -325,6 +292,17 @@ mod test {
         }
         
         assert_eq!(resulting_sums, target_sum);
+
+
+        println!("{}", prettify_coords(&point_map, &last));
+        dbg!(&point_results.len());
+        dbg!(&point_results.iter().map(|r| r.len()).collect_vec());
+        println!("{:?} X {:?}", point_map.get(&point_results[4][0]), point_map.get(&input_points.iter().take(1 << 2).skip(1 << (2 - 1)).sum::<Projective<BandersnatchConfig>>()));
+        assert_eq!(
+            point_results[4][0],
+            input_points.iter().take(1 << 4).skip(1 << (4 - 1)).sum::<Projective<BandersnatchConfig>>(),
+        );
+
     }
 
     #[test]
@@ -348,8 +326,8 @@ mod test {
 
         let point = (0..split_var.hi_usize(num_vars)).map(|_| Fr::rand(rng)).collect_vec();
         let dense_output = match wg.last.take().unwrap() {
-            SplitMapGKRAdvice::DenseMAP(m) => {m}
-            SplitMapGKRAdvice::SPLIT(_) => {unreachable!()}
+            SplitVecVecMapGKRAdvice::DenseMAP(m) => {m}
+            _ => {unreachable!()}
         };
         let claims = SinglePointClaims {
             point: point.clone(),

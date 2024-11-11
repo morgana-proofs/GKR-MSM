@@ -20,9 +20,9 @@ use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 
 
 #[derive(Debug)]
-struct VecVecBintreeAddWG<F: PrimeField> {
-    advices: Vec<SplitVecVecMapGKRAdvice<F>>,
-    last: Option<SplitVecVecMapGKRAdvice<F>>
+pub struct VecVecBintreeAddWG<F: PrimeField> {
+    pub advices: Vec<SplitVecVecMapGKRAdvice<F>>,
+    pub last: Option<SplitVecVecMapGKRAdvice<F>>
 }
 
 impl<F: PrimeField> Display for VecVecBintreeAddWG<F> {
@@ -111,7 +111,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> SplitVecVecMapGKRAdvice<F> {
 }
 
 impl<F: PrimeField + TwistedEdwardsConfig> VecVecBintreeAddWG<F> {
-    pub fn new_common(
+    fn new_common(
         mut advice: SplitVecVecMapGKRAdvice<F>,
         row_logsize: usize,
         num_adds: usize,
@@ -150,7 +150,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> VecVecBintreeAddWG<F> {
         }
     }
     
-    fn new(
+    pub fn new(
         inputs: Vec<VecVecPolynomial<F>>,
         row_logsize: usize,
         num_adds: usize,
@@ -173,7 +173,7 @@ impl<F: PrimeField> Iterator for VecVecBintreeAddWG<F> {
     }
 }
 
-struct VecVecBintreeAdd<F: PrimeField, Transcript: TProofTranscript2> {
+pub struct VecVecBintreeAdd<F: PrimeField, Transcript: TProofTranscript2> {
     gkr: SimpleGKR<SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>, Transcript, VecVecBintreeAddWG<F>>
 }
 
@@ -288,6 +288,11 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
             }
         }
         layers
+    }
+    
+    #[cfg(debug_assertions)]
+    pub fn describe(&self) -> String {
+        format!("Bintree Add {} ", self.gkr.description())
     }
 }
 

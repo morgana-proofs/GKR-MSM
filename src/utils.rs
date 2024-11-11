@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::mem::{transmute, MaybeUninit};
 use std::ops::{Add, Index, Mul, Sub};
@@ -5,6 +6,7 @@ use std::ptr::read;
 
 use ark_bls12_381::Fr;
 use ark_ec::twisted_edwards::{Affine, Projective, TECurveConfig};
+use ark_ed_on_bls12_381_bandersnatch::BandersnatchConfig;
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_std::iterable::Iterable;
 use ark_std::rand::Rng;
@@ -253,7 +255,7 @@ pub trait MapSplit<F: PrimeField>: Sized {
 impl<F: PrimeField> MapSplit<F> for Vec<F> {
     fn algfn_map_split<Fnc: AlgFn<F>>(polys: &[Self], func: Fnc, var_idx: SplitIdx, bundle_size: usize) -> Vec<Self> {
         #[cfg(debug_assertions)]
-        println!("SPLIT MAP with {}", func.description());
+        println!("SPLIT MAP D->D   with {}", func.description());
         
         let mut outs = [
             (0..func.n_outs()).map(|_| Vec::with_capacity(polys[0].len() / 2)).collect_vec(),
@@ -280,7 +282,7 @@ impl<F: PrimeField> MapSplit<F> for Vec<F> {
 
     fn algfn_map<Fnc: AlgFn<F>>(polys: &[Self], func: Fnc) -> Vec<Self> {
         #[cfg(debug_assertions)]
-        println!("..... MAP with {}", func.description());
+        println!("..... MAP D->D   with {}", func.description());
         
         let mut outs = (0..func.n_outs()).map(|_| UninitArr::new(polys[0].len())).collect_vec();
         let mut iter_ins = polys.iter().map(|i| i.chunks(1)).collect_vec();
@@ -482,6 +484,42 @@ pub fn eq_sum<F: PrimeField>(mut pt: &[F], mut k: usize) -> F {
     acc
 }
 
+
+pub fn prettify_points<F: PrimeField, CC: TECurveConfig<BaseField=F>>(point_map: &HashMap<Projective<CC>, usize>, v: &Vec<Projective<CC>>) -> String {
+    v.iter().map(|p| point_map.get(p).map(|v| format!("{}", v).to_string()).unwrap_or("Unknown".to_string())).join(", ")
+}
+
+pub fn build_points_from_chunk<F: PrimeField, CC: TECurveConfig<BaseField=F>>(chunk: &[Vec<F>]) -> Vec<Projective<CC>> {
+    (0..chunk[0].len())
+        .map(|i| {
+            Projective::<CC>::new_unchecked(
+                chunk[0][i],
+                chunk[1][i],
+                chunk[0][i] * chunk[1][i] / chunk[2][i],
+                chunk[2][i],
+            )
+        })
+        .collect_vec()
+}
+
+pub fn prettify_coords_chunk<F: PrimeField, CC: TECurveConfig<BaseField=F>>(point_map: &HashMap<Projective<CC>, usize>, chunk: &[Vec<F>]) -> String {
+    prettify_points(
+        point_map,
+        &build_points_from_chunk(chunk)
+    )
+}
+
+pub fn build_points<F: PrimeField, CC: TECurveConfig<BaseField=F>>(coords: &[Vec<F>]) -> Vec<Vec<Projective<CC>>> {
+    coords.chunks(3).map(|chunk| {
+        build_points_from_chunk(chunk)
+    }).collect_vec()
+}
+
+pub fn prettify_coords<F: PrimeField, CC: TECurveConfig<BaseField=F>>(point_map: &HashMap<Projective<CC>, usize>, coords: &[Vec<F>]) -> String {
+    coords.chunks(3).map(|chunk| {
+        prettify_coords_chunk(point_map, chunk)
+    }).join(" || ")
+}
 
 #[cfg(feature = "memprof")]
 pub fn memprof(l: &str) {

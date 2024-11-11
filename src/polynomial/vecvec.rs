@@ -479,6 +479,8 @@ pub fn vecvec_map<F: PrimeField, Fnc: AlgFn<F>>(
     polys: &[VecVecPolynomial<F>],
     func: Fnc
 ) -> Vec<VecVecPolynomial<F>> {
+    #[cfg(debug_assertions)]
+    println!("..... MAP VV->VV with {}", func.description());
     let row_logsize = polys[0].row_logsize;
     let col_logsize = polys[0].col_logsize;
     let mut outs = (0..func.n_outs()).map(|_| (Vec::with_capacity(polys[0].data.len()), None, None)).collect_vec();
@@ -525,6 +527,8 @@ pub fn vecvec_map_split<F: PrimeField, Fnc: AlgFn<F>>(
     var_idx: SplitIdx,
     bundle_size: usize,
 ) -> Vec<VecVecPolynomial<F>> {
+    #[cfg(debug_assertions)]
+    println!("SPLIT MAP VV->VV with {}", func.description());
     let num_vars = polys[0].num_vars();
     let row_logsize = polys[0].row_logsize;
     let col_logsize = polys[0].col_logsize;
@@ -589,6 +593,8 @@ pub fn vecvec_map_split_to_dense<F: PrimeField, Fnc: AlgFn<F>>(
     var_idx: SplitIdx,
     bundle_size: usize,
 ) -> Vec<Vec<F>> {
+    #[cfg(debug_assertions)]
+    println!("SPLID MAP VV->D  with {}", func.description());
     let num_vars = polys[0].num_vars();
     let row_logsize = polys[0].row_logsize;
     assert_eq!(row_logsize, 1);

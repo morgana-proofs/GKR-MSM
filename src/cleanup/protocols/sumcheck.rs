@@ -253,9 +253,9 @@ pub struct DenseSumcheckObjectSO<F: PrimeField, Fun: AlgFnSO<F>> {
 impl<F: PrimeField, Fun: AlgFnSO<F>> DenseSumcheckObjectSO<F, Fun> {
     pub fn new(polys: Vec<Vec<F>>, f: Fun, num_vars: usize, claim_hint: F) -> Self {
         let l = polys.len();
-        assert!(l == f.n_ins());
+        assert_eq!(l, f.n_ins());
         for i in 0..l {
-            assert!(polys[i].len() == 1 << num_vars);
+            assert_eq!(polys[i].len(), 1 << num_vars);
         }
         Self { polys, f, num_vars, round_idx: 0, cached_unipoly: None, challenges: vec![], claim: claim_hint }
     }

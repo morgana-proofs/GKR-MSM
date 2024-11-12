@@ -22,11 +22,11 @@ fn bintree_triangle_integration() {
     let bucket_vars = 4;
     let point_vars = 3;
     let total_num_vars = multirow_vars + bucket_vars + point_vars;
-    
+
     let pre_inputs = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, point_vars, multirow_vars + bucket_vars).to_vec();
     let inputs = vecvec_map_split(&pre_inputs, IdAlgFn::new(2), SplitIdx::LO(0), 2);
     let dense_input = inputs.to_dense(());
-    
+
     let mut bintree_wg = VecVecBintreeAddWG::new(
         inputs,
         point_vars,
@@ -41,7 +41,7 @@ fn bintree_triangle_integration() {
         SplitIdx::HI(multirow_vars),
         3,
     );
-    
+
     let split_l2 = Vec::algfn_map_split(
         &split_l1,
         RepeatedAlgFn::new(IdAlgFn::new(3), 2),
@@ -57,7 +57,7 @@ fn bintree_triangle_integration() {
 
     let point = (0..multirow_vars).map(|_| <BandersnatchConfig as CurveConfig>::BaseField::rand(rng)).collect_vec();
     let dense_output: Vec<Vec<_>> = triangle_wg.last.take().unwrap().into();
-    
+
     let claims = SinglePointClaims {
         point: point.clone(),
         evs: dense_output.iter().map(|output| evaluate_poly(output, &point)).collect(),
@@ -126,7 +126,7 @@ fn bintree_triangle_integration() {
         .collect_vec();
 
     let bintree_point_out: Vec<Projective<BandersnatchConfig>> = build_points(&bt_out).into_iter().flatten().collect_vec();
-    
+
     assert_eq!(bintree_point_out.len(), expected_bucket_sums.len());
     assert_eq!(bintree_point_out, expected_bucket_sums);
 
@@ -139,7 +139,7 @@ fn bintree_triangle_integration() {
     }
 
     let output_points = build_points(&dense_output);
-    
+
     let mut output_multirow_sums = vec![Projective::zero(); 1 << multirow_vars];
     for multirow_idx in 0..(1 << multirow_vars) {
         let mut coef = 1u64;

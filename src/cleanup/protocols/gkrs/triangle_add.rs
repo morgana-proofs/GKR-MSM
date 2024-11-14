@@ -3,7 +3,7 @@ use ark_ff::PrimeField;
 use merlin::Transcript;
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
-use crate::cleanup::protocols::gkrs::bintree::AdditionStep;
+use crate::cleanup::protocols::gkrs::bintree_add::AdditionStep;
 use crate::cleanup::protocols::gkrs::gkr::{GKRLayer, SimpleGKR};
 use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
 use crate::cleanup::protocols::splits::{SplitAt, SplitIdx};
@@ -16,82 +16,31 @@ use crate::utils::{MapSplit, TwistedEdwardsConfig};
 #[derive(Debug)]
 pub struct TriangleAddWG<F: PrimeField> {
     pub advices:  Vec<SplitVecVecMapGKRAdvice<F>>,
-    pub last: Option<SplitVecVecMapGKRAdvice<F>>,
 }
 impl<F: PrimeField> Display for TriangleAddWG<F> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.advices.iter().map(|a| {
             write!(f, "{}\n", a)
         }).count();
-        write!(f, "{:?}\n", self.last)
+        write!(f, "\n")
     }
 }
 impl<F: PrimeField + TwistedEdwardsConfig> TriangleAddWG<F> {
     pub fn new(
-        mut advice: Vec<Vec<F>>,
+        advice: Vec<Vec<F>>,
         num_vars: usize,
         split_idx: SplitIdx,
     ) -> Self {
-        let mut advices = vec![];
-        let num_layers = num_vars - split_idx.hi_usize(num_vars);
-
-        for layer_idx in 0..=num_layers {
-            for step in AdditionStep::all() {
-                let next = Self::step(&advice, step, layer_idx, num_layers, split_idx);
-                advices.push(SplitVecVecMapGKRAdvice::DenseMAP(advice));
-
-                advice = next;
-            }
-            if layer_idx < num_layers {
-                advices.push(SplitVecVecMapGKRAdvice::SPLIT(()))
-            }
-        }
-
+        let mut advices = builder::witness::build(
+            advice,
+            num_vars,
+            split_idx,
+        );
         Self {
             advices,
-            last: Some(SplitVecVecMapGKRAdvice::DenseMAP(advice))
         }
     }
 
-    fn step(advice: &[Vec<F>], addition_step: AdditionStep, layer_idx: usize, num_vars: usize, split_idx: SplitIdx) -> Vec<Vec<F>> {
-        match (addition_step, num_vars == layer_idx) {
-            (AdditionStep::L1, _) => {
-                Vec::algfn_map(advice, StackedAlgFn::new(
-                    triangle_twisted_edwards_add_l1(),
-                    RepeatedAlgFn::new(
-                        twisted_edwards_add_l1(),
-                        layer_idx,
-                    )
-                ))
-            }
-            (AdditionStep::L2, _) => {
-                Vec::algfn_map(advice, RepeatedAlgFn::new(
-                    twisted_edwards_add_l2(),
-                    layer_idx + 3,
-                ))
-            }
-            (AdditionStep::L3, false) => {
-                Vec::algfn_map_split(
-                    advice,
-                    RepeatedAlgFn::new(
-                        twisted_edwards_add_l3(),
-                        layer_idx + 3,
-                    ),
-                    split_idx,
-                    3,
-                )
-            }
-            (AdditionStep::L3, true) => {
-                Vec::algfn_map(
-                    advice,
-                    RepeatedAlgFn::new(
-                        twisted_edwards_add_l3(),
-                        layer_idx + 3,
-                    ),
-                )
-            }
-        }
-    }
 }
 
 impl<F: PrimeField> Iterator for TriangleAddWG<F> {
@@ -114,63 +63,12 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Triang
         split_var: SplitIdx,
     ) -> Self {
 
-        let mut layers = vec![];
-        let num_layers = num_vars - split_var.hi_usize(num_vars);
-
-        for layer_idx in 0..=num_layers {
-            for step in AdditionStep::all() {
-                layers.push(Self::step(step, layer_idx, num_vars));
-            }
-            if layer_idx < num_layers {
-                layers.push(
-                    Box::new(SplitAt::new(
-                        split_var,
-                        3,
-                    ))
-                )
-            }
-        }
-
         Self {
-            gkr: SimpleGKR::new(layers),
+            gkr: SimpleGKR::new(builder::protocol::build(num_vars, split_var)),
             split_var,
         }
     }
 
-    fn step(addition_step: AdditionStep, layer_idx: usize, num_vars: usize) -> Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>> {
-        match addition_step {
-            AdditionStep::L1 => {
-                Box::new(DenseDeg2Sumcheck::new(
-                    StackedAlgFn::new(
-                        triangle_twisted_edwards_add_l1(),
-                        RepeatedAlgFn::new(
-                            twisted_edwards_add_l1(),
-                            layer_idx,
-                        )
-                    ),
-                    num_vars - layer_idx
-                )) as Box<dyn GKRLayer<Transcript, _, _>>
-            }
-            AdditionStep::L2 => {
-                Box::new(DenseDeg2Sumcheck::new(
-                    RepeatedAlgFn::new(
-                        twisted_edwards_add_l2(),
-                        layer_idx + 3,
-                    ),
-                    num_vars - layer_idx
-                ))
-            }
-            AdditionStep::L3 => {
-                Box::new(DenseDeg2Sumcheck::new(
-                    RepeatedAlgFn::new(
-                        twisted_edwards_add_l3(),
-                        layer_idx + 3,
-                    ),
-                    num_vars - layer_idx
-                ))
-            }
-        }
-    }
 
     #[cfg(debug_assertions)]
     pub fn describe(&self) -> String {
@@ -178,6 +76,168 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Triang
     }
 }
 
+pub mod builder {
+
+    pub mod witness {
+        use ark_ff::PrimeField;
+        use crate::cleanup::proof_transcript::TProofTranscript2;
+        use crate::cleanup::protocols::gkrs::bintree_add::AdditionStep;
+        use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
+        use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
+        use crate::cleanup::protocols::splits::{SplitAt, SplitIdx};
+        use crate::cleanup::protocols::sumcheck::SinglePointClaims;
+        use crate::cleanup::protocols::sumchecks::dense_eq::DenseDeg2Sumcheck;
+        use crate::cleanup::utils::algfn::{RepeatedAlgFn, StackedAlgFn};
+        use crate::cleanup::utils::twisted_edwards_ops::algfns::{triangle_twisted_edwards_add_l1, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
+        use crate::utils::{MapSplit, TwistedEdwardsConfig};
+        
+        pub fn last_step<F: PrimeField + TwistedEdwardsConfig>(
+            advice: &Vec<Vec<F>>,
+            layer_idx: usize,
+        ) -> Vec<Vec<F>> {
+            Vec::algfn_map(
+                advice,
+                RepeatedAlgFn::new(
+                    twisted_edwards_add_l3(),
+                    layer_idx + 3,
+                ),
+            )
+        }
+        
+        pub fn build<F: PrimeField + TwistedEdwardsConfig>(
+            advice: Vec<Vec<F>>,
+            num_vars: usize,
+            split_idx: SplitIdx,
+        ) -> Vec<SplitVecVecMapGKRAdvice<F>> {
+            let mut advice = Some(advice);
+            let mut advices = vec![];
+            let split_idx = split_idx.to_hi(num_vars);
+            let num_layers = num_vars - split_idx.hi_usize(num_vars);
+
+            for layer_idx in 0..=num_layers {
+                for step in AdditionStep::all() {
+                    let next = make_step(advice.as_ref().unwrap(), step, layer_idx, num_layers, split_idx);
+                    advices.push(SplitVecVecMapGKRAdvice::DenseMAP(advice.unwrap()));
+
+                    advice = next;
+                }
+                if layer_idx < num_layers {
+                    advices.push(SplitVecVecMapGKRAdvice::SPLIT(()))
+                }
+            }
+
+            advices
+        }
+
+        fn make_step<F: PrimeField + TwistedEdwardsConfig>(advice: &[Vec<F>], addition_step: AdditionStep, layer_idx: usize, num_vars: usize, split_idx: SplitIdx) -> Option<Vec<Vec<F>>> {
+            match (addition_step, num_vars == layer_idx) {
+                (AdditionStep::L1, _) => {
+                    Some(Vec::algfn_map(advice, StackedAlgFn::new(
+                        triangle_twisted_edwards_add_l1(),
+                        RepeatedAlgFn::new(
+                            twisted_edwards_add_l1(),
+                            layer_idx,
+                        )
+                    )))
+                }
+                (AdditionStep::L2, _) => {
+                    Some(Vec::algfn_map(advice, RepeatedAlgFn::new(
+                        twisted_edwards_add_l2(),
+                        layer_idx + 3,
+                    )))
+                }
+                (AdditionStep::L3, false) => {
+                    Some(Vec::algfn_map_split(
+                        advice,
+                        RepeatedAlgFn::new(
+                            twisted_edwards_add_l3(),
+                            layer_idx + 3,
+                        ),
+                        split_idx,
+                        3,
+                    ))
+                }
+                (AdditionStep::L3, true) => {
+                    None
+                }
+            }
+        }
+    }
+    
+    pub mod protocol {
+        use ark_ff::PrimeField;
+        use crate::cleanup::proof_transcript::TProofTranscript2;
+        use crate::cleanup::protocols::gkrs::bintree_add::AdditionStep;
+        use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
+        use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
+        use crate::cleanup::protocols::splits::{SplitAt, SplitIdx};
+        use crate::cleanup::protocols::sumcheck::SinglePointClaims;
+        use crate::cleanup::protocols::sumchecks::dense_eq::DenseDeg2Sumcheck;
+        use crate::cleanup::utils::algfn::{RepeatedAlgFn, StackedAlgFn};
+        use crate::cleanup::utils::twisted_edwards_ops::algfns::{triangle_twisted_edwards_add_l1, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
+        use crate::utils::TwistedEdwardsConfig;
+        pub fn build<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2>(
+            num_vars: usize,
+            split_idx: SplitIdx,
+        ) -> Vec<Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>> {
+            let split_idx = split_idx.to_hi(num_vars);
+
+            let mut layers = vec![];
+            let num_layers = num_vars - split_idx.hi_usize(num_vars);
+
+            for layer_idx in 0..=num_layers {
+                for step in AdditionStep::all() {
+                    layers.push(make_step(step, layer_idx, num_vars));
+                }
+                if layer_idx < num_layers {
+                    layers.push(
+                        Box::new(SplitAt::new(
+                            split_idx,
+                            3,
+                        ))
+                    )
+                }
+            }
+
+            layers
+        }
+
+        fn make_step<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2>(addition_step: AdditionStep, layer_idx: usize, num_vars: usize) -> Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>> {
+            match addition_step {
+                AdditionStep::L1 => {
+                    Box::new(DenseDeg2Sumcheck::new(
+                        StackedAlgFn::new(
+                            triangle_twisted_edwards_add_l1(),
+                            RepeatedAlgFn::new(
+                                twisted_edwards_add_l1(),
+                                layer_idx,
+                            )
+                        ),
+                        num_vars - layer_idx
+                    )) as Box<dyn GKRLayer<Transcript, _, _>>
+                }
+                AdditionStep::L2 => {
+                    Box::new(DenseDeg2Sumcheck::new(
+                        RepeatedAlgFn::new(
+                            twisted_edwards_add_l2(),
+                            layer_idx + 3,
+                        ),
+                        num_vars - layer_idx
+                    ))
+                }
+                AdditionStep::L3 => {
+                    Box::new(DenseDeg2Sumcheck::new(
+                        RepeatedAlgFn::new(
+                            twisted_edwards_add_l3(),
+                            layer_idx + 3,
+                        ),
+                        num_vars - layer_idx
+                    ))
+                }
+            }
+        }
+    }
+}
 
 impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Protocol2<Transcript> for TriangleAdd<F, Transcript> {
     type ProverInput = TriangleAddWG<F>;
@@ -200,7 +260,7 @@ mod test {
     use ark_bls12_381::Fr;
     use ark_ec::{CurveConfig, Group};
     use ark_ec::twisted_edwards::Projective;
-    use crate::cleanup::protocols::gkrs::triangle_add::{TriangleAdd, TriangleAddWG};
+    use crate::cleanup::protocols::gkrs::triangle_add::{builder, TriangleAdd, TriangleAddWG};
     use crate::cleanup::protocols::splits::SplitIdx;
     use crate::cleanup::utils::algfn::{AlgFnUtils, IdAlgFn, RepeatedAlgFn};
     use crate::utils::{build_points, prettify_coords, prettify_points, DensePolyRndConfig, MapSplit, RandomlyGeneratedPoly};
@@ -233,12 +293,12 @@ mod test {
             p += generator;
             point_map.insert(p, 2 + i);
         }
-        let input_points = (0..(1 << (num_vars)) as u64).map(|i| {
-            Projective::<BandersnatchConfig>::generator() * <BandersnatchConfig as CurveConfig>::ScalarField::from(i)
-        }).collect_vec();
         // let input_points = (0..(1 << (num_vars)) as u64).map(|i| {
-        //     Projective::<BandersnatchConfig>::rand(rng)
+        //     Projective::<BandersnatchConfig>::generator() * <BandersnatchConfig as CurveConfig>::ScalarField::from(i)
         // }).collect_vec();
+        let input_points = (0..(1 << (num_vars)) as u64).map(|i| {
+            Projective::<BandersnatchConfig>::rand(rng)
+        }).collect_vec();
         
         let inputs = vec![
             input_points.iter().map(|p| p.x).collect_vec(),
@@ -262,9 +322,8 @@ mod test {
         //     }
         //     _ => {None}
         // }).join("\n"));
-
-
-        let last: Vec<Vec<F>> = wg.last.take().unwrap().into();
+        
+        let last = builder::witness::last_step(wg.advices.last().unwrap().into(), num_vars - 2 - split_var.hi_usize(num_vars));
 
         // println!("{}", prettify_coords(&point_map, &last));
 
@@ -308,27 +367,25 @@ mod test {
     #[test]
     fn prove_and_verify() {
         let rng = &mut ark_std::test_rng();
-        let num_vars = 6;
+        let num_vars = 8;
         let split_var = SplitIdx::HI(2);
 
-        let inputs = Vec::rand_points::<BandersnatchConfig, _>(rng, DensePolyRndConfig { num_vars: num_vars + 2 }).to_vec();
+        let inputs = Vec::rand_points::<BandersnatchConfig, _>(rng, DensePolyRndConfig { num_vars }).to_vec();
         let inputs = Vec::algfn_map_split(&inputs, IdAlgFn::new(3), split_var, 3);
         let inputs = Vec::algfn_map_split(&inputs, IdAlgFn::new(6), split_var, 3);
 
-        let mut wg = TriangleAddWG::new(inputs, num_vars, split_var);
+        let wg = TriangleAddWG::new(inputs, num_vars - 2, split_var);
 
         let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
 
-        let prover: TriangleAdd<F, ProofTranscript2> = TriangleAdd::new(num_vars, split_var);
+        let prover: TriangleAdd<F, ProofTranscript2> = TriangleAdd::new(num_vars - 2, split_var);
 
         #[cfg(debug_assertions)]
         dbg!("{}", prover.describe());
 
-        let point = (0..split_var.hi_usize(num_vars)).map(|_| Fr::rand(rng)).collect_vec();
-        let dense_output = match wg.last.take().unwrap() {
-            SplitVecVecMapGKRAdvice::DenseMAP(m) => {m}
-            _ => {unreachable!()}
-        };
+        let point = (0..split_var.hi_usize(num_vars - 2)).map(|_| Fr::rand(rng)).collect_vec();
+        let dense_output = builder::witness::last_step(wg.advices.last().unwrap().into(), num_vars - 2 - split_var.hi_usize(num_vars - 2));
+        
         let claims = SinglePointClaims {
             point: point.clone(),
             evs: dense_output.iter().map(|output| evaluate_poly(output, &point)).collect(),

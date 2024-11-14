@@ -22,7 +22,6 @@ use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 #[derive(Debug)]
 pub struct VecVecBintreeAddWG<F: PrimeField> {
     pub advices: Vec<SplitVecVecMapGKRAdvice<F>>,
-    pub last: Option<SplitVecVecMapGKRAdvice<F>>
 }
 
 impl<F: PrimeField> Display for VecVecBintreeAddWG<F> {
@@ -30,7 +29,7 @@ impl<F: PrimeField> Display for VecVecBintreeAddWG<F> {
         self.advices.iter().map(|a| {
             write!(f, "{}\n", a)
         }).count();
-        write!(f, "{:?}\n", self.last)
+        write!(f, "\n")
     }
 }
 
@@ -48,105 +47,15 @@ impl AdditionStep {
     }
 }
 
-impl<F: PrimeField + TwistedEdwardsConfig> SplitVecVecMapGKRAdvice<F> {
-    fn map<Fun: AlgFn<F>>(&self, f: Fun) -> Self {
-        match self {
-            SplitVecVecMapGKRAdvice::VecVecMAP(vv) => {
-                SplitVecVecMapGKRAdvice::VecVecMAP(vecvec_map(&vv, f))
-            }
-            SplitVecVecMapGKRAdvice::DenseMAP(d) => {
-                SplitVecVecMapGKRAdvice::DenseMAP(Vec::algfn_map(&d, f))
-            }
-            SplitVecVecMapGKRAdvice::SPLIT(_) => { unreachable!() }
-        }
-    }
-
-    fn map_split<Fun: AlgFn<F>>(&self, f: Fun, layer_idx: usize, row_logsize: usize, idx: SplitIdx, bundle_size: usize) -> Self {
-        match self {
-            SplitVecVecMapGKRAdvice::VecVecMAP(vv) => {
-                match layer_idx + 2 == row_logsize {
-                    true => {
-                        SplitVecVecMapGKRAdvice::DenseMAP(vecvec_map_split_to_dense(&vv, f, idx, bundle_size))
-                    }
-                    false => {
-                        SplitVecVecMapGKRAdvice::VecVecMAP(vecvec_map_split(&vv, f, idx, bundle_size))
-                    }
-                }
-            }
-            SplitVecVecMapGKRAdvice::DenseMAP(d) => {
-                SplitVecVecMapGKRAdvice::DenseMAP(Vec::algfn_map_split(&d, f, idx, bundle_size))
-            }
-            SplitVecVecMapGKRAdvice::SPLIT(_) => { unreachable!() }
-        }
-    }
-
-    fn step(&self, fwd_idx: usize, row_logsize: usize, n_adds: usize, split_last: bool, step: &AdditionStep, split_idx: SplitIdx, bundle_size: usize) -> Self {
-        match (step, fwd_idx, (fwd_idx + 1 == n_adds) && !split_last) {
-            (AdditionStep::L1, 0, _) => {
-                self.map(affine_twisted_edwards_add_l1())
-            }
-            (AdditionStep::L2, 0, _) => {
-                self.map(affine_twisted_edwards_add_l2())
-            }
-            (AdditionStep::L3, 0, true) => {
-                self.map(affine_twisted_edwards_add_l3())
-            }
-            (AdditionStep::L3, 0, false) => {
-                self.map_split(affine_twisted_edwards_add_l3(), fwd_idx, row_logsize, split_idx, bundle_size)
-            }
-            (AdditionStep::L1, _, _) => {
-                self.map(twisted_edwards_add_l1())
-            }
-            (AdditionStep::L2, _, _) => {
-                self.map(twisted_edwards_add_l2())
-            }
-            (AdditionStep::L3, _, true) => {
-                self.map(twisted_edwards_add_l3())
-            }
-            (AdditionStep::L3, _, false) => {
-                self.map_split(twisted_edwards_add_l3(), fwd_idx, row_logsize, split_idx, bundle_size)
-            }
-        }
-    }
-}
-
 impl<F: PrimeField + TwistedEdwardsConfig> VecVecBintreeAddWG<F> {
     fn new_common(
-        mut advice: SplitVecVecMapGKRAdvice<F>,
+        advice: SplitVecVecMapGKRAdvice<F>,
         row_logsize: usize,
         num_adds: usize,
-        split_last: bool,
     ) -> Self {
-        assert!(num_adds > 0);
-        let mut advices = vec![];
 
-        let mut step = AdditionStep::L1;
-        let mut next;
-
-        for add_idx in 0..num_adds {
-            for step_idx in 0..3 {
-                next = advice.step(add_idx, row_logsize, num_adds, split_last, &step, SplitIdx::LO(0), 3);
-                advices.push(advice);
-                advice = next;
-                step = match step {
-                    AdditionStep::L1 => {
-                        AdditionStep::L2
-                    }
-                    AdditionStep::L2 => {
-                        AdditionStep::L3
-                    }
-                    AdditionStep::L3 => {
-                        if add_idx + 1 != num_adds || split_last {
-                            advices.push(SplitVecVecMapGKRAdvice::SPLIT(()));
-                        }
-                        AdditionStep::L1
-                    }
-                };
-            }
-        }
         Self {
-            advices,
-            last: Some(advice),
+            advices: builder::witness::build(advice, row_logsize, num_adds),
         }
     }
     
@@ -154,13 +63,11 @@ impl<F: PrimeField + TwistedEdwardsConfig> VecVecBintreeAddWG<F> {
         inputs: Vec<VecVecPolynomial<F>>,
         row_logsize: usize,
         num_adds: usize,
-        split_last: bool,
     ) -> Self {
         Self::new_common(
             SplitVecVecMapGKRAdvice::VecVecMAP(inputs),
             row_logsize,
             num_adds,
-            split_last,
         )
     }
 }
@@ -181,113 +88,9 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVec
     pub fn new(num_adds: usize, num_vars: usize, row_logsize: usize, split_last: bool) -> Self {
         Self {
             gkr: SimpleGKR::new(
-                Self::generate_layers(num_vars, num_adds, row_logsize, split_last),
+                builder::protocol::build(num_vars, num_adds, row_logsize, split_last),
             )
         }
-    }
-
-    pub fn generate_layers(num_vars: usize, num_adds: usize, row_logsize: usize, split_last: bool) -> Vec<Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>> {
-        let mut layers: Vec<Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>> = vec![];
-        let mut step = AdditionStep::L1;
-        let num_vertical_vars = num_vars - row_logsize;
-        for i in 0..num_adds {
-            for _ in 0..3 {
-                match (i, i + 1< row_logsize, &step) {
-                    (0, _, AdditionStep::L1) => {
-                        layers.push(Box::new(
-                            VecVecDeg2Sumcheck::new(
-                                affine_twisted_edwards_add_l1(),
-                                num_vars - i - 1,
-                                num_vertical_vars,
-                            )
-                        ));
-                    }
-                    (0, _, AdditionStep::L2) => {
-                        layers.push(Box::new(
-                            VecVecDeg2Sumcheck::new(
-                                affine_twisted_edwards_add_l2(),
-                                num_vars - i - 1,
-                                num_vertical_vars,
-                            )
-                        ));
-                    }
-                    (0, _, AdditionStep::L3) => {
-                        layers.push(Box::new(
-                            VecVecDeg2Sumcheck::new(
-                                affine_twisted_edwards_add_l3(),
-                                num_vars - i - 1,
-                                num_vertical_vars,
-                            )
-                        ));
-                    }
-                    (_, true, AdditionStep::L1) => {
-                        layers.push(Box::new(
-                            VecVecDeg2Sumcheck::new(
-                                twisted_edwards_add_l1(),
-                                num_vars - i - 1,
-                                num_vertical_vars,
-                            )
-                        ));
-                    }
-                    (_, true, AdditionStep::L2) => {
-                        layers.push(Box::new(
-                            VecVecDeg2Sumcheck::new(
-                                twisted_edwards_add_l2(),
-                                num_vars - i - 1,
-                                num_vertical_vars,
-                            )
-                        ));
-                    }
-                    (_, true, AdditionStep::L3) => {
-                        layers.push(Box::new(
-                            VecVecDeg2Sumcheck::new(
-                                twisted_edwards_add_l3(),
-                                num_vars - i - 1,
-                                num_vertical_vars,
-                            )
-                        ));
-                    }
-                    (_, false, AdditionStep::L1) => {
-                        layers.push(Box::new(
-                            DenseDeg2Sumcheck::new(
-                                twisted_edwards_add_l1(),
-                                num_vars - i - 1,
-                            )
-                        ));
-                    }
-                    (_, false, AdditionStep::L2) => {
-                        layers.push(Box::new(
-                            DenseDeg2Sumcheck::new(
-                                twisted_edwards_add_l2(),
-                                num_vars - i - 1,
-                            )
-                        ));
-                    }
-                    (_, false, AdditionStep::L3) => {
-                        layers.push(Box::new(
-                            DenseDeg2Sumcheck::new(
-                                twisted_edwards_add_l3(),
-                                num_vars - i - 1,
-                            )
-                        ));
-                    }
-                }
-                step = match step {
-                    AdditionStep::L1 => { AdditionStep::L2}
-                    AdditionStep::L2 => { AdditionStep::L3}
-                    AdditionStep::L3 => { AdditionStep::L1}
-                }
-            }
-            if i != num_adds - 1 || split_last {
-                layers.push(Box::new(
-                    SplitAt::new(
-                        SplitIdx::LO(0),
-                        3,
-                    )
-                ))
-            }
-        }
-        layers
     }
     
     #[cfg(debug_assertions)]
@@ -311,6 +114,217 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Protoc
     }
 }
 
+
+pub mod builder {
+    use super::*;
+    pub mod witness {
+        use super::*;
+
+        pub fn last_step<F: PrimeField + TwistedEdwardsConfig>(
+            advice: &SplitVecVecMapGKRAdvice<F>,
+            layer_idx: usize,
+        ) -> SplitVecVecMapGKRAdvice<F> {
+            if layer_idx == 0 {
+                advice_map(advice, affine_twisted_edwards_add_l3())
+            } else {
+                advice_map(advice, twisted_edwards_add_l3())
+            }
+        }
+
+        pub fn build<F: PrimeField + TwistedEdwardsConfig>(
+            advice: SplitVecVecMapGKRAdvice<F>,
+            row_logsize: usize,
+            num_adds: usize,
+        ) -> Vec<SplitVecVecMapGKRAdvice<F>> {
+            assert!(num_adds > 0);
+            let mut advice = Some(advice);
+            let mut advices = vec![];
+
+            let mut next;
+
+            for add_idx in 0..num_adds {
+                for step in AdditionStep::all() {
+                    next = make_step((&advice).as_ref().unwrap().into(), add_idx, row_logsize, num_adds, &step, SplitIdx::LO(0), 3);
+                    advices.push(advice.unwrap());
+                    advice = next;
+                }
+                if add_idx + 1 != num_adds {
+                    advices.push(SplitVecVecMapGKRAdvice::SPLIT(()));
+                }
+            }
+            advices
+        }
+
+        pub fn advice_map<F: PrimeField + TwistedEdwardsConfig, Fun: AlgFn<F>>(advice: &SplitVecVecMapGKRAdvice<F>, f: Fun) -> SplitVecVecMapGKRAdvice<F> {
+            match advice {
+                SplitVecVecMapGKRAdvice::VecVecMAP(vv) => {
+                    SplitVecVecMapGKRAdvice::VecVecMAP(vecvec_map(vv, f))
+                }
+                SplitVecVecMapGKRAdvice::DenseMAP(d) => {
+                    SplitVecVecMapGKRAdvice::DenseMAP(Vec::algfn_map(d, f))
+                }
+                SplitVecVecMapGKRAdvice::SPLIT(_) => { unreachable!() }
+            }
+        }
+
+        pub fn advice_map_split<F: PrimeField + TwistedEdwardsConfig, Fun: AlgFn<F>>(advice: &SplitVecVecMapGKRAdvice<F>, f: Fun, layer_idx: usize, row_logsize: usize, idx: SplitIdx, bundle_size: usize) -> SplitVecVecMapGKRAdvice<F> {
+            match advice {
+                SplitVecVecMapGKRAdvice::VecVecMAP(vv) => {
+                    match layer_idx + 2 == row_logsize {
+                        true => {
+                            SplitVecVecMapGKRAdvice::DenseMAP(vecvec_map_split_to_dense(vv, f, idx, bundle_size))
+                        }
+                        false => {
+                            SplitVecVecMapGKRAdvice::VecVecMAP(vecvec_map_split(vv, f, idx, bundle_size))
+                        }
+                    }
+                }
+                SplitVecVecMapGKRAdvice::DenseMAP(d) => {
+                    SplitVecVecMapGKRAdvice::DenseMAP(Vec::algfn_map_split(d, f, idx, bundle_size))
+                }
+                SplitVecVecMapGKRAdvice::SPLIT(_) => { unreachable!() }
+            }
+        }
+
+        fn make_step<F: PrimeField + TwistedEdwardsConfig>(advice: &SplitVecVecMapGKRAdvice<F>, fwd_idx: usize, row_logsize: usize, n_adds: usize, step: &AdditionStep, split_idx: SplitIdx, bundle_size: usize) -> Option<SplitVecVecMapGKRAdvice<F>> {
+            match (step, fwd_idx, fwd_idx + 1 == n_adds) {
+                (AdditionStep::L1, 0, _) => {
+                    Some(advice_map(advice, affine_twisted_edwards_add_l1()))
+                }
+                (AdditionStep::L2, 0, _) => {
+                    Some(advice_map(advice, affine_twisted_edwards_add_l2()))
+                }
+                (AdditionStep::L3, 0, true) => {
+                    None
+                }
+                (AdditionStep::L3, 0, false) => {
+                    Some(advice_map_split(advice, affine_twisted_edwards_add_l3(), fwd_idx, row_logsize, split_idx, bundle_size))
+                }
+                (AdditionStep::L1, _, _) => {
+                    Some(advice_map(advice, twisted_edwards_add_l1()))
+                }
+                (AdditionStep::L2, _, _) => {
+                    Some(advice_map(advice, twisted_edwards_add_l2()))
+                }
+                (AdditionStep::L3, _, true) => {
+                    None
+                }
+                (AdditionStep::L3, _, false) => {
+                    Some(advice_map_split(advice, twisted_edwards_add_l3(), fwd_idx, row_logsize, split_idx, bundle_size))
+                }
+            }
+        }
+    }
+
+    pub mod protocol {
+        use super::*;
+
+        pub fn build<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2>(num_vars: usize, num_adds: usize, row_logsize: usize, split_last: bool) -> Vec<Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>> {
+            let mut layers: Vec<Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>> = vec![];
+            let mut step = AdditionStep::L1;
+            let num_vertical_vars = num_vars - row_logsize;
+            for i in 0..num_adds {
+                for _ in 0..3 {
+                    match (i, i + 1< row_logsize, &step) {
+                        (0, _, AdditionStep::L1) => {
+                            layers.push(Box::new(
+                                VecVecDeg2Sumcheck::new(
+                                    affine_twisted_edwards_add_l1(),
+                                    num_vars - i - 1,
+                                    num_vertical_vars,
+                                )
+                            ));
+                        }
+                        (0, _, AdditionStep::L2) => {
+                            layers.push(Box::new(
+                                VecVecDeg2Sumcheck::new(
+                                    affine_twisted_edwards_add_l2(),
+                                    num_vars - i - 1,
+                                    num_vertical_vars,
+                                )
+                            ));
+                        }
+                        (0, _, AdditionStep::L3) => {
+                            layers.push(Box::new(
+                                VecVecDeg2Sumcheck::new(
+                                    affine_twisted_edwards_add_l3(),
+                                    num_vars - i - 1,
+                                    num_vertical_vars,
+                                )
+                            ));
+                        }
+                        (_, true, AdditionStep::L1) => {
+                            layers.push(Box::new(
+                                VecVecDeg2Sumcheck::new(
+                                    twisted_edwards_add_l1(),
+                                    num_vars - i - 1,
+                                    num_vertical_vars,
+                                )
+                            ));
+                        }
+                        (_, true, AdditionStep::L2) => {
+                            layers.push(Box::new(
+                                VecVecDeg2Sumcheck::new(
+                                    twisted_edwards_add_l2(),
+                                    num_vars - i - 1,
+                                    num_vertical_vars,
+                                )
+                            ));
+                        }
+                        (_, true, AdditionStep::L3) => {
+                            layers.push(Box::new(
+                                VecVecDeg2Sumcheck::new(
+                                    twisted_edwards_add_l3(),
+                                    num_vars - i - 1,
+                                    num_vertical_vars,
+                                )
+                            ));
+                        }
+                        (_, false, AdditionStep::L1) => {
+                            layers.push(Box::new(
+                                DenseDeg2Sumcheck::new(
+                                    twisted_edwards_add_l1(),
+                                    num_vars - i - 1,
+                                )
+                            ));
+                        }
+                        (_, false, AdditionStep::L2) => {
+                            layers.push(Box::new(
+                                DenseDeg2Sumcheck::new(
+                                    twisted_edwards_add_l2(),
+                                    num_vars - i - 1,
+                                )
+                            ));
+                        }
+                        (_, false, AdditionStep::L3) => {
+                            layers.push(Box::new(
+                                DenseDeg2Sumcheck::new(
+                                    twisted_edwards_add_l3(),
+                                    num_vars - i - 1,
+                                )
+                            ));
+                        }
+                    }
+                    step = match step {
+                        AdditionStep::L1 => { AdditionStep::L2}
+                        AdditionStep::L2 => { AdditionStep::L3}
+                        AdditionStep::L3 => { AdditionStep::L1}
+                    }
+                }
+                if i != num_adds - 1 || split_last {
+                    layers.push(Box::new(
+                        SplitAt::new(
+                            SplitIdx::LO(0),
+                            3,
+                        )
+                    ))
+                }
+            }
+            layers
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::error::Error;
@@ -324,7 +338,7 @@ mod test {
     use rstest::rstest;
     use crate::cleanup::proof_transcript::{ProofTranscript2, TProofTranscript2};
     use crate::cleanup::protocol2::Protocol2;
-    use crate::cleanup::protocols::gkrs::bintree::{VecVecBintreeAdd, VecVecBintreeAddWG};
+    use crate::cleanup::protocols::gkrs::bintree_add::{builder, VecVecBintreeAdd, VecVecBintreeAddWG};
     use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
     use crate::cleanup::protocols::splits::SplitIdx;
     use crate::cleanup::protocols::sumcheck::SinglePointClaims;
@@ -341,8 +355,6 @@ mod test {
         #[case] num_adds: usize,
         #[case] row_logsize: usize,
         #[case] col_logsize: usize,
-        #[values(true, false)]
-        split_last: bool,
     ) {
         let rng = &mut test_rng();
         type F = <BandersnatchConfig as CurveConfig>::BaseField;
@@ -351,33 +363,33 @@ mod test {
 
         let points = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
         let inputs = vecvec_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
-        let witness_gen = VecVecBintreeAddWG::new_common(SplitVecVecMapGKRAdvice::VecVecMAP(inputs), row_logsize, num_adds, split_last);
+        let witness_gen = VecVecBintreeAddWG::new_common(SplitVecVecMapGKRAdvice::VecVecMAP(inputs), row_logsize, num_adds);
 
         let prover = VecVecBintreeAdd::new(
             num_adds,
             num_vars,
             row_logsize,
-            split_last,
+            false 
         );
         #[cfg(debug_assertions)]
         prover.gkr.layers
             .iter()
-            .map(|l| { dbg!("{}", l.description()); }).interleave(
+            .map(|l| { println!("{}", l.description()); }).interleave(
             witness_gen.advices
                 .iter()
-                .map(|a| { dbg!("{}", a); })
+                .map(|a| { println!("{}", a); })
             )   
             .count();
 
         let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
-        let last = witness_gen.last.as_ref().unwrap();
+        let last = builder::witness::last_step(witness_gen.advices.last().as_ref().unwrap(), num_adds - 1);
         let dense_output = match last {
             SplitVecVecMapGKRAdvice::VecVecMAP(vv) => { vv.to_dense( ())}
-            SplitVecVecMapGKRAdvice::DenseMAP(d) => { d.iter().map(|c| c.to_dense(num_vars - num_adds - match split_last {true => 1, false => 0})).collect_vec() }
+            SplitVecVecMapGKRAdvice::DenseMAP(d) => { d.iter().map(|c| c.to_dense(num_vars - num_adds - match false {true => 1, false => 0})).collect_vec() }
             SplitVecVecMapGKRAdvice::SPLIT(_) => { unreachable!() }
         };
 
-        let point = (0..(num_vars - 1 - num_adds + match split_last {true => 0, false => 1})).map(|_| Fr::rand(rng)).collect_vec();
+        let point = (0..(num_vars - 1 - num_adds + match false {true => 0, false => 1})).map(|_| Fr::rand(rng)).collect_vec();
         dbg!("{}, {:?}", dense_output.len(), dense_output.iter().map(|x| x.len()).collect_vec());
         dbg!("{}", point.len());
         let claims = SinglePointClaims {
@@ -400,14 +412,15 @@ mod test {
         let rng = &mut test_rng();
         type F = <BandersnatchConfig as CurveConfig>::BaseField;
 
-        let row_logsize = 4;
+        let row_logsize = 6;
         let col_logsize = 2;
         let num_adds = 5;
         let split_last = false;
         let points = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
         let inputs = vecvec_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
-        let smth = VecVecBintreeAddWG::new_common(SplitVecVecMapGKRAdvice::VecVecMAP(inputs.clone()), row_logsize, num_adds, split_last);
-        let outs = smth.last.unwrap();
+        let smth = VecVecBintreeAddWG::new_common(SplitVecVecMapGKRAdvice::VecVecMAP(inputs.clone()), row_logsize, num_adds);
+        let outs = builder::witness::last_step(smth.advices.last().as_ref().unwrap(), num_adds - 1);
+
         let densified_out = match outs {
             SplitVecVecMapGKRAdvice::VecVecMAP(vv) => {
                 vv.to_dense(())
@@ -476,9 +489,9 @@ mod test {
         let output_points = dense_points.chunks(2).map(|c| c[0] + c[1]).collect_vec();
 
 
-        let l1 = inputs.map(affine_twisted_edwards_add_l1());
-        let l2 = l1.map(affine_twisted_edwards_add_l2());
-        let l3 = l2.map_split(affine_twisted_edwards_add_l3(),0, row_logsize, SplitIdx::LO(0), 3);
+        let l1 = builder::witness::advice_map(&inputs, affine_twisted_edwards_add_l1());
+        let l2 = builder::witness::advice_map(&l1, affine_twisted_edwards_add_l2());
+        let l3 = builder::witness::advice_map_split(&l2, affine_twisted_edwards_add_l3(),0, row_logsize, SplitIdx::LO(0), 3);
 
         dbg!(&l3);
         let dense_ans = match l3 {
@@ -552,9 +565,9 @@ mod test {
         let output_points = dense_points.chunks(2).map(|c| (c[0] + c[1]).into_affine()).collect_vec();
 
 
-        let l1 = inputs.map(twisted_edwards_add_l1());
-        let l2 = l1.map(twisted_edwards_add_l2());
-        let l3 = l2.map_split(twisted_edwards_add_l3(),1, row_logsize + 1, SplitIdx::LO(0), 3);
+        let l1 = builder::witness::advice_map(&inputs,  twisted_edwards_add_l1());
+        let l2 = builder::witness::advice_map(&l1, twisted_edwards_add_l2());
+        let l3 = builder::witness::advice_map_split(&l2, twisted_edwards_add_l3(),1, row_logsize + 1, SplitIdx::LO(0), 3);
 
         let dense_ans = match l3 {
             SplitVecVecMapGKRAdvice::VecVecMAP(vv) => {vv.to_dense(())}

@@ -16,12 +16,19 @@ use crate::{
 use crate::cleanup::protocols::sumcheck::{BareSumcheckSO, DenseSumcheckObjectSO, GenericSumcheckProtocol};
 use crate::cleanup::protocols::sumchecks::dense_eq::DenseDeg2Sumcheck;
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
-
-
 macro_rules! build_advice_into {
-    ($name:ident<$($l:lifetime, )*$($x:ident : $xt:path),+>, $value:ident($held:ty)) => {
+    ($name:ident <$($l:lifetime, )*$($x:ident : $xt:path),+>, $value:ident($held:ty)) => {
         impl <$($l, )*$($x : $xt),+> Into<$held> for $name <$($l, )*$($x),+> {
             fn into(self) -> $held {
+                match self {
+                    $name::$value(ret) => {ret}
+                    _ => {unreachable!()}
+                }
+            }
+        }
+        
+        impl <'__build_advice_into_macro_lifetime_1, $($l, )*$($x : $xt),+> Into<&'__build_advice_into_macro_lifetime_1 $held> for &'__build_advice_into_macro_lifetime_1 $name <$($l, )*$($x),+> {
+            fn into(self) -> &'__build_advice_into_macro_lifetime_1 $held {
                 match self {
                     $name::$value(ret) => {ret}
                     _ => {unreachable!()}
@@ -54,8 +61,6 @@ macro_rules! common_advice {
         build_all_advice_intos!($name <$($l, )*$($x : $xt),+>, $($value($held)),*);
     };
 }
-
-
 
 common_advice!(
     SplitVecVecMapGKRAdvice<F: PrimeField>{

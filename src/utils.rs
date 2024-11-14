@@ -261,11 +261,10 @@ impl<F: PrimeField> MapSplit<F> for Vec<F> {
             (0..func.n_outs()).map(|_| Vec::with_capacity(polys[0].len() / 2)).collect_vec(),
             (0..func.n_outs()).map(|_| Vec::with_capacity(polys[0].len() / 2)).collect_vec(),
         ];
+        
+        let num_vars = polys[0].len().log_2();
 
-        let segment_size = 1 << (match var_idx {
-            SplitIdx::LO(var_idx) => { var_idx }
-            SplitIdx::HI(var_idx) => { polys[0].len().log_2() - 1 - var_idx }
-        });
+        let segment_size = 1 << var_idx.lo_usize(num_vars);
 
         let mut inputs = polys.iter().map(|_| F::zero()).collect_vec();
 

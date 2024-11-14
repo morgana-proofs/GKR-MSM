@@ -7,7 +7,10 @@ use itertools::{repeat_n, Itertools};
 use num_traits::Zero;
 use crate::cleanup::proof_transcript::{ProofTranscript2, TProofTranscript2};
 use crate::cleanup::protocol2::Protocol2;
-use crate::cleanup::protocols::gkrs::bintree::{VecVecBintreeAdd, VecVecBintreeAddWG};
+use crate::cleanup::protocols::gkrs::{bintree_add, triangle_add};
+use crate::cleanup::protocols::gkrs::bintree_add::{VecVecBintreeAdd, VecVecBintreeAddWG};
+use crate::cleanup::protocols::gkrs::gkr::{GKRLayer, SimpleGKR};
+use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
 use crate::cleanup::protocols::gkrs::triangle_add::{TriangleAdd, TriangleAddWG};
 use crate::cleanup::protocols::splits::{SplitAt, SplitIdx};
 use crate::cleanup::protocols::sumcheck::SinglePointClaims;
@@ -18,8 +21,15 @@ use crate::utils::{build_points, Densify, MapSplit, TwistedEdwardsConfig};
 
 
 pub struct BintreeTriangleWG<F: PrimeField + TwistedEdwardsConfig> {
-    triangle: TriangleAddWG<F>,
-    bintree: VecVecBintreeAddWG<F>,
+    advices: Vec<SplitVecVecMapGKRAdvice<F>>,
+}
+
+impl<F: PrimeField + TwistedEdwardsConfig> Iterator for BintreeTriangleWG<F> {
+    type Item = SplitVecVecMapGKRAdvice<F>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.advices.pop()
+    }
 }
 
 impl<F: PrimeField + TwistedEdwardsConfig> BintreeTriangleWG<F> {
@@ -29,15 +39,14 @@ impl<F: PrimeField + TwistedEdwardsConfig> BintreeTriangleWG<F> {
         horizontal_vars: usize,
         inputs: Vec<VecVecPolynomial<F>>
     ) -> Self {
-        let mut bintree = VecVecBintreeAddWG::new(
-            inputs,
+        let mut advices = bintree_add::builder::witness::build(
+            SplitVecVecMapGKRAdvice::VecVecMAP(inputs),
             horizontal_vars,
             horizontal_vars,
-            false,
         );
-        let bt_out: Vec<Vec<_>> = bintree.last.take().unwrap().into();
+        let last: Vec<Vec<_>> = bintree_add::builder::witness::last_step(advices.last().as_ref().unwrap(), horizontal_vars - 1).into();
         let split_l1 = Vec::algfn_map_split(
-            &bt_out,
+            &last,
             IdAlgFn::new(3),
             SplitIdx::HI(multirow_vars),
             3,
@@ -48,14 +57,16 @@ impl<F: PrimeField + TwistedEdwardsConfig> BintreeTriangleWG<F> {
             SplitIdx::HI(multirow_vars),
             3,
         );
-        let mut triangle = TriangleAddWG::new(
+        advices.push(SplitVecVecMapGKRAdvice::SPLIT(()));
+        advices.push(SplitVecVecMapGKRAdvice::SPLIT(()));
+        advices.extend(triangle_add::builder::witness::build(
             split_l2,
             multirow_vars + bucket_vars - 2,
             SplitIdx::HI(multirow_vars),
-        );
+        ));
+
         Self {
-            triangle,
-            bintree,
+            advices,
         }
     }
 }
@@ -64,31 +75,37 @@ pub struct BintreeTriangle<F: PrimeField + TwistedEdwardsConfig, Transcript: TPr
     pub multirow_vars: usize,
     pub bucket_vars: usize,
     pub horizontal_vars: usize,
-    pub bintree: VecVecBintreeAdd<F, Transcript>,
-    pub splits: SplitAt<F>,
-    pub triangle: TriangleAdd<F, Transcript>
+    pub gkr: SimpleGKR<SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>, Transcript, BintreeTriangleWG<F>>,
 }
 
 impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> BintreeTriangle<F, Transcript> {
     pub fn new(multirow_vars: usize, bucket_vars: usize, horizontal_vars: usize) -> Self {
+        let mut layers = vec![];
+
+        layers.extend(bintree_add::builder::protocol::build(
+            multirow_vars + bucket_vars + horizontal_vars,
+            horizontal_vars,
+            horizontal_vars,
+            false,
+        ));
+        layers.push(Box::new(SplitAt::new(
+            SplitIdx::HI(multirow_vars),
+            3,
+        )));
+        layers.push(Box::new(SplitAt::new(
+            SplitIdx::HI(multirow_vars),
+            3,
+        )));
+        layers.extend(triangle_add::builder::protocol::build(
+            multirow_vars + bucket_vars - 2,
+            SplitIdx::HI(multirow_vars),
+        ));
+
         Self {
             multirow_vars,
             bucket_vars,
             horizontal_vars,
-            bintree: VecVecBintreeAdd::new(
-                horizontal_vars,
-                multirow_vars + bucket_vars + horizontal_vars,
-                horizontal_vars,
-                false
-            ),
-            splits: SplitAt::new(
-                SplitIdx::HI(multirow_vars),
-                3,
-            ),
-            triangle: TriangleAdd::new(
-                multirow_vars + bucket_vars - 2,
-                SplitIdx::HI(multirow_vars),
-            ),
+            gkr: SimpleGKR::new(layers),
         }
     }
 }
@@ -100,17 +117,11 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Protoc
     type ClaimsAfter = SinglePointClaims<F>;
 
     fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
-        let (claims, _) = self.triangle.prove(transcript, claims, advice.triangle);
-        let (claims, _) = self.splits.prove(transcript, claims, ());
-        let (claims, _) = self.splits.prove(transcript, claims, ());
-        self.bintree.prove(transcript, claims, advice.bintree)
+        self.gkr.prove(transcript, claims, advice)
     }
 
     fn verify(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
-        let claims = self.triangle.verify(transcript, claims);
-        let claims = self.splits.verify(transcript, claims);
-        let claims = self.splits.verify(transcript, claims);
-        self.bintree.verify(transcript, claims)
+        self.gkr.verify(transcript, claims)
 
     }
 }
@@ -118,6 +129,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Protoc
 
 #[cfg(test)]
 mod tests {
+    use crate::cleanup::protocols::gkrs::triangle_add;
     use super::*;
     #[test]
     fn integration() {
@@ -145,7 +157,11 @@ mod tests {
         );
        
         let point = (0..multirow_vars).map(|_| <BandersnatchConfig as CurveConfig>::BaseField::rand(rng)).collect_vec();
-        let dense_output: Vec<Vec<_>> = bintree_triangle_wg.triangle.last.take().unwrap().into();
+        let num_vars = multirow_vars + bucket_vars;
+        let dense_output: Vec<Vec<_>> = triangle_add::builder::witness::last_step(
+            bintree_triangle_wg.advices.last().unwrap().into(),
+            num_vars - 2 - SplitIdx::HI(multirow_vars).hi_usize(num_vars - 2)
+        );
 
         let claims = SinglePointClaims {
             point: point.clone(),

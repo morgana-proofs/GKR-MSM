@@ -20,17 +20,35 @@ pub enum SplitIdx {
 }
 
 impl SplitIdx {
+    // LO: 7 6 5 4 3 2 1 0
+    //     _ _ _ _ _ _ _ _
+    // HI: 0 1 2 3 4 5 6 7
+    // num_vars = 8
+
     pub fn to_hi(&self, num_vars: usize) -> Self {
         SplitIdx::HI(match self {
             SplitIdx::LO(lo) => {num_vars - lo - 1}
             SplitIdx::HI(hi) => {*hi}
         })
     }
+
+    pub fn to_lo(&self, num_vars: usize) -> Self {
+        SplitIdx::LO(match self {
+            SplitIdx::HI(hi) => {num_vars - hi - 1}
+            SplitIdx::LO(lo) => {*lo }
+        })
+    }
     
     pub fn hi_usize(&self, num_vars: usize) -> usize {
         match self.to_hi(num_vars) {
             SplitIdx::HI(hi) => hi,
-            SplitIdx::LO(lo) => unreachable!(),
+            _ => unreachable!(),
+        }
+    }
+    pub fn lo_usize(&self, num_vars: usize) -> usize {
+        match self.to_lo(num_vars) {
+            SplitIdx::LO(lo) => lo,
+            _ => unreachable!(),
         }
     }
 }

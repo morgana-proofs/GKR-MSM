@@ -15,6 +15,7 @@ use crate::{
 };
 use crate::cleanup::protocols::sumcheck::{BareSumcheckSO, DenseSumcheckObjectSO, GenericSumcheckProtocol};
 use crate::cleanup::protocols::sumchecks::dense_eq::DenseDeg2Sumcheck;
+use crate::cleanup::protocols::zero_check::ZeroCheck;
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 macro_rules! build_advice_into {
     ($name:ident <$($l:lifetime, )*$($x:ident : $xt:path),+>, $value:ident($held:ty)) => {
@@ -66,7 +67,7 @@ common_advice!(
     SplitVecVecMapGKRAdvice<F: PrimeField>{
         VecVecMAP(Vec<VecVecPolynomial<F>>),
         DenseMAP(Vec<Vec<F>>),
-        SPLIT(())
+        EMPTY(())
     }
 );
 
@@ -75,7 +76,7 @@ impl <F: PrimeField> Display for SplitVecVecMapGKRAdvice<F> {
         match self {
             SplitVecVecMapGKRAdvice::VecVecMAP(_) => {write!(f, "VecVecMAP")}
             SplitVecVecMapGKRAdvice::DenseMAP(_) => {write!(f, "DenseMAP")}
-            SplitVecVecMapGKRAdvice::SPLIT(_) => {write!(f, "SPLIT")}
+            SplitVecVecMapGKRAdvice::EMPTY(_) => {write!(f, "SPLIT")}
         }
     }
 }
@@ -85,7 +86,7 @@ impl <F: PrimeField> SplitVecVecMapGKRAdvice<F> {
         match self {
             SplitVecVecMapGKRAdvice::VecVecMAP(vv) => {format!("VecVec(N: {} data: {})", vv.len(), vv[0].data.len())}
             SplitVecVecMapGKRAdvice::DenseMAP(d) => {format!("Dense(N: {} data: {})", d.len(), d[0].len())}
-            SplitVecVecMapGKRAdvice::SPLIT(_) => { "Split()".to_string() }
+            SplitVecVecMapGKRAdvice::EMPTY(_) => { "Split()".to_string() }
         }
     }
 }
@@ -156,5 +157,28 @@ impl<Transcript: TProofTranscript2, F: PrimeField> GKRLayer<Transcript, SinglePo
     #[cfg(debug_assertions)]
     fn description(&self) -> String {
         format!("Split: at {:?}, by {}", self.var_idx, self.bundle_size).to_string()
+    }
+}
+
+impl<Transcript: TProofTranscript2, F: PrimeField> GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>> for ZeroCheck<F> {
+    fn prove_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>, advice: SplitVecVecMapGKRAdvice<F>) -> SinglePointClaims<F> {
+        #[cfg(debug_assertions)]
+        println!(
+            "Proving layer {} with claim point len {}, claim evs len {}, and advice {}",
+            <ZeroCheck<F> as GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>::description(self),
+            claims.point.len(),
+            claims.evs.len(),
+            advice.describe()
+        );
+        Protocol2::prove(self, transcript, claims.into(), advice.into()).0
+    }
+
+    fn verify_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>) -> SinglePointClaims<F> {
+        Protocol2::verify(self, transcript, claims.into())
+    }
+
+    #[cfg(debug_assertions)]
+    fn description(&self) -> String {
+        "Zero check: last 2 polys".to_string()
     }
 }

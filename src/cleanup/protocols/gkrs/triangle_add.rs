@@ -122,7 +122,7 @@ pub mod builder {
                     advice = next;
                 }
                 if layer_idx < num_layers {
-                    advices.push(SplitVecVecMapGKRAdvice::SPLIT(()))
+                    advices.push(SplitVecVecMapGKRAdvice::EMPTY(()))
                 }
             }
 

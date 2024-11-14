@@ -52,10 +52,11 @@ impl<F: PrimeField + TwistedEdwardsConfig> VecVecBintreeAddWG<F> {
         advice: SplitVecVecMapGKRAdvice<F>,
         row_logsize: usize,
         num_adds: usize,
+        do_bitcheck: bool,
     ) -> Self {
 
         Self {
-            advices: builder::witness::build(advice, row_logsize, num_adds),
+            advices: builder::witness::build(advice, row_logsize, num_adds, do_bitcheck),
         }
     }
     
@@ -63,11 +64,13 @@ impl<F: PrimeField + TwistedEdwardsConfig> VecVecBintreeAddWG<F> {
         inputs: Vec<VecVecPolynomial<F>>,
         row_logsize: usize,
         num_adds: usize,
+        do_bitcheck: bool,
     ) -> Self {
         Self::new_common(
             SplitVecVecMapGKRAdvice::VecVecMAP(inputs),
             row_logsize,
             num_adds,
+            do_bitcheck,
         )
     }
 }
@@ -85,14 +88,14 @@ pub struct VecVecBintreeAdd<F: PrimeField, Transcript: TProofTranscript2> {
 }
 
 impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> VecVecBintreeAdd<F, Transcript> {
-    pub fn new(num_adds: usize, num_vars: usize, row_logsize: usize, split_last: bool) -> Self {
+    pub fn new(num_adds: usize, num_vars: usize, row_logsize: usize, do_bitcheck: bool) -> Self {
         Self {
             gkr: SimpleGKR::new(
-                builder::protocol::build(num_vars, num_adds, row_logsize, split_last),
+                builder::protocol::build(num_vars, num_adds, row_logsize, do_bitcheck),
             )
         }
     }
-    
+
     #[cfg(debug_assertions)]
     pub fn describe(&self) -> String {
         format!("Bintree Add {} ", self.gkr.description())
@@ -118,6 +121,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Protoc
 pub mod builder {
     use super::*;
     pub mod witness {
+        use crate::cleanup::utils::algfn::{BitCheckFn, StackedAlgFn};
         use super::*;
 
         pub fn last_step<F: PrimeField + TwistedEdwardsConfig>(
@@ -135,8 +139,14 @@ pub mod builder {
             advice: SplitVecVecMapGKRAdvice<F>,
             row_logsize: usize,
             num_adds: usize,
+            do_bitcheck: bool,
         ) -> Vec<SplitVecVecMapGKRAdvice<F>> {
             assert!(num_adds > 0);
+            match advice {
+                SplitVecVecMapGKRAdvice::VecVecMAP(_) => {}
+                SplitVecVecMapGKRAdvice::DenseMAP(_) => {}
+                SplitVecVecMapGKRAdvice::EMPTY(_) => {}
+            }
             let mut advice = Some(advice);
             let mut advices = vec![];
 
@@ -146,10 +156,16 @@ pub mod builder {
                 for step in AdditionStep::all() {
                     next = make_step((&advice).as_ref().unwrap().into(), add_idx, row_logsize, num_adds, &step, SplitIdx::LO(0), 3);
                     advices.push(advice.unwrap());
+                    match (add_idx, step, do_bitcheck) {
+                        (0, AdditionStep::L1, true) => {
+                            advices.push(SplitVecVecMapGKRAdvice::EMPTY(()));
+                        }
+                        _ => {}
+                    }
                     advice = next;
                 }
                 if add_idx + 1 != num_adds {
-                    advices.push(SplitVecVecMapGKRAdvice::SPLIT(()));
+                    advices.push(SplitVecVecMapGKRAdvice::EMPTY(()));
                 }
             }
             advices
@@ -163,7 +179,7 @@ pub mod builder {
                 SplitVecVecMapGKRAdvice::DenseMAP(d) => {
                     SplitVecVecMapGKRAdvice::DenseMAP(Vec::algfn_map(d, f))
                 }
-                SplitVecVecMapGKRAdvice::SPLIT(_) => { unreachable!() }
+                SplitVecVecMapGKRAdvice::EMPTY(_) => { unreachable!() }
             }
         }
 
@@ -182,11 +198,19 @@ pub mod builder {
                 SplitVecVecMapGKRAdvice::DenseMAP(d) => {
                     SplitVecVecMapGKRAdvice::DenseMAP(Vec::algfn_map_split(d, f, idx, bundle_size))
                 }
-                SplitVecVecMapGKRAdvice::SPLIT(_) => { unreachable!() }
+                SplitVecVecMapGKRAdvice::EMPTY(_) => { unreachable!() }
             }
         }
 
-        fn make_step<F: PrimeField + TwistedEdwardsConfig>(advice: &SplitVecVecMapGKRAdvice<F>, fwd_idx: usize, row_logsize: usize, n_adds: usize, step: &AdditionStep, split_idx: SplitIdx, bundle_size: usize) -> Option<SplitVecVecMapGKRAdvice<F>> {
+        fn make_step<F: PrimeField + TwistedEdwardsConfig>(
+            advice: &SplitVecVecMapGKRAdvice<F>,
+            fwd_idx: usize,
+            row_logsize: usize,
+            n_adds: usize,
+            step: &AdditionStep,
+            split_idx: SplitIdx,
+            bundle_size: usize,
+        ) -> Option<SplitVecVecMapGKRAdvice<F>> {
             match (step, fwd_idx, fwd_idx + 1 == n_adds) {
                 (AdditionStep::L1, 0, _) => {
                     Some(advice_map(advice, affine_twisted_edwards_add_l1()))
@@ -217,23 +241,48 @@ pub mod builder {
     }
 
     pub mod protocol {
+        use crate::cleanup::protocols::zero_check::ZeroCheck;
+        use crate::cleanup::utils::algfn::{BitCheckFn, RepeatedAlgFn, StackedAlgFn};
         use super::*;
 
-        pub fn build<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2>(num_vars: usize, num_adds: usize, row_logsize: usize, split_last: bool) -> Vec<Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>> {
+        pub fn build<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2>(
+            num_vars: usize,
+            num_adds: usize,
+            row_logsize: usize,
+            do_bitcheck: bool,
+        ) -> Vec<Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>> {
             let mut layers: Vec<Box<dyn GKRLayer<Transcript, SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>>>> = vec![];
-            let mut step = AdditionStep::L1;
             let num_vertical_vars = num_vars - row_logsize;
             for i in 0..num_adds {
-                for _ in 0..3 {
-                    match (i, i + 1< row_logsize, &step) {
+                for step in AdditionStep::all() {
+                    match (i, i + 1 < row_logsize, &step) {
                         (0, _, AdditionStep::L1) => {
-                            layers.push(Box::new(
-                                VecVecDeg2Sumcheck::new(
-                                    affine_twisted_edwards_add_l1(),
-                                    num_vars - i - 1,
-                                    num_vertical_vars,
-                                )
-                            ));
+                            layers.push(match do_bitcheck {
+                                true => {
+                                    Box::new(
+                                        VecVecDeg2Sumcheck::new(
+                                            StackedAlgFn::new(
+                                                affine_twisted_edwards_add_l1(),
+                                                RepeatedAlgFn::new(
+                                                    BitCheckFn::new(),
+                                                    2,
+                                                ),
+                                            ),
+                                            num_vars - i - 1,
+                                            num_vertical_vars,
+                                        )
+                                    )
+                                }
+                                false => {
+                                    Box::new(
+                                        VecVecDeg2Sumcheck::new(
+                                            affine_twisted_edwards_add_l1(),
+                                            num_vars - i - 1,
+                                            num_vertical_vars,
+                                        )
+                                    )
+                                }
+                            });
                         }
                         (0, _, AdditionStep::L2) => {
                             layers.push(Box::new(
@@ -305,13 +354,16 @@ pub mod builder {
                             ));
                         }
                     }
-                    step = match step {
-                        AdditionStep::L1 => { AdditionStep::L2}
-                        AdditionStep::L2 => { AdditionStep::L3}
-                        AdditionStep::L3 => { AdditionStep::L1}
+                    match (i, step, do_bitcheck) {
+                        (0, AdditionStep::L1, true) => {
+                            layers.push(Box::new(
+                                ZeroCheck::new()
+                            ))
+                        }
+                        _ => {}
                     }
                 }
-                if i != num_adds - 1 || split_last {
+                if i != num_adds - 1 {
                     layers.push(Box::new(
                         SplitAt::new(
                             SplitIdx::LO(0),
@@ -363,13 +415,13 @@ mod test {
 
         let points = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
         let inputs = vecvec_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
-        let witness_gen = VecVecBintreeAddWG::new_common(SplitVecVecMapGKRAdvice::VecVecMAP(inputs), row_logsize, num_adds);
+        let witness_gen = VecVecBintreeAddWG::new_common(SplitVecVecMapGKRAdvice::VecVecMAP(inputs), row_logsize, num_adds, false);
 
         let prover = VecVecBintreeAdd::new(
             num_adds,
             num_vars,
             row_logsize,
-            false 
+            false,
         );
         #[cfg(debug_assertions)]
         prover.gkr.layers
@@ -386,7 +438,7 @@ mod test {
         let dense_output = match last {
             SplitVecVecMapGKRAdvice::VecVecMAP(vv) => { vv.to_dense( ())}
             SplitVecVecMapGKRAdvice::DenseMAP(d) => { d.iter().map(|c| c.to_dense(num_vars - num_adds - match false {true => 1, false => 0})).collect_vec() }
-            SplitVecVecMapGKRAdvice::SPLIT(_) => { unreachable!() }
+            SplitVecVecMapGKRAdvice::EMPTY(_) => { unreachable!() }
         };
 
         let point = (0..(num_vars - 1 - num_adds + match false {true => 0, false => 1})).map(|_| Fr::rand(rng)).collect_vec();
@@ -418,7 +470,7 @@ mod test {
         let split_last = false;
         let points = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
         let inputs = vecvec_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
-        let smth = VecVecBintreeAddWG::new_common(SplitVecVecMapGKRAdvice::VecVecMAP(inputs.clone()), row_logsize, num_adds);
+        let smth = VecVecBintreeAddWG::new_common(SplitVecVecMapGKRAdvice::VecVecMAP(inputs.clone()), row_logsize, num_adds, false);
         let outs = builder::witness::last_step(smth.advices.last().as_ref().unwrap(), num_adds - 1);
 
         let densified_out = match outs {
@@ -428,12 +480,12 @@ mod test {
             SplitVecVecMapGKRAdvice::DenseMAP(d) => {
                 d.iter().map(|v| v.to_dense(row_logsize + col_logsize - num_adds)).collect_vec()
             }
-            SplitVecVecMapGKRAdvice::SPLIT(_) => {unreachable!()}
+            SplitVecVecMapGKRAdvice::EMPTY(_) => {unreachable!()}
         };
         let densified_points = points.iter().map(|p| p.vec()).collect_vec();
 
         let group_size = 1 << num_adds;
-        for idx in 0..densified_out[0].len() {
+        for idx in 0..densified_out[0].len() {  
             let mut acc = Projective::zero();
             for count in 0..group_size {
                 acc += Affine::<BandersnatchConfig>::new(
@@ -497,7 +549,7 @@ mod test {
         let dense_ans = match l3 {
             SplitVecVecMapGKRAdvice::VecVecMAP(vv) => {vv.to_dense(())}
             SplitVecVecMapGKRAdvice::DenseMAP(d) => {d.iter().map(|p| p.to_dense(out_n_vars)).collect_vec()}
-            SplitVecVecMapGKRAdvice::SPLIT(_) => {unreachable!()}
+            SplitVecVecMapGKRAdvice::EMPTY(_) => {unreachable!()}
         };
 
         for idx in 0..output_points.len() {
@@ -572,7 +624,7 @@ mod test {
         let dense_ans = match l3 {
             SplitVecVecMapGKRAdvice::VecVecMAP(vv) => {vv.to_dense(())}
             SplitVecVecMapGKRAdvice::DenseMAP(d) => {d.iter().map(|p| p.to_dense(out_n_vars)).collect_vec()}
-            SplitVecVecMapGKRAdvice::SPLIT(_) => {unreachable!()}
+            SplitVecVecMapGKRAdvice::EMPTY(_) => {unreachable!()}
         };
 
         for idx in 0..output_points.len() {

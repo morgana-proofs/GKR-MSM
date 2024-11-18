@@ -34,8 +34,9 @@ num-traits = "0.2.19"
 
 [features]
 parallel = []
-multicore = []
+#multicore = []
 default = [
+#    "parallel"
 ]
 prof = ["dep:profi", "profi/enable", "profi/attributes", "profi/rayon", "profi/deep-hierarchy"]
 memprof = ["dep:jemalloc-ctl", "dep:jemallocator"]
@@ -46,22 +47,27 @@ rstest = "0.23.0"
 test-case = "3.3.1"
 
 
+#
+#[[bench]]
+#name = "gkr_msm_simple"
+#harness = false
+#
+#[[bench]]
+#name = "bintree"
+#harness = false
+#
+#[[bench]]
+#name = "sumcheck"
+#harness = false
+#
+#[[bench]]
+#name = "gkr_msm_simple_prof"
+#harness = false
 
 [[bench]]
-name = "gkr_msm_simple"
+name = "polynomial"
 harness = false
 
-[[bench]]
-name = "bintree"
-harness = false
-
-[[bench]]
-name = "sumcheck"
-harness = false
-
-[[bench]]
-name = "gkr_msm_simple_prof"
-harness = false
 [[example]]
 name = "nn"
 path = "examples/nn.rs"

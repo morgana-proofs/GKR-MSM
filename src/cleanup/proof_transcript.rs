@@ -37,8 +37,9 @@ pub trait TProofTranscript2 : Sized {
     }
 
     fn challenge_vec<F: PrimeField>(&mut self, n: usize, bitsize: usize) -> Vec<F> {
-        let bytes = self.raw_challenge(n * ((bitsize + 7) / 8));
-        bytes.chunks(16).map(|chunk| F::from_le_bytes_mod_order(chunk)).collect()
+        let bytesize = ((bitsize + 7) / 8);
+        let bytes = self.raw_challenge(n * bytesize);
+        bytes.chunks(bytesize).map(|chunk| F::from_le_bytes_mod_order(chunk)).collect()
     }
     
     fn read_scalars<F: PrimeField>(&mut self, size: usize) -> Vec<F> {

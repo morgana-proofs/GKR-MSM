@@ -6,7 +6,7 @@ use itertools::Itertools;
 use liblasso::poly::{eq_poly::EqPolynomial, unipoly::UniPoly};
 use rayon::{current_num_threads, iter::{repeatn, IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator}, slice::{ParallelSlice, ParallelSliceMut}};
 
-use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2, protocols::{pushforward::logup_mainphase::LogupMainphaseProtocol, splits::{SplitAt, SplitIdx}, sumcheck::{decompress_coefficients, DenseEqSumcheckObject, FoldToSumcheckable, PointClaim}, verifier_polys::{EqPoly, EqTruncPoly, VerifierPoly}}, utils::algfn::AlgFnUtils}, polynomial::vecvec::VecVecPolynomial, utils::{eq_eval, eq_sum, make_gamma_pows, pad_vector}};
+use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2, protocols::{pushforward::logup_mainphase::LogupMainphaseProtocol, splits::{SplitAt, SplitIdx}, sumcheck::{decompress_coefficients, DenseEqSumcheckObject, FoldToSumcheckable, PointClaim}, verifier_polys::{EqPoly, EqTruncPoly, SelectorPoly, VerifierPoly}}, utils::{algfn::AlgFnUtils, arith::evaluate_poly}}, polynomial::vecvec::VecVecPolynomial, utils::{eq_eval, eq_sum, make_gamma_pows, pad_vector, EvaluateAtPoint}};
 
 use super::super::{sumcheck::{compress_coefficients, evaluate_univar, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec_eq::Sumcheckable};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
@@ -408,10 +408,17 @@ pub struct PushforwardProtocol<F: PrimeField> {
     _marker: PhantomData<F>,
 }
 
+impl<F: PrimeField> PushforwardProtocol<F> {
+    pub fn new(x_logsize: usize, y_logsize: usize, y_size: usize, d_logsize: usize) -> Self {
+        assert!(y_size <= (1 << y_logsize));
+        Self { x_logsize, y_logsize, y_size, d_logsize, _marker: PhantomData }
+    }
+}
+
 impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol<F> {
     type ProverInput = (PipMSMPhase1Data<F>, PipMSMPhase2Data<F>);
 
-    type ProverOutput = ();
+    type ProverOutput = F;
 
     type ClaimsBefore = SinglePointClaims<F>; // Full evaluation claim
 
@@ -422,10 +429,10 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         // Parse the point
         let (r_y, rest) = claims.point.split_at(self.y_logsize);
         let r_y = r_y.to_vec();
-        let (r_c, rest) = rest.split_at(self.x_logsize);
-        let r_c = r_c.to_vec();
         let (r_d, rest) = rest.split_at(self.d_logsize);
         let r_d = r_d.to_vec();
+        let (r_c, rest) = rest.split_at(self.x_logsize);
+        let r_c = r_c.to_vec();
         assert!(rest.len() == 0);
 
         let (
@@ -442,7 +449,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         let matrix_logsize = x_logsize + y_logsize;
         let matrix_size = x_size * y_size; // matrix is laid out row-wise
 
-        let f = AddInversesFn::new();
+        let f_addinv = AddInversesFn::new();
 
         // We currently lay out polynomials without padding, but add it when we do an actual proof. The padding-optimized implementation will be added later.
 
@@ -463,7 +470,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         // gamma is a folding challenge, psi is a linear combination challenge, tau_c and tau_d are affine offset challenges
         // i.e. lhs of logup will look like sum 1 / c_adj + 1 / d_adj
         // where c_adj, d_adj are the following linear combination:
-        // c_adj = c_pull + psi * c - tau_c + tau_suppression_term * selector
+        // c_adj = c_pull + psi * c - tau_c * selector  + tau_suppression_term * (1 - selector)
 
         // suppression term is added to c_adj and d_adj outside of the active matrix. it is another tau, which basically enforces us to lookup (0, 0) outside of the matrix -
         // which forces c_pull and c to be equal to 0 outside.
@@ -473,7 +480,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         pad_vector(&mut c_adj, matrix_logsize, tau_suppression_term);
         pad_vector(&mut d_adj, matrix_logsize, tau_suppression_term);
 
-        // c_adj = c_pull + psi * c - tau * c + tau_suppression_term * (1 - selector), and similar for d.
+        // c_adj = c_pull + psi * c - tau_c * selector + tau_suppression_term * (1 - selector), and similar for d.
 
         pad_vector(&mut c, matrix_logsize, F::zero());
         pad_vector(&mut d, matrix_logsize, F::zero());
@@ -487,7 +494,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
 
         // now, we will compute the result of this fractional addition
 
-        let [left, right] = f.map_split_hi(&[&c_adj, &d_adj]); // eventually need to do low splits to deal with padding, idc now
+        let [left, right] = f_addinv.map_split_hi(&[&c_adj, &d_adj]); // eventually need to do low splits to deal with padding, idc now
         let [num_l, den_l] = left.try_into().unwrap();
         let [num_r, den_r] = right.try_into().unwrap();
 
@@ -495,12 +502,11 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         // this is relatively cheap, because the tables are small
 
         let eq_c = EqPoly::new(x_logsize, &r_c).evals();
-        let eq_d = EqPoly::new(y_logsize, &r_d).evals();
+        let eq_d = EqPoly::new(d_logsize, &r_d).evals();
         let table_c: Vec<F> = (0 .. x_size).into_par_iter().map(|i| eq_c[i] + psi * F::from(i as u64) - tau_c).collect();
         let table_d: Vec<F> = (0 .. 1 << d_logsize).into_par_iter().map(|i| eq_d[i] + psi * F::from(i as u64) - tau_d).collect();
 
-
-        let suppression_term_total = F::from(((1 << matrix_logsize) - matrix_size) as u64) * tau_suppression_term.inverse().unwrap();
+        let suppression_term_total = F::from(2 * ((1 << matrix_logsize) - matrix_size) as u64) * tau_suppression_term.inverse().unwrap();
 
         let mainphase = LogupMainphaseProtocol::<F>::new(vec![self.x_logsize + self.y_logsize - 1, self.x_logsize + self.y_logsize - 1, self.x_logsize, self.d_logsize]);
 
@@ -513,7 +519,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         assert!(mainphase_claims.len() == 3); // sanity.
         let [cd_claims, ac_c_claims, ac_d_claims] = mainphase_claims.try_into().unwrap();
         
-        // VALIDATE AC CLAIMS !!
+        // TODO: VALIDATE AC CLAIMS !!
         println!("WARNING: WE ARE NOT VALIDATING AC CLAIMS YET, FIX");
         // VALIDATE AC CLAIMS !!
 
@@ -528,8 +534,8 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         let eq_sel_y = EqTruncPoly::new(y_logsize, y_size, &r_y).evals();
 
         let p_selector_prod : Vec<F> = (0 .. 1 << matrix_logsize).into_par_iter().map(|i| {
-            let i_x = i >> y_logsize;
-            let i_y = (i_x << y_logsize) ^ i;
+            let i_y = i >> x_logsize;
+            let i_x = (i_y << x_logsize) ^ i;
             eq_sel_y[i_y] * p_folded[i_x]
         }).collect();
         
@@ -546,7 +552,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
 
         // sanity:
         assert!(cd_evs.len() == 2);
-        let mut claim = cd_evs[0] + gammas[1] * cd_evs[1] + gammas[2] * ev_folded;
+        let mut claim = (cd_evs[0] + gammas[1] * cd_evs[1]) + gammas[2] * ev_folded;
 
         let frac_object = DenseEqSumcheckObject::new(vec![c_adj, d_adj], f_inv, cd_point, cd_evs);
         let mut frac_object = frac_object.rlc(gamma);
@@ -563,7 +569,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
 
             let combined_response : Vec<F> = (0..4).map(|i| frac_response[i] + gammas[2] * prod3_response[i]).collect();
             //sanity:
-            assert!(combined_response[0] + combined_response[1].double() + combined_response[2] + combined_response[3] == claim);
+            assert!(combined_response[0].double() + combined_response[1] + combined_response[2] + combined_response[3] == claim, "{}", i);
 
             let prover_msg = compress_coefficients(&combined_response);
 
@@ -578,27 +584,44 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
 
         output_point.reverse();
 
-        let [p_folded_ev, c_pull_ev, d_pull_ev] = prod3_object.final_evals().try_into().unwrap();
-        let [c_adj_ev, d_adj_ev] = frac_object.final_evals().try_into().unwrap();
+        let [p_selector_prod_ev, c_pull_ev, d_pull_ev] = prod3_object.final_evals().try_into().unwrap();
+        let [c_adj_ev, d_adj_ev, _] = frac_object.final_evals().try_into().unwrap();
 
-        let output_evs = vec![p_folded_ev, c_pull_ev, d_pull_ev, c_adj_ev, d_adj_ev];
+        let p_folded_ev = p_selector_prod_ev * eq_sel_y.evaluate(&output_point[..y_logsize]).inverse().unwrap();
+        // SANITY:
+        assert!(evaluate_poly(&p_folded, &output_point[y_logsize..]) == p_folded_ev);
+
+        // c_adj_ev = c_pull_ev + psi c_ev - tau_c * sel_ev + tau_suppression_term * (1 - sel_ev)
+        // similar for d
+
+        let sel_ev =
+            SelectorPoly::new(y_logsize, y_size)
+            .evaluate(&output_point[..y_logsize]);
+
+        let tmp = tau_suppression_term * (F::one() - sel_ev);
+        let psi_inv = psi.inverse().unwrap();
+
+        let c_ev = psi_inv * (c_adj_ev - c_pull_ev + tau_c * sel_ev - tmp);
+        let d_ev = psi_inv * (d_adj_ev - d_pull_ev + tau_d * sel_ev - tmp);
+        
+        let output_evs = vec![p_folded_ev, c_pull_ev, d_pull_ev, c_ev, d_ev];
 
         transcript.write_scalars(&output_evs);
 
-        (SinglePointClaims{ point: output_point, evs: output_evs }, ())
+        (SinglePointClaims{ point: output_point, evs: output_evs }, gamma)
 
     }
 
     fn verify(&self, transcript: &mut PT, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
-        
+
+        // Parse the point
         let (r_y, rest) = claims.point.split_at(self.y_logsize);
         let r_y = r_y.to_vec();
-        let (r_c, rest) = rest.split_at(self.x_logsize);
-        let r_c = r_c.to_vec();
         let (r_d, rest) = rest.split_at(self.d_logsize);
         let r_d = r_d.to_vec();
+        let (r_c, rest) = rest.split_at(self.x_logsize);
+        let r_c = r_c.to_vec();
         assert!(rest.len() == 0);
-
 
         let d_logsize = self.d_logsize;
         let x_logsize = self.x_logsize;
@@ -609,15 +632,29 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         let matrix_logsize = x_logsize + y_logsize;
         let matrix_size = x_size * y_size; // matrix is laid out row-wise
 
+        // get challenges
 
-        
         let [psi, tau_c, tau_d, tau_suppression_term] = transcript.challenge_vec::<F>(4, 512).try_into().unwrap(); // can be smaller bitsize, but let's make it simple for now.
-        let gamma : F= transcript.challenge(128);
+        let gamma : F = transcript.challenge(128);
+
+        // gamma is a folding challenge, psi is a linear combination challenge, tau_c and tau_d are affine offset challenges
+        // i.e. lhs of logup will look like sum 1 / c_adj + 1 / d_adj
+        // where c_adj, d_adj are the following linear combination:
+        // c_adj = c_pull + psi * c - tau_c * selector  + tau_suppression_term * (1 - selector)
+
+        // suppression term is added to c_adj and d_adj outside of the active matrix. it is another tau, which basically enforces us to lookup (0, 0) outside of the matrix -
+        // which forces c_pull and c to be equal to 0 outside.
+
+        // c_adj = c_pull + psi * c - tau_c * selector + tau_suppression_term * (1 - selector), and similar for d.
         
+        // Current version of sumcheck, with padding terms for y coordinate:
+        // s denotes selector, eq_s - product of eq and a selector
+        // (c_adj + d_adj + gamma * (c_adj * d_adj))
+        // gamma^2 * [eq_s(r_y, y)(p_0(x) + gamma p_1(x) + gamma^2 p_2(x)) c_pull(x,y) d_pull(x,y)]
+
+        let suppression_term_total = F::from(2 * ((1 << matrix_logsize) - matrix_size) as u64) * tau_suppression_term.inverse().unwrap();
 
         let mainphase = LogupMainphaseProtocol::<F>::new(vec![self.x_logsize + self.y_logsize - 1, self.x_logsize + self.y_logsize - 1, self.x_logsize, self.d_logsize]);
-
-        let suppression_term_total = F::from(((1 << matrix_logsize) - matrix_size) as u64) * tau_suppression_term.inverse().unwrap();
 
         let mainphase_claims = mainphase.verify(
             transcript, 
@@ -627,46 +664,71 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         assert!(mainphase_claims.len() == 3); // sanity.
         let [cd_claims, ac_c_claims, ac_d_claims] = mainphase_claims.try_into().unwrap();
         
-
-        // VALIDATE AC CLAIMS !!
+        // TODO: VALIDATE AC CLAIMS !!
         println!("WARNING: WE ARE NOT VALIDATING AC CLAIMS YET, FIX");
         // VALIDATE AC CLAIMS !!
 
         let split = SplitAt::<F>::new(SplitIdx::HI(0), 2);
 
         let cd_claims = split.verify(transcript, cd_claims);
-        
-        
+
         let gammas = make_gamma_pows(gamma, 5);
 
         assert!(claims.evs.len() == 3); //sanity
         let ev_folded = claims.evs[0] + gammas[1] * claims.evs[1] + gammas[2] * claims.evs[2];
 
-        // sanity:
-        assert!(cd_claims.evs.len() == 2);
-        let mut claim = cd_claims.evs[0] + gammas[1] * cd_claims.evs[1] + gammas[2] * ev_folded;
+        let f_prod3 = Prod3Fn::<F>::new();
 
+        // eq(r, x) (c_adj + d_adj + gamma c_adj d_adj)
+        let f_inv = AddInversesFn::<F>::new();
+        let SinglePointClaims { point: cd_point, evs: cd_evs } = cd_claims;
+
+        // sanity:
+        assert!(cd_evs.len() == 2);
+        let mut claim = cd_evs[0] + gammas[1] * cd_evs[1] + gammas[2] * ev_folded;
 
         let mut output_point = vec![];
 
-        for i in 0 .. self.x_logsize + self.y_logsize {
-            
+        for i in 0 .. x_logsize + y_logsize {
             let prover_msg = transcript.read_scalars(3);
             let combined_response = decompress_coefficients(&prover_msg, claim);
-            
             let t = transcript.challenge::<F>(128);
 
             claim = evaluate_univar(&combined_response, t);
             output_point.push(t);
-        }
 
+        }
         output_point.reverse();
 
-        let [p_folded_ev, c_pull_ev, d_pull_ev, c_adj_ev, d_adj_ev] = transcript.read_scalars(5).try_into().unwrap();
+        let [p_folded_ev, c_pull_ev, d_pull_ev, c_ev, d_ev] = transcript.read_scalars(5).try_into().unwrap();
 
-        assert!(eq_eval(&cd_claims.point, &output_point) * (c_adj_ev + d_adj_ev + gammas[1] * c_adj_ev * d_adj_ev) + gammas[2] * p_folded_ev * c_pull_ev * d_pull_ev == claim);
+        // c_adj_ev = c_pull_ev + psi c_ev - tau_c * sel_ev + tau_suppression_term * (1 - sel_ev)
+        // similar for d
+        let eq_sel_y = EqTruncPoly::new(y_logsize, y_size, &r_y).evals();
+        let p_selector_prod_ev = p_folded_ev * eq_sel_y.evaluate(&output_point[..y_logsize]);
 
-        SinglePointClaims{ point: output_point, evs: vec![p_folded_ev, c_pull_ev, d_pull_ev, c_adj_ev, d_adj_ev] }
+
+        let sel_ev =
+            SelectorPoly::new(y_logsize, y_size)
+            .evaluate(&output_point[..y_logsize]);
+
+        let tmp = tau_suppression_term * (F::one() - sel_ev);
+        
+        let c_adj_ev = c_pull_ev + psi * c_ev - tau_c * sel_ev + tmp;
+        let d_adj_ev = d_pull_ev + psi * d_ev - tau_d * sel_ev + tmp;
+
+        let eq_cd = EqPoly::new(matrix_logsize, &cd_point);
+
+        assert!(
+            eq_cd.evaluate(&output_point) * ((c_adj_ev + d_adj_ev) + gammas[1] * c_adj_ev * d_adj_ev)
+            + gammas[2] * (c_pull_ev * d_pull_ev * p_selector_prod_ev)
+
+            == claim
+        );
+
+        let output_evs = vec![p_folded_ev, c_pull_ev, d_pull_ev, c_ev, d_ev];
+
+        SinglePointClaims{ point: output_point, evs: output_evs }
 
     }
 }
@@ -688,49 +750,13 @@ mod tests {
 
     type Fr = <Config as CurveConfig>::ScalarField;
 
-    // #[test]
-    // fn layered_prod4_verifies() {
-    //     // currently this test does almost nothing, as layered4 actually IS naive implementation (with some padding)
-    //     let rng = &mut test_rng();
-
-    //     let n_vars_x = 3;
-    //     let n_vars_y = 4;
-
-    //     let p = (0 .. 1 << n_vars_x).map(|_| Fr::rand(rng)).collect_vec();
-    //     let a = (0 .. 1 << (n_vars_x + n_vars_y)).map(|_| Fr::rand(rng)).collect_vec();
-    //     let b = (0 .. 1 << (n_vars_x + n_vars_y)).map(|_| Fr::rand(rng)).collect_vec();
-    //     let c = (0 .. 1 << (n_vars_x + n_vars_y)).map(|_| Fr::rand(rng)).collect_vec();
-
-    //     let mut claim_hint = Fr::zero();
-
-    //     for i in 0 .. (1 << n_vars_x) {
-    //         for j in 0 .. (1 << n_vars_y) {
-    //             claim_hint += p[i] * a[(i << n_vars_y) + j] * b[(i << n_vars_y) + j] * c[(i << n_vars_y) + j]
-    //         }
-    //     }
-
-    //     let protocol = LayeredProd4Protocol::new(n_vars_x, n_vars_y);
-
-    //     let mut transcript = ProofTranscript2::start_prover(b"meow");
-
-    //     let output = protocol.prove(&mut transcript, SumClaim { sum : claim_hint }, LayeredProd4ProtocolInput { p, a, b, c } ).0;
-
-    //     let proof = transcript.end();
-
-    //     let mut transcript = ProofTranscript2::start_verifier(b"meow", proof);
-
-    //     let output2 = protocol.verify(&mut transcript, SumClaim { sum : claim_hint });
-
-    //     assert_eq!(output, output2);
-    // }
-
     #[test]
     fn pushforward_image_works() {
         let rng = &mut test_rng();
 
         let mut polys = vec![];
         let size_x = 13783;
-        let size_y = 32;
+        let size_y = 29;
 
         let c = 8;
 
@@ -781,6 +807,139 @@ mod tests {
                 Some(x) => assert!(x == Fr::zero()),
             }
         }).count()).count()).count();
+
+    }
+
+    #[test]
+    fn pushforward_works() {
+        let rng = &mut test_rng();
+
+        let mut polys = vec![];
+        let x_logsize = 10;
+        let x_size = 1 << x_logsize;
+        let y_logsize = 3;
+        let y_size = 8;
+
+        let d_logsize = 8;
+
+        for i in 0..2 {
+            polys.push((0..x_size).map(|_| Fr::rand(rng)).collect_vec());
+        }
+        polys.push((0..x_size).map(|_| Fr::one()).collect_vec());
+
+        let mut digits = vec![vec![0u32; x_size]; y_size];
+
+        for x in 0..x_size {
+            for y in 0..y_size {
+                digits[y][x] = rng.next_u32() % (1 << d_logsize);
+            }
+        }
+
+        let (image, counter)
+        = compute_bucketing_image(
+            &polys,
+            &digits,
+            d_logsize,
+            log2(x_size) as usize,
+            log2(y_size) as usize,
+            x_size,
+            y_size,
+            vec![Fr::zero(); 3],
+            vec![Fr::zero(); 3]
+        );
+
+        let r : Vec<Fr> = (0 .. x_logsize + y_logsize + d_logsize).map(|_|Fr::rand(rng)).collect();
+
+        let image_evals = image.iter().map(|vv|{
+            evaluate_poly(&vv.vec(), &r)
+        }).collect::<Vec<Fr>>();
+
+        let d : Vec<Fr> = 
+            digits.iter().map(|row| row.iter().map(|elt| Fr::from(*elt as u64))).flatten().collect();
+
+        let c : Vec<Fr> = 
+            counter.iter().map(|row| row.iter().map(|elt| Fr::from(*elt as u64))).flatten().collect();
+
+        let mut ac_d = vec![0u64; 1 << d_logsize];
+        let mut ac_c = vec![0u64; 1 << x_logsize];
+
+        for row in &digits {
+            for &elt in row {
+                ac_d[elt as usize] += 1
+            }
+        }
+        for row in &counter {
+            for &elt in row {
+                ac_c[elt as usize] += 1
+            }
+        }
+
+        let ac_c : Vec<Fr> = ac_c.iter().map(|&x| -Fr::from(x)).collect();
+        let ac_d : Vec<Fr> = ac_d.iter().map(|&x| -Fr::from(x)).collect();
+
+        let p1_data = PipMSMPhase1Data{
+            c : c.clone(),
+            d : d.clone(),
+            p_0: polys[0].clone(),
+            p_1: polys[1].clone(),
+            ac_c,
+            ac_d
+        };
+
+        let (r_y, rest) = r.split_at(y_logsize);
+        let r_y = r_y.to_vec();
+        let (r_d, rest) = rest.split_at(d_logsize);
+        let r_d = r_d.to_vec();
+        let (r_c, rest) = rest.split_at(x_logsize);
+        let r_c = r_c.to_vec();
+        assert!(rest.len() == 0);
+
+        let eq_c = EqPoly::new(x_logsize, &r_c).evals();
+        let eq_d = EqPoly::new(d_logsize, &r_d).evals();
+
+        let c_pull : Vec<Fr> = counter.iter().map(|row| {
+            row.iter().map(|&elt| {
+                eq_c[elt as usize]
+            })
+        }).flatten().collect();
+
+        let d_pull : Vec<Fr> = digits.iter().map(|row| {
+            row.iter().map(|&elt| {
+                eq_d[elt as usize]
+            })
+        }).flatten().collect();
+
+        let p2_data = PipMSMPhase2Data{
+            c_pull : c_pull.clone(),
+            d_pull : d_pull.clone()
+        };
+
+        let pushforward = PushforwardProtocol::<Fr>::new(x_logsize, y_logsize, y_size, d_logsize);
+
+        let claim = SinglePointClaims{
+            point: r.clone(),
+            evs: image_evals.clone(),
+        };
+
+        let pparam = b"ez first try";
+        let mut transcript = ProofTranscript2::start_prover(pparam);
+        let (output_claim_p, gamma) = pushforward.prove(&mut transcript, claim.clone(), (p1_data, p2_data));
+        let proof = transcript.end();
+
+        let mut transcript = ProofTranscript2::start_verifier(pparam, proof);
+        let output_claim_v = pushforward.verify(&mut transcript, claim);
+
+        assert!(output_claim_p == output_claim_v);
+
+        let output_point = output_claim_p.point;
+        let [p_folded_ev, c_pull_ev, d_pull_ev, c_ev, d_ev] = output_claim_p.evs.try_into().unwrap();
+
+        assert!(p_folded_ev == evaluate_poly(&polys[0], &output_point[y_logsize..]) + gamma * evaluate_poly(&polys[1], &output_point[y_logsize..]) + gamma * gamma);
+        assert!(c_ev == evaluate_poly(&c, &output_point));
+        assert!(d_ev == evaluate_poly(&d, &output_point));
+        assert!(c_pull_ev == evaluate_poly(&c_pull, &output_point));
+        assert!(d_pull_ev == evaluate_poly(&d_pull, &output_point));
+
 
     }
 }

@@ -18,6 +18,7 @@ use liblasso::utils::math::Math;
 use num_traits::PrimInt;
 #[cfg(feature = "prof")]
 use profi::prof;
+use rayon::current_num_threads;
 use rayon::prelude::*;
 use crate::cleanup::protocols::splits::SplitIdx;
 use crate::cleanup::protocols::sumcheck::{bind_dense_poly};
@@ -261,11 +262,10 @@ impl<F: PrimeField> MapSplit<F> for Vec<F> {
             (0..func.n_outs()).map(|_| Vec::with_capacity(polys[0].len() / 2)).collect_vec(),
             (0..func.n_outs()).map(|_| Vec::with_capacity(polys[0].len() / 2)).collect_vec(),
         ];
+        
+        let num_vars = polys[0].len().log_2();
 
-        let segment_size = 1 << (match var_idx {
-            SplitIdx::LO(var_idx) => { var_idx }
-            SplitIdx::HI(var_idx) => { polys[0].len().log_2() - 1 - var_idx }
-        });
+        let segment_size = 1 << var_idx.lo_usize(num_vars);
 
         let mut inputs = polys.iter().map(|_| F::zero()).collect_vec();
 
@@ -283,15 +283,34 @@ impl<F: PrimeField> MapSplit<F> for Vec<F> {
     fn algfn_map<Fnc: AlgFn<F>>(polys: &[Self], func: Fnc) -> Vec<Self> {
         #[cfg(debug_assertions)]
         println!("..... MAP D->D   with {}", func.description());
+        #[cfg(feature = "parallel")]
+        let chunk_size = {
+            let split_factor = 4 * current_num_threads();
+            (polys[0].len() + split_factor - 1) / split_factor
+        };
+        #[cfg(not(feature = "parallel"))]
+        let chunk_size = {
+            polys[0].len()
+        };
         
         let mut outs = (0..func.n_outs()).map(|_| UninitArr::new(polys[0].len())).collect_vec();
-        let mut iter_ins = polys.iter().map(|i| i.chunks(1)).collect_vec();
-        let mut iter_out = outs.iter_mut().map(|i| i.chunks_mut(1)).collect_vec();
+        let mut iter_ins = polys.iter().map(|i| i.chunks(chunk_size)).collect_vec();
+        let mut iter_out = outs.iter_mut().map(|i| i.chunks_mut(chunk_size)).collect_vec();
 
-        for _ in 0..iter_ins[0].len() {
-            let input_chunks = iter_ins.iter_mut().map(|c| c.next().unwrap()).collect_vec();
+        let mut row_chunked_iterator = (0..iter_ins[0].len()).map(|_| {
+            (
+            iter_ins.iter_mut().map(|c| c.next().unwrap()).collect_vec(),
+            iter_out.iter_mut().map(|c| c.next().unwrap()).collect_vec()
+            )
+        }).collect_vec();
+
+        #[cfg(feature = "parallel")]
+        let iter = row_chunked_iterator.into_par_iter();
+        #[cfg(not(feature = "parallel"))]
+        let iter = row_chunked_iterator.into_iter();
+
+        iter.map(|(input_chunks, mut output_chunks)| {
             let mut inputs = input_chunks.iter().map(|c| c[0]).collect_vec();
-            let mut output_chunks = iter_out.iter_mut().map(|c| c.next().unwrap()).collect_vec();
 
             for idx in 0..input_chunks[0].len() {
                 let out = func.exec(&inputs);
@@ -302,7 +321,7 @@ impl<F: PrimeField> MapSplit<F> for Vec<F> {
                     inputs = input_chunks.iter().map(|c| c[idx + 1]).collect_vec();
                 }
             }
-        }
+        }).count();
         unsafe { outs.into_iter().map(|o| o.assume_init()).collect_vec() }
     }
 }
@@ -621,7 +640,7 @@ mod test {
     fn vec_algfn_map() {
         let gen = &mut test_rng();
         let n_args = 3;
-        let num_vars = 5;
+        let num_vars = 8;
 
         let data = Vec::rand_points::<BandersnatchConfig, _>(gen, DensePolyRndConfig {
             num_vars,

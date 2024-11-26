@@ -1,3 +1,4 @@
+use std::iter::once;
 use std::marker::PhantomData;
 use std::ops::Index;
 use std::sync::Arc;
@@ -254,5 +255,33 @@ impl<F: PrimeField, Fun1: AlgFn<F>, Fun2: AlgFn<F>> AlgFn<F> for StackedAlgFn<F,
     #[cfg(debug_assertions)]
     fn description(&self) -> String {
         format!("Stacked [{}] [{}]", self.fun1.description(), self.fun2.description())
+    }
+}
+
+#[derive(Clone)]
+pub struct BitCheckFn<F: PrimeField> {
+    _pd: PhantomData<F>
+}
+
+impl<F: PrimeField> BitCheckFn<F> {
+    pub fn new() -> Self {
+        Self { _pd: Default::default() }
+    }
+}
+impl <F: PrimeField> AlgFn<F> for BitCheckFn<F> {
+    fn exec(&self, args: &impl Index<usize, Output=F>) -> impl Iterator<Item=F> {
+        once(args[0] * args[0] - args[0])
+    }
+
+    fn deg(&self) -> usize {
+        2
+    }
+
+    fn n_ins(&self) -> usize {
+        1
+    }
+
+    fn n_outs(&self) -> usize {
+        1
     }
 }

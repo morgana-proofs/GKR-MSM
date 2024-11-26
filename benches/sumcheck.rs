@@ -10,7 +10,7 @@ use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 use merlin::Transcript;
 
-use GKR_MSM::cleanup::utils::twisted_edwards_ops::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
+use GKR_MSM::cleanup::utils::twisted_edwards_ops::fns::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
 use GKR_MSM::polynomial::fragmented::{Fragment, FragmentContent, FragmentedPoly, Shape};
 use GKR_MSM::protocol::bintree::{BintreeProtocol, BintreeParams, BintreeProver, Layer};
 use GKR_MSM::protocol::protocol::{EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver};

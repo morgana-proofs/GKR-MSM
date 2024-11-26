@@ -20,17 +20,35 @@ pub enum SplitIdx {
 }
 
 impl SplitIdx {
+    // LO: 7 6 5 4 3 2 1 0
+    //     _ _ _ _ _ _ _ _
+    // HI: 0 1 2 3 4 5 6 7
+    // num_vars = 8
+
     pub fn to_hi(&self, num_vars: usize) -> Self {
         SplitIdx::HI(match self {
             SplitIdx::LO(lo) => {num_vars - lo - 1}
             SplitIdx::HI(hi) => {*hi}
         })
     }
+
+    pub fn to_lo(&self, num_vars: usize) -> Self {
+        SplitIdx::LO(match self {
+            SplitIdx::HI(hi) => {num_vars - hi - 1}
+            SplitIdx::LO(lo) => {*lo }
+        })
+    }
     
     pub fn hi_usize(&self, num_vars: usize) -> usize {
         match self.to_hi(num_vars) {
             SplitIdx::HI(hi) => hi,
-            SplitIdx::LO(lo) => unreachable!(),
+            _ => unreachable!(),
+        }
+    }
+    pub fn lo_usize(&self, num_vars: usize) -> usize {
+        match self.to_lo(num_vars) {
+            SplitIdx::LO(lo) => lo,
+            _ => unreachable!(),
         }
     }
 }
@@ -104,7 +122,6 @@ impl<F: PrimeField> SplitAt<F> {
     }
 }
 
-
 impl<Transcript: TProofTranscript2, F: PrimeField> Protocol2<Transcript> for SplitAt<F> {
     type ProverInput = ();
     type ProverOutput = ();
@@ -126,6 +143,46 @@ impl<Transcript: TProofTranscript2, F: PrimeField> Protocol2<Transcript> for Spl
             SplitIdx::HI(x) => {x}
         }, r);
 
+        (SinglePointClaims{ point, evs: evs_new }, ())
+    }
+
+    fn verify(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
+        self.prove(transcript, claims, ()).0
+    }
+}
+
+
+impl<Transcript: TProofTranscript2, F: PrimeField> GKRLayer<Transcript, SinglePointClaims<F>, ()> for SplitAt<F> {
+    fn prove_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>, advice: ()) -> SinglePointClaims<F> {
+        Protocol2::prove(self, transcript, claims.into(), advice.into()).0
+    }
+
+    fn verify_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>) -> SinglePointClaims<F> {
+        Protocol2::verify(self, transcript, claims.into())
+    }
+}
+
+pub struct GlueSplit<F: PrimeField> {
+    _pd: PhantomData<F>,
+}
+
+impl<Transcript: TProofTranscript2, F: PrimeField> Protocol2<Transcript> for GlueSplit<F> {
+    type ProverInput = ();
+    type ProverOutput = ();
+    type ClaimsBefore = SinglePointClaims<F>;
+    type ClaimsAfter = SinglePointClaims<F>;
+
+    fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
+        let r = transcript.challenge_sumcheck();
+        let SinglePointClaims { mut point, evs } = claims;
+
+        let evs_new = vec![
+            evs[0] + r * (evs[2] - evs[0]),
+            evs[1] + r * (evs[3] - evs[1]),
+            evs[4] + r * (evs[5] - evs[4]),
+        ];
+
+        point.push(r);
         (SinglePointClaims{ point, evs: evs_new }, ())
     }
 
@@ -223,16 +280,5 @@ mod test {
         let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);
         proto.verify(&mut transcript_v, split_claims);
 
-    }
-}
-
-
-impl<Transcript: TProofTranscript2, F: PrimeField> GKRLayer<Transcript, SinglePointClaims<F>, ()> for SplitAt<F> {
-    fn prove_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>, advice: ()) -> SinglePointClaims<F> {
-        Protocol2::prove(self, transcript, claims.into(), advice.into()).0
-    }
-
-    fn verify_layer(&self, transcript: &mut Transcript, claims: SinglePointClaims<F>) -> SinglePointClaims<F> {
-        Protocol2::verify(self, transcript, claims.into())
     }
 }

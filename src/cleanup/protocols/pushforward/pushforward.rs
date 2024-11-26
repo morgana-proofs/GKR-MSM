@@ -6,7 +6,7 @@ use itertools::Itertools;
 use liblasso::poly::{eq_poly::EqPolynomial, unipoly::UniPoly};
 use rayon::{current_num_threads, iter::{repeatn, IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator}, slice::{ParallelSlice, ParallelSliceMut}};
 
-use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2, protocols::{pushforward::logup_mainphase::LogupMainphaseProtocol, splits::{SplitAt, SplitIdx}, sumcheck::{decompress_coefficients, DenseEqSumcheckObject, FoldToSumcheckable, PointClaim}}, utils::algfn::AlgFnUtils}, polynomial::vecvec::VecVecPolynomial, utils::{eq_eval, eq_sum, make_gamma_pows}};
+use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2, protocols::{pushforward::logup_mainphase::LogupMainphaseProtocol, splits::{SplitAt, SplitIdx}, sumcheck::{decompress_coefficients, DenseEqSumcheckObject, FoldToSumcheckable, PointClaim}, verifier_polys::{EqPoly, EqTruncPoly, VerifierPoly}}, utils::algfn::AlgFnUtils}, polynomial::vecvec::VecVecPolynomial, utils::{eq_eval, eq_sum, make_gamma_pows, pad_vector}};
 
 use super::super::{sumcheck::{compress_coefficients, evaluate_univar, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec_eq::Sumcheckable};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
@@ -61,171 +61,173 @@ impl<F: PrimeField> AlgFnSO<F> for Prod4Fn<F> {
     }
 }
 
-/// This is a sumcheck object for sumcheck P(x) A(x, y) B(x, y). It treats y-s as lower coordinates, and sumchecks by them first.
-/// Currently, it is implemented naively through dense sumcheck. An optimized implementation should be deployed later.
-pub struct LayeredProd3SumcheckObject<F: PrimeField> {
-    n_vars_x: usize,
-    n_vars_y: usize,
-    object: DenseSumcheckObjectSO<F, Prod3Fn<F>>,
-}
+// /// This is a sumcheck object for sumcheck P(x) A(x, y) B(x, y). It treats y-s as lower coordinates, and sumchecks by them first.
+// /// Currently, it is implemented naively through dense sumcheck. An optimized implementation should be deployed later.
+// pub struct LayeredProd3SumcheckObject<F: PrimeField> {
+//     n_vars_x: usize,
+//     n_vars_y: usize,
+//     object: DenseSumcheckObjectSO<F, Prod3Fn<F>>,
+// }
 
-impl<F: PrimeField> LayeredProd3SumcheckObject<F> {
-    pub fn new(p: Vec<F>, a: Vec<F>, b: Vec<F>, n_vars_x: usize, n_vars_y: usize, claim_hint: F) -> Self {
-        assert!(p.len() == 1 << n_vars_x);
-        assert!(a.len() == 1 << (n_vars_x + n_vars_y));
-        assert!(a.len() == b.len());
-        let p = p.into_par_iter().map(|x| repeatn(x, 1 << n_vars_y)).flatten().collect();
-        let f = Prod3Fn::new();
-        let object = DenseSumcheckObjectSO::new(vec![p, a, b], f, n_vars_x + n_vars_y, claim_hint);
-        Self { n_vars_x, n_vars_y, object }
-    }
-}
+// impl<F: PrimeField> LayeredProd3SumcheckObject<F> {
+//     pub fn new(p: Vec<F>, a: Vec<F>, b: Vec<F>, n_vars_x: usize, n_vars_y: usize, claim_hint: F) -> Self {
+//         assert!(p.len() == 1 << n_vars_x);
+//         assert!(a.len() == 1 << (n_vars_x + n_vars_y));
+//         assert!(a.len() == b.len());
+//         let p = p.into_par_iter().map(|x| repeatn(x, 1 << n_vars_y)).flatten().collect();
+//         let f = Prod3Fn::new();
+//         let object = DenseSumcheckObjectSO::new(vec![p, a, b], f, n_vars_x + n_vars_y, claim_hint);
+//         Self { n_vars_x, n_vars_y, object }
+//     }
+// }
 
-impl<F: PrimeField> Sumcheckable<F> for LayeredProd3SumcheckObject<F> {
-    fn bind(&mut self, t: F) {
-        self.object.bind(t);
-    }
+// impl<F: PrimeField> Sumcheckable<F> for LayeredProd3SumcheckObject<F> {
+//     fn bind(&mut self, t: F) {
+//         self.object.bind(t);
+//     }
 
-    fn unipoly(&mut self) -> UniPoly<F> {
-        let mut u = self.object.unipoly().as_vec();
-        if self.object.current_round() < self.n_vars_y {
-            let s = u.pop().unwrap();
-            assert!(s == F::zero());
-        }
-        UniPoly::from_coeff(u)
-    }
+//     fn unipoly(&mut self) -> UniPoly<F> {
+//         let mut u = self.object.unipoly().as_vec();
+//         if self.object.current_round() < self.n_vars_y {
+//             let s = u.pop().unwrap();
+//             assert!(s == F::zero());
+//         }
+//         UniPoly::from_coeff(u)
+//     }
 
-    fn final_evals(&self) -> Vec<F> {
-        self.object.final_evals()
-    }
+//     fn final_evals(&self) -> Vec<F> {
+//         self.object.final_evals()
+//     }
 
-    fn challenges(&self) -> &[F] {
-        self.object.challenges()
-    }
+//     fn challenges(&self) -> &[F] {
+//         self.object.challenges()
+//     }
 
-    fn current_round(&self) -> usize {
-        self.object.current_round()
-    }
-}
+//     fn current_round(&self) -> usize {
+//         self.object.current_round()
+//     }
+// }
+
+// pub struct Layer1CombinedObject<F: PrimeField> {
+//     prod3: LayeredProd4SumcheckObject<F>,
+//     add_inverses: AddInversesSumcheckObjectSO<F>,
+// }
+// pub struct LayeredProd4SumcheckObject<F: PrimeField> {
+//     n_vars_x: usize,
+//     n_vars_y: usize,
+//     object: DenseSumcheckObjectSO<F, Prod4Fn<F>>,
+// }
+
+// impl<F: PrimeField> LayeredProd4SumcheckObject<F> {
+//     pub fn new(p: Vec<F>, a: Vec<F>, b: Vec<F>, c: Vec<F>, n_vars_x: usize, n_vars_y: usize, claim_hint: F) -> Self {
+//         assert!(p.len() == 1 << n_vars_x);
+//         assert!(a.len() == 1 << (n_vars_x + n_vars_y));
+//         assert!(a.len() == b.len());
+//         let p = p.into_par_iter().map(|x| repeatn(x, 1 << n_vars_y)).flatten().collect();
+//         let f = Prod4Fn::new();
+//         let object = DenseSumcheckObjectSO::new(vec![p, a, b, c], f, n_vars_x + n_vars_y, claim_hint);
+//         Self { n_vars_x, n_vars_y, object }
+//     }
+// }
+
+// impl<F: PrimeField> Sumcheckable<F> for LayeredProd4SumcheckObject<F> {
+//     fn bind(&mut self, t: F) {
+//         self.object.bind(t);
+//     }
+
+//     fn unipoly(&mut self) -> UniPoly<F> {
+//         let mut u = self.object.unipoly().as_vec();
+//         if self.object.current_round() < self.n_vars_y {
+//             let s = u.pop().unwrap();
+//             assert!(s == F::zero());
+//         }
+//         UniPoly::from_coeff(u)
+//     }
+
+//     fn final_evals(&self) -> Vec<F> {
+//         self.object.final_evals()
+//     }
+
+//     fn challenges(&self) -> &[F] {
+//         self.object.challenges()
+//     }
+
+//     fn current_round(&self) -> usize {
+//         self.object.current_round()
+//     }
+// }
+
+// #[derive(Clone, Copy)]
+// pub struct LayeredProd4Protocol<F: PrimeField> {
+//     n_vars_x: usize,
+//     n_vars_y: usize,
+//     _marker: PhantomData<F>,
+// }
+
+// impl<F: PrimeField> LayeredProd4Protocol<F> {
+//     pub fn new(n_vars_x: usize, n_vars_y: usize) -> Self {
+//         Self { n_vars_x, n_vars_y, _marker: PhantomData }
+//     }
+// }
+
+// #[derive(Clone)]
+// pub struct LayeredProd4ProtocolInput<F: PrimeField> {
+//     pub p: Vec<F>,
+//     pub a: Vec<F>,
+//     pub b: Vec<F>,
+//     pub c: Vec<F>,
+// }
+
+
+// impl<T: TProofTranscript2, F: PrimeField> Protocol2<T> for LayeredProd4Protocol<F> {
+//     type ProverInput = LayeredProd4ProtocolInput<F>;
+
+//     type ProverOutput = ();
+
+//     type ClaimsBefore = SumClaim<F>;
+
+//     type ClaimsAfter = SinglePointClaims<F>;
+
+//     fn prove(&self, transcript: &mut T, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
+//         let mut claim = claims.sum;
+//         let mut object = LayeredProd4SumcheckObject::new(advice.p, advice.a, advice.b, advice.c, self.n_vars_x, self.n_vars_y, claim);
+//         for i in 0 .. (self.n_vars_x + self.n_vars_y) {
+//             let u = object.unipoly().as_vec();
+//             transcript.write_scalars(&compress_coefficients(&u));
+//             let t = transcript.challenge(128);
+//             claim = evaluate_univar(&u, t);
+//             object.bind(t);
+//         }
+//         let evs = object.final_evals();
+//         let mut point = object.challenges().to_vec();
+//         point.reverse();
+
+//         assert!(evs.len() == 4);
+//         transcript.write_scalars(&evs);
+    
+//         (SinglePointClaims {point, evs}, ())
+//     }
+
+//     fn verify(&self, transcript: &mut T, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
+//         let degrees = repeat_n(3, self.n_vars_y).chain(repeat_n(4, self.n_vars_x)).collect_vec();
+
+//         let verifier = SumcheckVerifierConfig::new(degrees.into_iter());
+
+//         let (final_claim, point) = verifier.main_cycle_sumcheck_verifier(transcript, claims.sum);
+
+//         let evs = transcript.read_scalars(4);
+
+//         assert!(evs[0] * evs[1] * evs[2] * evs[3] == final_claim);
+
+//         SinglePointClaims {point, evs}
+//     }
+// }
 
 
 pub type AddInversesSumcheckObject<F> = DenseEqSumcheckObject<F, AddInversesFn<F>>;
 pub type AddInversesSumcheckObjectSO<F> = <DenseEqSumcheckObject<F, AddInversesFn<F>> as FoldToSumcheckable<F>>::Target;
 
-pub struct Layer1CombinedObject<F: PrimeField> {
-    prod3: LayeredProd3SumcheckObject<F>,
-    add_inverses: AddInversesSumcheckObjectSO<F>,
-}
-pub struct LayeredProd4SumcheckObject<F: PrimeField> {
-    n_vars_x: usize,
-    n_vars_y: usize,
-    object: DenseSumcheckObjectSO<F, Prod4Fn<F>>,
-}
-
-impl<F: PrimeField> LayeredProd4SumcheckObject<F> {
-    pub fn new(p: Vec<F>, a: Vec<F>, b: Vec<F>, c: Vec<F>, n_vars_x: usize, n_vars_y: usize, claim_hint: F) -> Self {
-        assert!(p.len() == 1 << n_vars_x);
-        assert!(a.len() == 1 << (n_vars_x + n_vars_y));
-        assert!(a.len() == b.len());
-        let p = p.into_par_iter().map(|x| repeatn(x, 1 << n_vars_y)).flatten().collect();
-        let f = Prod4Fn::new();
-        let object = DenseSumcheckObjectSO::new(vec![p, a, b, c], f, n_vars_x + n_vars_y, claim_hint);
-        Self { n_vars_x, n_vars_y, object }
-    }
-}
-
-impl<F: PrimeField> Sumcheckable<F> for LayeredProd4SumcheckObject<F> {
-    fn bind(&mut self, t: F) {
-        self.object.bind(t);
-    }
-
-    fn unipoly(&mut self) -> UniPoly<F> {
-        let mut u = self.object.unipoly().as_vec();
-        if self.object.current_round() < self.n_vars_y {
-            let s = u.pop().unwrap();
-            assert!(s == F::zero());
-        }
-        UniPoly::from_coeff(u)
-    }
-
-    fn final_evals(&self) -> Vec<F> {
-        self.object.final_evals()
-    }
-
-    fn challenges(&self) -> &[F] {
-        self.object.challenges()
-    }
-
-    fn current_round(&self) -> usize {
-        self.object.current_round()
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct LayeredProd4Protocol<F: PrimeField> {
-    n_vars_x: usize,
-    n_vars_y: usize,
-    _marker: PhantomData<F>,
-}
-
-impl<F: PrimeField> LayeredProd4Protocol<F> {
-    pub fn new(n_vars_x: usize, n_vars_y: usize) -> Self {
-        Self { n_vars_x, n_vars_y, _marker: PhantomData }
-    }
-}
-
-#[derive(Clone)]
-pub struct LayeredProd4ProtocolInput<F: PrimeField> {
-    pub p: Vec<F>,
-    pub a: Vec<F>,
-    pub b: Vec<F>,
-    pub c: Vec<F>,
-}
-
-
-impl<T: TProofTranscript2, F: PrimeField> Protocol2<T> for LayeredProd4Protocol<F> {
-    type ProverInput = LayeredProd4ProtocolInput<F>;
-
-    type ProverOutput = ();
-
-    type ClaimsBefore = SumClaim<F>;
-
-    type ClaimsAfter = SinglePointClaims<F>;
-
-    fn prove(&self, transcript: &mut T, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
-        let mut claim = claims.sum;
-        let mut object = LayeredProd4SumcheckObject::new(advice.p, advice.a, advice.b, advice.c, self.n_vars_x, self.n_vars_y, claim);
-        for i in 0 .. (self.n_vars_x + self.n_vars_y) {
-            let u = object.unipoly().as_vec();
-            transcript.write_scalars(&compress_coefficients(&u));
-            let t = transcript.challenge(128);
-            claim = evaluate_univar(&u, t);
-            object.bind(t);
-        }
-        let evs = object.final_evals();
-        let mut point = object.challenges().to_vec();
-        point.reverse();
-
-        assert!(evs.len() == 4);
-        transcript.write_scalars(&evs);
-    
-        (SinglePointClaims {point, evs}, ())
-    }
-
-    fn verify(&self, transcript: &mut T, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
-        let degrees = repeat_n(3, self.n_vars_y).chain(repeat_n(4, self.n_vars_x)).collect_vec();
-
-        let verifier = SumcheckVerifierConfig::new(degrees.into_iter());
-
-        let (final_claim, point) = verifier.main_cycle_sumcheck_verifier(transcript, claims.sum);
-
-        let evs = transcript.read_scalars(4);
-
-        assert!(evs[0] * evs[1] * evs[2] * evs[3] == final_claim);
-
-        SinglePointClaims {point, evs}
-    }
-}
+pub type Prod3SumcheckObjectSO<F> = DenseSumcheckObjectSO<F, Prod3Fn<F>>;
 
 /// Returns bucketing image (i.e. sorting of values of poly by buckets) and a counter (counter[y][x] is and address where poly[y][x] lands after bucketing). Assumes that digits are in base 2^c.
 /// Not optimized.
@@ -363,37 +365,6 @@ pub trait PipMSMCommitmentEngine<F: PrimeField, G: CurveGroup<ScalarField = F>> 
     fn commit_phase_2(&self, pullbacks: PipMSMPhase2Data<F>) -> Vec<G::Affine>;
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct MatrixSelector<F: PrimeField> {
-    pub x_size: usize,
-    pub x_logsize: usize,
-    pub y_size: usize,
-    pub y_logsize: usize,
-    _marker: PhantomData<F>
-}
-
-impl<F: PrimeField> MatrixSelector<F> {
-    pub fn new(x_size: usize, x_logsize: usize, y_size: usize, y_logsize: usize) -> Self {
-        assert!(x_size <= (1 << x_logsize));
-        assert!(y_size <= (1 << y_logsize));
-        Self { x_size, x_logsize, y_size, y_logsize, _marker: PhantomData }
-    }
-
-    pub fn verifier_evaluate(&self, point_x: &[F], point_y: &[F]) -> F {
-        assert!(point_x.len() == self.x_logsize);
-        assert!(point_y.len() == self.y_logsize);
-        
-        eq_sum(&point_x, self.x_size) * eq_sum(&point_y, self.y_size)
-    }
-
-    pub fn evaluation_table(&self) -> Vec<F> {
-        let _x_size = 1 << self.x_logsize;
-        let _y_size = 1 << self.y_logsize;
-
-        (0 .. _x_size * _y_size).into_par_iter().map(|i| if (i % _y_size < self.y_size) && (i / _y_size < self.x_size) {F::one()} else {F::zero()}).collect()
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct AddInversesFn<F: PrimeField> {
     _marker: PhantomData<F>
@@ -428,6 +399,10 @@ impl<F: PrimeField> AlgFn<F> for AddInversesFn<F> {
 pub struct PushforwardProtocol<F: PrimeField> {
     x_logsize: usize,
     y_logsize: usize,
+
+    // x_size is currently unsupported to protect our mental health, you are always adding 2^N points.
+    y_size: usize,
+
     d_logsize: usize,
 
     _marker: PhantomData<F>,
@@ -454,58 +429,84 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         assert!(rest.len() == 0);
 
         let (
-            PipMSMPhase1Data { c, d, p_0, p_1, ac_c, ac_d },
-            PipMSMPhase2Data { c_pull, d_pull }
+            PipMSMPhase1Data { mut c, mut d, p_0, p_1, ac_c, ac_d },
+            PipMSMPhase2Data { mut c_pull, mut d_pull }
         ) = advice;
 
-        let matrix_size = 1 << (self.x_logsize + self.y_logsize);
-        let x_size = 1 << self.x_logsize;
-        let y_size = 1 << self.y_logsize;
+        let d_logsize = self.d_logsize;
         let x_logsize = self.x_logsize;
         let y_logsize = self.y_logsize;
+        let x_size = 1 << x_logsize;
+        let y_size = self.y_size;
+
+        let matrix_logsize = x_logsize + y_logsize;
+        let matrix_size = x_size * y_size; // matrix is laid out row-wise
 
         let f = AddInversesFn::new();
+
+        // We currently lay out polynomials without padding, but add it when we do an actual proof. The padding-optimized implementation will be added later.
 
         assert!(c.len() == matrix_size);
         assert!(d.len() == matrix_size);
         assert!(p_0.len() == x_size);
         assert!(p_1.len() == x_size);
-        assert!(ac_c.len() == x_size);
-        assert!(ac_d.len() == 1 << self.d_logsize);
+        assert!(ac_c.len() == 1 << x_logsize);
+        assert!(ac_d.len() == 1 << d_logsize);
         assert!(c_pull.len() == matrix_size);
         assert!(d_pull.len() == matrix_size);
 
         // get challenges
 
-        let [psi, tau_c, tau_d] = transcript.challenge_vec::<F>(3, 512).try_into().unwrap(); // can be smaller bitsize, but let's make it simple for now.
+        let [psi, tau_c, tau_d, tau_suppression_term] = transcript.challenge_vec::<F>(4, 512).try_into().unwrap(); // can be smaller bitsize, but let's make it simple for now.
         let gamma : F = transcript.challenge(128);
 
         // gamma is a folding challenge, psi is a linear combination challenge, tau_c and tau_d are affine offset challenges
-        // i.e. lhs of logup will look like sum 1 / (c_pull + psi * c - tau_c) + 1 / (d_pull + psi * d - tau_d)
-        // it is more convenient to not perform these ops inside of the sumcheck, so we compute these linear combinations:
+        // i.e. lhs of logup will look like sum 1 / c_adj + 1 / d_adj
+        // where c_adj, d_adj are the following linear combination:
+        // c_adj = c_pull + psi * c - tau_c + tau_suppression_term * selector
 
-        let c_adj : Vec<F> = c_pull.par_iter().zip(c.par_iter()).map(|(&c_pull, &c)| c_pull + psi * c - tau_c).collect();
-        let d_adj : Vec<F> = d_pull.par_iter().zip(d.par_iter()).map(|(&d_pull, &d)| d_pull + psi * d - tau_d).collect();
+        // suppression term is added to c_adj and d_adj outside of the active matrix. it is another tau, which basically enforces us to lookup (0, 0) outside of the matrix -
+        // which forces c_pull and c to be equal to 0 outside.
+
+        let mut c_adj : Vec<F> = c_pull.par_iter().zip(c.par_iter()).map(|(&c_pull, &c)| c_pull + psi * c - tau_c).collect();
+        let mut d_adj : Vec<F> = d_pull.par_iter().zip(d.par_iter()).map(|(&d_pull, &d)| d_pull + psi * d - tau_d).collect();
+        pad_vector(&mut c_adj, matrix_logsize, tau_suppression_term);
+        pad_vector(&mut d_adj, matrix_logsize, tau_suppression_term);
+
+        // c_adj = c_pull + psi * c - tau * c + tau_suppression_term * (1 - selector), and similar for d.
+
+        pad_vector(&mut c, matrix_logsize, F::zero());
+        pad_vector(&mut d, matrix_logsize, F::zero());
+        pad_vector(&mut c_pull, matrix_logsize, F::zero());
+        pad_vector(&mut d_pull, matrix_logsize, F::zero());
+        
+        // Current version of sumcheck, with padding terms for y coordinate:
+        // s denotes selector, eq_s - product of eq and a selector
+        // (c_adj + d_adj + gamma * (c_adj * d_adj))
+        // gamma^2 * [eq_s(r_y, y)(p_0(x) + gamma p_1(x) + gamma^2 p_2(x)) c_pull(x,y) d_pull(x,y)]
 
         // now, we will compute the result of this fractional addition
 
-        let [left, right] = f.map_split_hi(&[&c_adj, &d_adj]);
+        let [left, right] = f.map_split_hi(&[&c_adj, &d_adj]); // eventually need to do low splits to deal with padding, idc now
         let [num_l, den_l] = left.try_into().unwrap();
         let [num_r, den_r] = right.try_into().unwrap();
 
         // synthesize tables (denominators of ac_c and ac_d)
         // this is relatively cheap, because the tables are small
 
-        let eq_c = EqPolynomial::new(r_c.clone()).evals();
-        let eq_d = EqPolynomial::new(r_d.clone()).evals();
+        let eq_c = EqPoly::new(x_logsize, &r_c).evals();
+        let eq_d = EqPoly::new(y_logsize, &r_d).evals();
         let table_c: Vec<F> = (0 .. x_size).into_par_iter().map(|i| eq_c[i] + psi * F::from(i as u64) - tau_c).collect();
-        let table_d: Vec<F> = (0 .. 1 << self.d_logsize).into_par_iter().map(|i| eq_d[i] + psi * F::from(i as u64) - tau_d).collect();
+        let table_d: Vec<F> = (0 .. 1 << d_logsize).into_par_iter().map(|i| eq_d[i] + psi * F::from(i as u64) - tau_d).collect();
+
+
+        let suppression_term_total = F::from(((1 << matrix_logsize) - matrix_size) as u64) * tau_suppression_term.inverse().unwrap();
 
         let mainphase = LogupMainphaseProtocol::<F>::new(vec![self.x_logsize + self.y_logsize - 1, self.x_logsize + self.y_logsize - 1, self.x_logsize, self.d_logsize]);
 
         let (mainphase_claims, ()) = mainphase.prove(
             transcript, 
-            (),
+            suppression_term_total,
             vec![[num_l, den_l], [num_r, den_r], [ac_c, table_c], [ac_d, table_d]]
         );
 
@@ -521,23 +522,33 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         let (cd_claims, ()) = split.prove(transcript, cd_claims, ());
 
         let gammas = make_gamma_pows(gamma, 5);
-        let p_folded : Vec<F> = p_0.par_iter().zip(p_1.par_iter()).map(|(&p0, &p1)| p0 + gammas[1] * p1 + gammas[2]).collect();
 
         // (P0 + gamma * P1 + gamma^2 * 1) c_pull d_pull
+        let p_folded : Vec<F> = p_0.par_iter().zip(p_1.par_iter()).map(|(&p0, &p1)| p0 + gammas[1] * p1 + gammas[2]).collect();
+        let eq_sel_y = EqTruncPoly::new(y_logsize, y_size, &r_y).evals();
+
+        let p_selector_prod : Vec<F> = (0 .. 1 << matrix_logsize).into_par_iter().map(|i| {
+            let i_x = i >> y_logsize;
+            let i_y = (i_x << y_logsize) ^ i;
+            eq_sel_y[i_y] * p_folded[i_x]
+        }).collect();
         
         assert!(claims.evs.len() == 3); //sanity
         let ev_folded = claims.evs[0] + gammas[1] * claims.evs[1] + gammas[2] * claims.evs[2];
 
-        let mut prod3_object = LayeredProd3SumcheckObject::new(p_folded, c_pull, d_pull, self.x_logsize, self.y_logsize, ev_folded);
+        let f_prod3 = Prod3Fn::<F>::new();
+
+        let mut prod3_object = Prod3SumcheckObjectSO::new(vec![p_selector_prod, c_pull, d_pull], f_prod3, matrix_logsize, ev_folded);
+
         // eq(r, x) (c_adj + d_adj + gamma c_adj d_adj)
-        let f = AddInversesFn::<F>::new();
+        let f_inv = AddInversesFn::<F>::new();
         let SinglePointClaims { point: cd_point, evs: cd_evs } = cd_claims;
 
         // sanity:
         assert!(cd_evs.len() == 2);
         let mut claim = cd_evs[0] + gammas[1] * cd_evs[1] + gammas[2] * ev_folded;
 
-        let frac_object = DenseEqSumcheckObject::new(vec![c_adj, d_adj], f, cd_point, cd_evs);
+        let frac_object = DenseEqSumcheckObject::new(vec![c_adj, d_adj], f_inv, cd_point, cd_evs);
         let mut frac_object = frac_object.rlc(gamma);
 
         let mut output_point = vec![];
@@ -547,11 +558,10 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
             let prod3_response = prod3_object.unipoly().as_vec();
             let frac_response = frac_object.unipoly().as_vec();
             // Sanity:
-            assert!(prod3_response.len() == if i < y_logsize {3} else {4});
+            assert!(prod3_response.len() == 4);
             assert!(frac_response.len() == 4);
 
-            let combined_response : Vec<F> = (0..4).map(|i| frac_response[i] + prod3_response.get(i).unwrap_or(&F::zero())).collect();
-
+            let combined_response : Vec<F> = (0..4).map(|i| frac_response[i] + gammas[2] * prod3_response[i]).collect();
             //sanity:
             assert!(combined_response[0] + combined_response[1].double() + combined_response[2] + combined_response[3] == claim);
 
@@ -589,16 +599,29 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         let r_d = r_d.to_vec();
         assert!(rest.len() == 0);
 
+
+        let d_logsize = self.d_logsize;
+        let x_logsize = self.x_logsize;
+        let y_logsize = self.y_logsize;
+        let x_size = 1 << x_logsize;
+        let y_size = self.y_size;
+
+        let matrix_logsize = x_logsize + y_logsize;
+        let matrix_size = x_size * y_size; // matrix is laid out row-wise
+
+
         
-        let [psi, tau_c, tau_d] = transcript.challenge_vec::<F>(3, 512).try_into().unwrap(); // can be smaller bitsize, but let's make it simple for now.
+        let [psi, tau_c, tau_d, tau_suppression_term] = transcript.challenge_vec::<F>(4, 512).try_into().unwrap(); // can be smaller bitsize, but let's make it simple for now.
         let gamma : F= transcript.challenge(128);
         
 
         let mainphase = LogupMainphaseProtocol::<F>::new(vec![self.x_logsize + self.y_logsize - 1, self.x_logsize + self.y_logsize - 1, self.x_logsize, self.d_logsize]);
 
+        let suppression_term_total = F::from(((1 << matrix_logsize) - matrix_size) as u64) * tau_suppression_term.inverse().unwrap();
+
         let mainphase_claims = mainphase.verify(
             transcript, 
-            (),
+            suppression_term_total,
         );
 
         assert!(mainphase_claims.len() == 3); // sanity.
@@ -665,41 +688,41 @@ mod tests {
 
     type Fr = <Config as CurveConfig>::ScalarField;
 
-    #[test]
-    fn layered_prod4_verifies() {
-        // currently this test does almost nothing, as layered4 actually IS naive implementation (with some padding)
-        let rng = &mut test_rng();
+    // #[test]
+    // fn layered_prod4_verifies() {
+    //     // currently this test does almost nothing, as layered4 actually IS naive implementation (with some padding)
+    //     let rng = &mut test_rng();
 
-        let n_vars_x = 3;
-        let n_vars_y = 4;
+    //     let n_vars_x = 3;
+    //     let n_vars_y = 4;
 
-        let p = (0 .. 1 << n_vars_x).map(|_| Fr::rand(rng)).collect_vec();
-        let a = (0 .. 1 << (n_vars_x + n_vars_y)).map(|_| Fr::rand(rng)).collect_vec();
-        let b = (0 .. 1 << (n_vars_x + n_vars_y)).map(|_| Fr::rand(rng)).collect_vec();
-        let c = (0 .. 1 << (n_vars_x + n_vars_y)).map(|_| Fr::rand(rng)).collect_vec();
+    //     let p = (0 .. 1 << n_vars_x).map(|_| Fr::rand(rng)).collect_vec();
+    //     let a = (0 .. 1 << (n_vars_x + n_vars_y)).map(|_| Fr::rand(rng)).collect_vec();
+    //     let b = (0 .. 1 << (n_vars_x + n_vars_y)).map(|_| Fr::rand(rng)).collect_vec();
+    //     let c = (0 .. 1 << (n_vars_x + n_vars_y)).map(|_| Fr::rand(rng)).collect_vec();
 
-        let mut claim_hint = Fr::zero();
+    //     let mut claim_hint = Fr::zero();
 
-        for i in 0 .. (1 << n_vars_x) {
-            for j in 0 .. (1 << n_vars_y) {
-                claim_hint += p[i] * a[(i << n_vars_y) + j] * b[(i << n_vars_y) + j] * c[(i << n_vars_y) + j]
-            }
-        }
+    //     for i in 0 .. (1 << n_vars_x) {
+    //         for j in 0 .. (1 << n_vars_y) {
+    //             claim_hint += p[i] * a[(i << n_vars_y) + j] * b[(i << n_vars_y) + j] * c[(i << n_vars_y) + j]
+    //         }
+    //     }
 
-        let protocol = LayeredProd4Protocol::new(n_vars_x, n_vars_y);
+    //     let protocol = LayeredProd4Protocol::new(n_vars_x, n_vars_y);
 
-        let mut transcript = ProofTranscript2::start_prover(b"meow");
+    //     let mut transcript = ProofTranscript2::start_prover(b"meow");
 
-        let output = protocol.prove(&mut transcript, SumClaim { sum : claim_hint }, LayeredProd4ProtocolInput { p, a, b, c } ).0;
+    //     let output = protocol.prove(&mut transcript, SumClaim { sum : claim_hint }, LayeredProd4ProtocolInput { p, a, b, c } ).0;
 
-        let proof = transcript.end();
+    //     let proof = transcript.end();
 
-        let mut transcript = ProofTranscript2::start_verifier(b"meow", proof);
+    //     let mut transcript = ProofTranscript2::start_verifier(b"meow", proof);
 
-        let output2 = protocol.verify(&mut transcript, SumClaim { sum : claim_hint });
+    //     let output2 = protocol.verify(&mut transcript, SumClaim { sum : claim_hint });
 
-        assert_eq!(output, output2);
-    }
+    //     assert_eq!(output, output2);
+    // }
 
     #[test]
     fn pushforward_image_works() {

@@ -142,7 +142,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for LogupMainphaseProto
 
     type ProverOutput = ();
 
-    type ClaimsBefore = ();
+    type ClaimsBefore = F; // expected total sum
 
     type ClaimsAfter = Vec<SinglePointClaims<F>>; // In reality, some of these opening points might coincide, but not in our case + we don't care for now.
 
@@ -151,9 +151,10 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for LogupMainphaseProto
 
         let (mut witness, [num, denom]) = self.make_witness(advice);
 
-        assert!(num == F::zero()); // we are checking that the sum is equal to zero
-        assert!(denom != F::zero()); // sanity check. verifier will not need to check this.
-        transcript.write_scalars(&[denom]);
+        assert!(denom != F::zero());
+        assert!(num == denom * claims);
+
+        transcript.write_scalars(&[num, denom]);
 
         let mut logsizes = self.logsizes.clone();
 
@@ -201,8 +202,9 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for LogupMainphaseProto
     fn verify(&self, transcript: &mut PT, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
         let f = LogupLayerFn::<F>::new();
 
-        let num = F::zero();
-        let denom = transcript.read_scalars(1)[0];
+        let [num, denom] = transcript.read_scalars(2).try_into().unwrap();
+        assert!(denom != F::zero());
+        assert!(num == denom * claims);
         
         let mut logsizes = self.logsizes.clone();
         let mut curr_logsize = 0;
@@ -280,16 +282,14 @@ mod tests {
         let logsizes = vec![5, 5, 3, 3, 3, 3];
         let mut input = vec![];
 
+        let mut sum_of_quotients = Fr::zero();
         for logsize in &logsizes {
-            let mut acc = Fr::zero();
             
-            let mut quotient : Vec<_> = (0 .. (1 << logsize) - 1).map(|_| {
+            let mut quotient : Vec<_> = (0 .. (1 << logsize)).map(|_| {
                 let tmp = Fr::rand(rng);
-                acc += tmp;
+                sum_of_quotients += tmp;
                 tmp
             }).collect();
-
-            quotient.push(- acc); // enforce that the actual sum is zero
 
             let denominator : Vec<_> = (0 .. 1 << logsize).map(|_| Fr::rand(rng)).collect();
             let numerator : Vec<_> = quotient.iter().zip(denominator.iter()).map(|(&a, &b)| a * b).collect();
@@ -297,11 +297,10 @@ mod tests {
             input.push([numerator, denominator]);
         }
 
-        let protocol = LogupMainphaseProtocol::new(logsizes);
+        let protocol = LogupMainphaseProtocol::<Fr>::new(logsizes);
         let mut p_transcript = ProofTranscript2::start_prover(b"awoo");
 
-
-        let (p_claims, _) = protocol.prove(&mut p_transcript, (), input.clone());
+        let (p_claims, _) = protocol.prove(&mut p_transcript, sum_of_quotients, input.clone());
 
         let proof = p_transcript.end();
 
@@ -309,7 +308,7 @@ mod tests {
 
         let mut v_transcript = ProofTranscript2::start_verifier(b"awoo", proof);
 
-        let v_claims = protocol.verify(&mut v_transcript, ());
+        let v_claims = protocol.verify(&mut v_transcript, sum_of_quotients);
 
         assert_eq!(p_claims, v_claims);
 

@@ -456,7 +456,7 @@ pub fn eq_poly_sequence_from_multiplier_last<F: PrimeField>(mul: F, pt: &[F]) ->
 }
 
 /// Computes sum of eq(pt, i) for i in (0..k)
-pub fn eq_sum<F: PrimeField>(mut pt: &[F], mut k: usize) -> F {    
+pub fn eq_sum<F: PrimeField>(pt: &[F], mut k: usize) -> F {    
     let mut multiplier = F::one();
     let mut acc = F::zero();
 
@@ -513,6 +513,13 @@ pub fn build_points<F: PrimeField, CC: TECurveConfig<BaseField=F>>(coords: &[Vec
     coords.chunks(3).map(|chunk| {
         build_points_from_chunk(chunk)
     }).collect_vec()
+}
+
+pub fn pad_vector<T: Clone>(v: &mut Vec<T>, up_to_logsize: usize, with: T) {
+    assert!(v.len() <= 1 << up_to_logsize);
+    let n = (1 << up_to_logsize) - v.len();
+    v.reserve(n);
+    v.extend(repeat_n(with, n));
 }
 
 pub fn prettify_coords<F: PrimeField, CC: TECurveConfig<BaseField=F>>(point_map: &HashMap<Projective<CC>, usize>, coords: &[Vec<F>]) -> String {

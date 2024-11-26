@@ -1,11 +1,10 @@
 use std::{cmp::min, iter::repeat, marker::PhantomData, ops::Index};
-use ark_bls12_381::Fr;
 use ark_ff::PrimeField;
 use hashcaster::ptr_utils::{AsSharedMutPtr, UnsafeIndexRaw, UnsafeIndexRawMut};
 use itertools::{repeat_n, Itertools};
 use liblasso::poly::{eq_poly::EqPolynomial, unipoly::UniPoly};
 use rayon::{current_num_threads, iter::{repeatn, IntoParallelIterator, ParallelIterator}};
-use crate::{cleanup::protocol2::Protocol2, utils::{eq_eval, eq_poly_sequence, zip_with_gamma}};
+use crate::{cleanup::protocol2::Protocol2, utils::eq_eval};
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocols::sumchecks::vecvec_eq::Sumcheckable;
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
@@ -894,19 +893,10 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
 mod tests {
     use ark_bls12_381::g1::Config;
     use ark_ec::{CurveConfig, CurveGroup, Group};
-    use ark_ec::twisted_edwards::{Affine, Projective};
-    use ark_ed_on_bls12_381_bandersnatch::BandersnatchConfig;
     use ark_std::{test_rng, One, UniformRand, Zero};
     use ark_ff::Field;
-    use liblasso::poly::eq_poly::EqPolynomial;
-    use rayon::vec;
-    use rstest::rstest;
     use crate::cleanup::proof_transcript::ProofTranscript2;
-    use crate::cleanup::protocols::splits::SplitIdx;
     use crate::cleanup::utils::arith::evaluate_poly;
-    use crate::cleanup::utils::twisted_edwards_ops::algfns::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3};
-    use crate::polynomial::vecvec::{vecvec_map, vecvec_map_split, vecvec_map_split_to_dense, VecVecPolynomial};
-    use crate::utils::{map_over_poly, Densify};
     use super::*;
 
     type Fr = <Config as CurveConfig>::ScalarField;

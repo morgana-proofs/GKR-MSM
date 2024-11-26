@@ -5,19 +5,18 @@ use ark_ff::PrimeField;
 use ark_std::UniformRand;
 use itertools::{repeat_n, Itertools};
 use num_traits::Zero;
+use crate::cleanup::polys::common::{Densify, MapSplit};
 use crate::cleanup::proof_transcript::{ProofTranscript2, TProofTranscript2};
 use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::protocols::gkrs::{bintree_add, triangle_add};
-use crate::cleanup::protocols::gkrs::bintree_add::{VecVecBintreeAdd, VecVecBintreeAddWG};
 use crate::cleanup::protocols::gkrs::gkr::{GKRLayer, SimpleGKR};
 use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
-use crate::cleanup::protocols::gkrs::triangle_add::{TriangleAdd, TriangleAddWG};
 use crate::cleanup::protocols::splits::{SplitAt, SplitIdx};
 use crate::cleanup::protocols::sumcheck::SinglePointClaims;
 use crate::cleanup::utils::algfn::{IdAlgFn, RepeatedAlgFn};
 use crate::cleanup::utils::arith::evaluate_poly;
-use crate::polynomial::vecvec::{vecvec_map_split, VecVecPolynomial};
-use crate::utils::{build_points, Densify, MapSplit, TwistedEdwardsConfig};
+use crate::cleanup::polys::vecvec::{VecVecPolynomial};
+use crate::utils::{build_points, TwistedEdwardsConfig};
 
 
 pub struct PippengerEndingWG<F: PrimeField + TwistedEdwardsConfig> {
@@ -151,8 +150,8 @@ mod tests {
             pre_inputs[0].col_logsize,
         )];
         
-        let mut inputs = vecvec_map_split(&pre_inputs, IdAlgFn::new(2), SplitIdx::LO(0), 2);
-        inputs.extend(vecvec_map_split(&domain, IdAlgFn::new(1), SplitIdx::LO(0), 1));
+        let mut inputs = VecVecPolynomial::algfn_map_split(&pre_inputs, IdAlgFn::new(2), SplitIdx::LO(0), 2);
+        inputs.extend(VecVecPolynomial::algfn_map_split(&domain, IdAlgFn::new(1), SplitIdx::LO(0), 1));
         let dense_input = inputs.to_dense(());
 
         let mut bintree_triangle_wg = PippengerEndingWG::new(

@@ -1,17 +1,13 @@
 use std::fmt::{Display, Formatter};
 use ark_ff::PrimeField;
-use merlin::Transcript;
+use crate::cleanup::polys::common::MapSplit;
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
-use crate::cleanup::protocols::gkrs::bintree_add::AdditionStep;
 use crate::cleanup::protocols::gkrs::gkr::{GKRLayer, SimpleGKR};
 use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
-use crate::cleanup::protocols::splits::{SplitAt, SplitIdx};
-use crate::cleanup::protocols::sumcheck::{DenseEqSumcheck, SinglePointClaims};
-use crate::cleanup::protocols::sumchecks::dense_eq::DenseDeg2Sumcheck;
-use crate::cleanup::utils::algfn::{RepeatedAlgFn, StackedAlgFn};
-use crate::cleanup::utils::twisted_edwards_ops::algfns::{triangle_twisted_edwards_add_l1, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
-use crate::utils::{MapSplit, TwistedEdwardsConfig};
+use crate::cleanup::protocols::splits::SplitIdx;
+use crate::cleanup::protocols::sumcheck::SinglePointClaims;
+use crate::utils::TwistedEdwardsConfig;
 
 #[derive(Debug)]
 pub struct TriangleAddWG<F: PrimeField> {
@@ -80,16 +76,13 @@ pub mod builder {
 
     pub mod witness {
         use ark_ff::PrimeField;
-        use crate::cleanup::proof_transcript::TProofTranscript2;
+        use crate::cleanup::polys::common::MapSplit;
         use crate::cleanup::protocols::gkrs::bintree_add::AdditionStep;
-        use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
         use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
-        use crate::cleanup::protocols::splits::{SplitAt, SplitIdx};
-        use crate::cleanup::protocols::sumcheck::SinglePointClaims;
-        use crate::cleanup::protocols::sumchecks::dense_eq::DenseDeg2Sumcheck;
+        use crate::cleanup::protocols::splits::SplitIdx;
         use crate::cleanup::utils::algfn::{RepeatedAlgFn, StackedAlgFn};
         use crate::cleanup::utils::twisted_edwards_ops::algfns::{triangle_twisted_edwards_add_l1, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
-        use crate::utils::{MapSplit, TwistedEdwardsConfig};
+        use crate::utils::TwistedEdwardsConfig;
         
         pub fn last_step<F: PrimeField + TwistedEdwardsConfig>(
             advice: &Vec<Vec<F>>,
@@ -262,17 +255,18 @@ mod test {
     use ark_ec::twisted_edwards::Projective;
     use crate::cleanup::protocols::gkrs::triangle_add::{builder, TriangleAdd, TriangleAddWG};
     use crate::cleanup::protocols::splits::SplitIdx;
-    use crate::cleanup::utils::algfn::{AlgFnUtils, IdAlgFn, RepeatedAlgFn};
-    use crate::utils::{build_points, prettify_coords, prettify_points, DensePolyRndConfig, MapSplit, RandomlyGeneratedPoly};
+    use crate::cleanup::utils::algfn::{IdAlgFn, RepeatedAlgFn};
+    use crate::utils::{build_points, prettify_coords};
+    use crate::cleanup::polys::dense::DensePolyRndConfig;
     use ark_ed_on_bls12_381_bandersnatch::BandersnatchConfig;
     use ark_ff::Field;
     use ark_std::iterable::Iterable;
     use ark_std::UniformRand;
     use itertools::Itertools;
-    use num_traits::{One, Zero};
+    use num_traits::Zero;
+    use crate::cleanup::polys::common::{MapSplit, RandomlyGeneratedPoly};
     use crate::cleanup::proof_transcript::{ProofTranscript2, TProofTranscript2};
     use crate::cleanup::protocol2::Protocol2;
-    use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
     use crate::cleanup::protocols::sumcheck::SinglePointClaims;
     use crate::cleanup::utils::arith::evaluate_poly;
 

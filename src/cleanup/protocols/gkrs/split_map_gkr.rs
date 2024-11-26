@@ -11,7 +11,7 @@ use crate::{
         proof_transcript::TProofTranscript2,
         protocol2::Protocol2,
     },
-    polynomial::vecvec::VecVecPolynomial
+    cleanup::polys::vecvec::VecVecPolynomial
 };
 use crate::cleanup::protocols::sumcheck::{BareSumcheckSO, DenseSumcheckObjectSO, GenericSumcheckProtocol};
 use crate::cleanup::protocols::sumchecks::dense_eq::DenseDeg2Sumcheck;

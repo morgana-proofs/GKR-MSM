@@ -1,21 +1,19 @@
 use std::fmt::{Display, Formatter};
 use std::io::Read;
-use std::iter::{once, repeat};
-use std::marker::PhantomData;
 use ark_ff::PrimeField;
 use itertools::Itertools;
+use crate::cleanup::polys::common::MapSplit;
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
-use crate::cleanup::protocols::{splits::SplitAt, sumchecks::vecvec_eq::VecVecDeg2Sumcheck, gkrs::gkr::SimpleGKR};
+use crate::cleanup::protocols::{gkrs::gkr::SimpleGKR, splits::SplitAt, sumchecks::vecvec_eq::VecVecDeg2Sumcheck};
 use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
 use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
 use crate::cleanup::protocols::splits::SplitIdx;
-use crate::cleanup::protocols::sumcheck::{SinglePointClaims};
+use crate::cleanup::protocols::sumcheck::SinglePointClaims;
 use crate::cleanup::protocols::sumchecks::dense_eq::DenseDeg2Sumcheck;
-use crate::polynomial::vecvec::{vecvec_map, vecvec_map_split, vecvec_map_split_to_dense, VecVecPolynomial};
-use crate::cleanup::utils::twisted_edwards_ops::*;
+use crate::cleanup::polys::vecvec::{vecvec_map_split_to_dense, VecVecPolynomial};
 use crate::cleanup::utils::twisted_edwards_ops::algfns::*;
-use crate::utils::{MapSplit, TwistedEdwardsConfig};
+use crate::utils::TwistedEdwardsConfig;
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 
 
@@ -121,7 +119,6 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Protoc
 pub mod builder {
     use super::*;
     pub mod witness {
-        use crate::cleanup::utils::algfn::{BitCheckFn, StackedAlgFn};
         use super::*;
 
         pub fn last_step<F: PrimeField + TwistedEdwardsConfig>(
@@ -174,7 +171,7 @@ pub mod builder {
         pub fn advice_map<F: PrimeField + TwistedEdwardsConfig, Fun: AlgFn<F>>(advice: &SplitVecVecMapGKRAdvice<F>, f: Fun) -> SplitVecVecMapGKRAdvice<F> {
             match advice {
                 SplitVecVecMapGKRAdvice::VecVecMAP(vv) => {
-                    SplitVecVecMapGKRAdvice::VecVecMAP(vecvec_map(vv, f))
+                    SplitVecVecMapGKRAdvice::VecVecMAP(VecVecPolynomial::algfn_map(vv, f))
                 }
                 SplitVecVecMapGKRAdvice::DenseMAP(d) => {
                     SplitVecVecMapGKRAdvice::DenseMAP(Vec::algfn_map(d, f))
@@ -191,7 +188,7 @@ pub mod builder {
                             SplitVecVecMapGKRAdvice::DenseMAP(vecvec_map_split_to_dense(vv, f, idx, bundle_size))
                         }
                         false => {
-                            SplitVecVecMapGKRAdvice::VecVecMAP(vecvec_map_split(vv, f, idx, bundle_size))
+                            SplitVecVecMapGKRAdvice::VecVecMAP(VecVecPolynomial::algfn_map_split(vv, f, idx, bundle_size))
                         }
                     }
                 }
@@ -388,6 +385,7 @@ mod test {
     use itertools::Itertools;
     use num_traits::{One, Zero};
     use rstest::rstest;
+    use crate::cleanup::polys::common::{Densify, MapSplit, RandomlyGeneratedPoly};
     use crate::cleanup::proof_transcript::{ProofTranscript2, TProofTranscript2};
     use crate::cleanup::protocol2::Protocol2;
     use crate::cleanup::protocols::gkrs::bintree_add::{builder, VecVecBintreeAdd, VecVecBintreeAddWG};
@@ -397,9 +395,7 @@ mod test {
     use crate::cleanup::utils::algfn::IdAlgFn;
     use crate::cleanup::utils::arith::evaluate_poly;
     use crate::cleanup::utils::twisted_edwards_ops::algfns::{affine_twisted_edwards_add_l1, affine_twisted_edwards_add_l2, affine_twisted_edwards_add_l3, twisted_edwards_add_l1, twisted_edwards_add_l2, twisted_edwards_add_l3};
-    use crate::polynomial::vecvec::{vecvec_map_split, VecVecPolynomial};
-    use crate::utils::{DensePolyRndConfig, Densify, RandomlyGeneratedPoly};
-
+    use crate::cleanup::polys::vecvec::{VecVecPolynomial};
     #[rstest]
     #[case(5, 4, 2)]
     #[case(5, 2, 4)]
@@ -414,7 +410,7 @@ mod test {
         let num_vars = row_logsize + col_logsize;
 
         let points = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
-        let inputs = vecvec_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
+        let inputs = VecVecPolynomial::algfn_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
         let witness_gen = VecVecBintreeAddWG::new_common(SplitVecVecMapGKRAdvice::VecVecMAP(inputs), row_logsize, num_adds, false);
 
         let prover = VecVecBintreeAdd::new(
@@ -469,7 +465,7 @@ mod test {
         let num_adds = 5;
         let split_last = false;
         let points = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
-        let inputs = vecvec_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
+        let inputs = VecVecPolynomial::algfn_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
         let smth = VecVecBintreeAddWG::new_common(SplitVecVecMapGKRAdvice::VecVecMAP(inputs.clone()), row_logsize, num_adds, false);
         let outs = builder::witness::last_step(smth.advices.last().as_ref().unwrap(), num_adds - 1);
 
@@ -482,7 +478,7 @@ mod test {
             }
             SplitVecVecMapGKRAdvice::EMPTY(_) => {unreachable!()}
         };
-        let densified_points = points.iter().map(|p| p.vec()).collect_vec();
+        let densified_points = points.iter().map(|p| p.to_dense(())).collect_vec();
 
         let group_size = 1 << num_adds;
         for idx in 0..densified_out[0].len() {  
@@ -519,7 +515,7 @@ mod test {
         let rng = &mut test_rng();
 
         let point_coords = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
-        let inputs = vecvec_map_split(&point_coords, IdAlgFn::new(2), SplitIdx::LO(0), 2);
+        let inputs = VecVecPolynomial::algfn_map_split(&point_coords, IdAlgFn::new(2), SplitIdx::LO(0), 2);
 
         let inputs = SplitVecVecMapGKRAdvice::VecVecMAP(inputs);
 
@@ -577,7 +573,7 @@ mod test {
         let rng = &mut test_rng();
 
         let point_coords = VecVecPolynomial::rand_points::<BandersnatchConfig, _>(rng, row_logsize, col_logsize).to_vec();
-        let inputs = vecvec_map_split(&point_coords, IdAlgFn::new(3), SplitIdx::LO(0), 3);
+        let inputs = VecVecPolynomial::algfn_map_split(&point_coords, IdAlgFn::new(3), SplitIdx::LO(0), 3);
 
         let inputs = SplitVecVecMapGKRAdvice::VecVecMAP(inputs);
 

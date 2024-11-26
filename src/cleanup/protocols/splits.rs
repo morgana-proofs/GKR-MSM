@@ -7,7 +7,7 @@ use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
 use crate::cleanup::protocols::sumcheck::{SinglePointClaims};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 
-use crate::polynomial::vecvec::VecVecPolynomial;
+use crate::cleanup::polys::vecvec::VecVecPolynomial;
 use crate::protocol::protocol::EvalClaim;
 use crate::cleanup::protocols::sumchecks::vecvec_eq::VecVecDeg2Sumcheck;
 use crate::utils::fix_var_top;
@@ -201,7 +201,7 @@ mod test {
     use crate::cleanup::protocol2::Protocol2;
     use crate::cleanup::protocols::splits::{SplitAt, SplitIdx};
     use crate::cleanup::protocols::sumcheck::SinglePointClaims;
-    use crate::utils::EvaluateAtPoint;
+    use crate::cleanup::polys::common::EvaluateAtPoint;
 
     #[rstest]
     #[case(5, 3, 1, SplitIdx::HI(4))]

@@ -5,13 +5,13 @@ use ark_std::iterable::Iterable;
 use itertools::{repeat_n, Itertools};
 use liblasso::poly::unipoly::UniPoly;
 use rayon::iter::IntoParallelRefMutIterator;
+use crate::cleanup::polys::common::{BindVar21, Make21};
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
-use crate::cleanup::protocols::sumcheck::{DenseSumcheckObjectSO, EqWrapper, FoldToSumcheckable, GammaWrapper, GenericSumcheckProtocol, SinglePointClaims};
+use crate::cleanup::protocols::sumcheck::{EqWrapper, FoldToSumcheckable, GammaWrapper, GenericSumcheckProtocol, SinglePointClaims};
 use crate::cleanup::protocols::sumchecks::vecvec_eq::{Sumcheckable, UnivarFormat};
-use crate::polynomial::vecvec::{EQPolyData, VecVecPolynomial};
-use crate::utils::{eq_eval, eq_poly_sequence, eq_poly_sequence_from_multiplier_last, eq_poly_sequence_last, make_gamma_pows, zip_with_gamma, BindVar21, Make21};
+use crate::utils::{eq_eval, eq_poly_sequence, eq_poly_sequence_last, make_gamma_pows, zip_with_gamma};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 
 
@@ -237,22 +237,20 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
 
 #[cfg(test)]
 mod test {
-    use std::ops::Index;
-    use rstest::*;
-    use std::sync::{Arc, OnceLock};
     use ark_bls12_381::Fr;
     use ark_ec::CurveConfig;
     use ark_ec::twisted_edwards::{MontCurveConfig, TECurveConfig};
     use ark_ed_on_bls12_381_bandersnatch::BandersnatchConfig;
-    use ark_ff::{Field, PrimeField};
+    use ark_ff::Field;
     use ark_std::{test_rng, UniformRand};
     use itertools::{repeat_n, Itertools};
     use num_traits::{One, Zero};
-    use crate::copoly::{Copolynomial, EqPoly};
+    use crate::cleanup::polys::common::RandomlyGeneratedPoly;
     use crate::cleanup::utils::twisted_edwards_ops::algfns::twisted_edwards_add_l1;
-    use crate::utils::{eq_poly_sequence_last, make_gamma_pows_static, DensePolyRndConfig, RandomlyGeneratedPoly};
+    use crate::utils::{eq_poly_sequence_last, make_gamma_pows_static};
+    use crate::cleanup::polys::dense::DensePolyRndConfig;
     use super::{DenseDeg2SumcheckObject, Sumcheckable as NewSumcheckable};
-    use crate::cleanup::protocols::sumcheck::{EqWrapper, ExampleSumcheckObjectSO, FoldToSumcheckable, GammaWrapper, SumClaim};
+    use crate::cleanup::protocols::sumcheck::{EqWrapper, ExampleSumcheckObjectSO, FoldToSumcheckable, GammaWrapper};
     use super::*;
 
     #[test]

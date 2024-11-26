@@ -6,7 +6,7 @@ use itertools::Itertools;
 use liblasso::poly::{eq_poly::EqPolynomial, unipoly::UniPoly};
 use rayon::{current_num_threads, iter::{repeatn, IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator}, slice::{ParallelSlice, ParallelSliceMut}};
 
-use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2, protocols::{pushforward::logup_mainphase::LogupMainphaseProtocol, splits::{SplitAt, SplitIdx}, sumcheck::{decompress_coefficients, DenseEqSumcheckObject, FoldToSumcheckable, PointClaim}, verifier_polys::{EqPoly, EqTruncPoly, SelectorPoly, VerifierPoly}}, utils::{algfn::AlgFnUtils, arith::evaluate_poly}}, polynomial::vecvec::VecVecPolynomial, utils::{eq_eval, eq_sum, make_gamma_pows, pad_vector, EvaluateAtPoint}};
+use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2, protocols::{pushforward::logup_mainphase::LogupMainphaseProtocol, splits::{SplitAt, SplitIdx}, sumcheck::{decompress_coefficients, DenseEqSumcheckObject, FoldToSumcheckable, PointClaim}, verifier_polys::{EqPoly, EqTruncPoly, SelectorPoly, VerifierPoly}}, utils::{algfn::AlgFnUtils, arith::evaluate_poly}}, cleanup::polys::vecvec::VecVecPolynomial, utils::{eq_eval, eq_sum, make_gamma_pows, pad_vector, EvaluateAtPoint}};
 
 use super::super::{sumcheck::{compress_coefficients, evaluate_univar, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec_eq::Sumcheckable};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
@@ -204,7 +204,7 @@ impl<F: PrimeField> AlgFnSO<F> for Prod4Fn<F> {
 
 //         assert!(evs.len() == 4);
 //         transcript.write_scalars(&evs);
-    
+
 //         (SinglePointClaims {point, evs}, ())
 //     }
 
@@ -486,7 +486,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         pad_vector(&mut d, matrix_logsize, F::zero());
         pad_vector(&mut c_pull, matrix_logsize, F::zero());
         pad_vector(&mut d_pull, matrix_logsize, F::zero());
-        
+
         // Current version of sumcheck, with padding terms for y coordinate:
         // s denotes selector, eq_s - product of eq and a selector
         // (c_adj + d_adj + gamma * (c_adj * d_adj))
@@ -538,7 +538,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
             let i_x = (i_y << x_logsize) ^ i;
             eq_sel_y[i_y] * p_folded[i_x]
         }).collect();
-        
+
         assert!(claims.evs.len() == 3); //sanity
         let ev_folded = claims.evs[0] + gammas[1] * claims.evs[1] + gammas[2] * claims.evs[2];
 
@@ -603,7 +603,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
 
         let c_ev = psi_inv * (c_adj_ev - c_pull_ev + tau_c * sel_ev - tmp);
         let d_ev = psi_inv * (d_adj_ev - d_pull_ev + tau_d * sel_ev - tmp);
-        
+
         let output_evs = vec![p_folded_ev, c_pull_ev, d_pull_ev, c_ev, d_ev];
 
         transcript.write_scalars(&output_evs);
@@ -713,7 +713,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
             .evaluate(&output_point[..y_logsize]);
 
         let tmp = tau_suppression_term * (F::one() - sel_ev);
-        
+
         let c_adj_ev = c_pull_ev + psi * c_ev - tau_c * sel_ev + tmp;
         let d_adj_ev = d_pull_ev + psi * d_ev - tau_d * sel_ev + tmp;
 
@@ -854,10 +854,10 @@ mod tests {
             evaluate_poly(&vv.vec(), &r)
         }).collect::<Vec<Fr>>();
 
-        let mut d : Vec<Fr> = 
+        let mut d : Vec<Fr> =
             digits.iter().map(|row| row.iter().map(|elt| Fr::from(*elt as u64))).flatten().collect();
 
-        let mut c : Vec<Fr> = 
+        let mut c : Vec<Fr> =
             counter.iter().map(|row| row.iter().map(|elt| Fr::from(*elt as u64))).flatten().collect();
 
         let mut ac_d = vec![0u64; 1 << d_logsize];

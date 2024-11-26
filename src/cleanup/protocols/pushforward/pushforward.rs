@@ -818,7 +818,7 @@ mod tests {
         let x_logsize = 10;
         let x_size = 1 << x_logsize;
         let y_logsize = 3;
-        let y_size = 8;
+        let y_size = 5;
 
         let d_logsize = 8;
 
@@ -854,10 +854,10 @@ mod tests {
             evaluate_poly(&vv.vec(), &r)
         }).collect::<Vec<Fr>>();
 
-        let d : Vec<Fr> = 
+        let mut d : Vec<Fr> = 
             digits.iter().map(|row| row.iter().map(|elt| Fr::from(*elt as u64))).flatten().collect();
 
-        let c : Vec<Fr> = 
+        let mut c : Vec<Fr> = 
             counter.iter().map(|row| row.iter().map(|elt| Fr::from(*elt as u64))).flatten().collect();
 
         let mut ac_d = vec![0u64; 1 << d_logsize];
@@ -897,13 +897,13 @@ mod tests {
         let eq_c = EqPoly::new(x_logsize, &r_c).evals();
         let eq_d = EqPoly::new(d_logsize, &r_d).evals();
 
-        let c_pull : Vec<Fr> = counter.iter().map(|row| {
+        let mut c_pull : Vec<Fr> = counter.iter().map(|row| {
             row.iter().map(|&elt| {
                 eq_c[elt as usize]
             })
         }).flatten().collect();
 
-        let d_pull : Vec<Fr> = digits.iter().map(|row| {
+        let mut d_pull : Vec<Fr> = digits.iter().map(|row| {
             row.iter().map(|&elt| {
                 eq_d[elt as usize]
             })
@@ -933,6 +933,11 @@ mod tests {
 
         let output_point = output_claim_p.point;
         let [p_folded_ev, c_pull_ev, d_pull_ev, c_ev, d_ev] = output_claim_p.evs.try_into().unwrap();
+
+        pad_vector(&mut c_pull, x_logsize + y_logsize, Fr::zero());
+        pad_vector(&mut d_pull, x_logsize + y_logsize, Fr::zero());
+        pad_vector(&mut c, x_logsize + y_logsize, Fr::zero());
+        pad_vector(&mut d, x_logsize + y_logsize, Fr::zero());
 
         assert!(p_folded_ev == evaluate_poly(&polys[0], &output_point[y_logsize..]) + gamma * evaluate_poly(&polys[1], &output_point[y_logsize..]) + gamma * gamma);
         assert!(c_ev == evaluate_poly(&c, &output_point));

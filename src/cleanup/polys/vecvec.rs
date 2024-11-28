@@ -1,21 +1,20 @@
 use std::fmt::{Debug, Formatter, Write};
 use std::ops::{Add, AddAssign, Mul, Range, Sub, SubAssign};
-use std::slice::from_ref;
 use std::sync::Arc;
-use ark_ec::twisted_edwards::{TECurveConfig, Projective, Affine};
+use ark_ec::twisted_edwards::{Affine, Projective, TECurveConfig};
 use ark_ff::{Field, PrimeField};
 use ark_std::iterable::Iterable;
 use ark_std::rand::{Rng, RngCore};
 use ark_std::UniformRand;
 use itertools::{repeat_n, Itertools};
-use liblasso::poly::eq_poly::EqPolynomial;
 use liblasso::utils::math::Math;
 use num_traits::Zero;
 use rayon::prelude::*;
+use crate::cleanup::polys::common::{BindVar21, Densify, Make21, MapSplit, RandomlyGeneratedPoly};
 use crate::cleanup::protocols::splits::SplitIdx;
 use crate::cleanup::utils::algfn::AlgFn;
 use crate::copoly::PrefixFold;
-use crate::utils::{eq_poly_sequence_from_multiplier, eq_poly_sequence_last, padded_eq_poly_sequence, Densify};
+use crate::utils::{eq_poly_sequence_last, padded_eq_poly_sequence};
 
 #[derive(Debug)]
 pub struct EQPolyPointParts {
@@ -398,7 +397,7 @@ impl<F: Field> VecVecPolynomial<F> {
     /// into      p_02, p_01, p_12, p_11
     ///
     /// Where p_*2 = 2 * p_*1 - p_*0
-    pub fn make_21(&mut self) {
+    fn make_21(&mut self) {
         // #[cfg(not(feature = "multicore"))]
         let iter = self.data.iter_mut();
         // #[cfg(feature = "multicore")]
@@ -418,7 +417,7 @@ impl<F: Field> VecVecPolynomial<F> {
     /// into p_00 + t(p_01 - p_00), p_10 + t(p_11 - p_10)
     ///
     /// Where p_*2 = 2 * p_*1 - p_*0
-    pub fn bind_21(&mut self, t: F) {
+    fn bind_21(&mut self, t: F) {
         let tm1 = t - F::one();
         let iter = self.data.par_iter_mut();
         
@@ -441,7 +440,7 @@ impl<F: Field> VecVecPolynomial<F> {
 
 // Vec
 impl<F: Clone> VecVecPolynomial<F> {
-    pub fn vec(&self) -> Vec<F> {
+    fn vec(&self) -> Vec<F> {
         let mut ret: Vec<F> = vec![];
 
         for r in 0..(1 << self.col_logsize) {
@@ -462,7 +461,7 @@ impl<F: Clone> VecVecPolynomial<F> {
 impl<F: Clone> Densify<F> for VecVecPolynomial<F> {
     type Hint = ();
 
-    fn to_dense(&self, hint: Self::Hint) -> Vec<F> {
+    fn to_dense(&self, _: Self::Hint) -> Vec<F> {
         self.vec()
     }
 }
@@ -475,7 +474,7 @@ impl<F: Clone> Densify<Vec<F>> for Vec<VecVecPolynomial<F>> {
     }
 }
 
-pub fn vecvec_map<F: PrimeField, Fnc: AlgFn<F>>(
+fn vecvec_map<F: PrimeField, Fnc: AlgFn<F>>(
     polys: &[VecVecPolynomial<F>],
     func: Fnc
 ) -> Vec<VecVecPolynomial<F>> {
@@ -484,6 +483,7 @@ pub fn vecvec_map<F: PrimeField, Fnc: AlgFn<F>>(
     let row_logsize = polys[0].row_logsize;
     let col_logsize = polys[0].col_logsize;
     let mut outs = (0..func.n_outs()).map(|_| (Vec::with_capacity(polys[0].data.len()), None, None)).collect_vec();
+
 
     let mut inputs = polys.iter().map(|p| p.row_pad).collect_vec();
     for ((_, rp, _), ret) in outs.iter_mut().zip_eq(func.exec(&inputs)) {
@@ -501,14 +501,29 @@ pub fn vecvec_map<F: PrimeField, Fnc: AlgFn<F>>(
         }
     }
 
-    for row_idx in 0..polys[0].data.len() {
+    let mut iter_out = outs.iter_mut().map(|(i, ..)| i.iter_mut()).collect_vec();
+
+    let mut row_chunked_iterator = (0..iter_out[0].len()).map(|_| {
+        iter_out.iter_mut().map(|c| c.next().unwrap()).collect_vec()
+    }).collect_vec();
+
+
+    #[cfg(not(feature = "parallel"))]
+    let iter = (0..polys[0].data.len()).into_iter().zip(row_chunked_iterator.iter_mut());
+
+    #[cfg(feature = "parallel")]
+    let iter = (0..polys[0].data.len()).into_par_iter().zip(row_chunked_iterator.par_iter_mut());
+
+    iter.map(|(row_idx, outs)| {
+        let mut inputs = inputs.clone();
+
         for idx in 0..polys[0].data[row_idx].len() {
             inputs = polys.iter().map(|p| p.data[row_idx][idx]).collect_vec();
-            for ((data, ..), ret) in outs.iter_mut().zip_eq(func.exec(&inputs)) {
-                data[row_idx].push(ret)
+            for (data, ret) in outs.iter_mut().zip_eq(func.exec(&inputs)) {
+                data.push(ret)
             }
         }
-    }
+    }).count();
 
     outs.into_iter().map(|(data, row_pad, col_pad)| {
         VecVecPolynomial::new(
@@ -521,7 +536,7 @@ pub fn vecvec_map<F: PrimeField, Fnc: AlgFn<F>>(
     }).collect_vec()
 }
 
-pub fn vecvec_map_split<F: PrimeField, Fnc: AlgFn<F>>(
+fn vecvec_map_split<F: PrimeField, Fnc: AlgFn<F>>(
     polys: &[VecVecPolynomial<F>],
     func: Fnc,
     var_idx: SplitIdx,
@@ -633,6 +648,45 @@ pub fn vecvec_map_split_to_dense<F: PrimeField, Fnc: AlgFn<F>>(
         data.extend(repeat_n(col_pad[idx], (1 << col_logsize) - data.len()));
         data
     }).collect_vec()
+}
+
+impl<F: PrimeField> BindVar21<F> for VecVecPolynomial<F> {
+    fn bind_21(&mut self, t: F) {
+        self.bind_21(t);
+    }
+}
+
+impl<F: PrimeField> Make21<F> for VecVecPolynomial<F> {
+    fn make_21(&mut self) {
+        self.make_21();
+    }
+}
+
+impl<F: PrimeField> MapSplit<F> for VecVecPolynomial<F> {
+    fn algfn_map_split<Fnc: AlgFn<F>>(polys: &[Self], func: Fnc, var_idx: SplitIdx, bundle_size: usize) -> Vec<Self> {
+        vecvec_map_split(polys, func, var_idx, bundle_size)
+    }
+
+    fn algfn_map<Fnc: AlgFn<F>>(polys: &[Self], func: Fnc) -> Vec<Self> {
+        vecvec_map(polys, func)
+    }
+}
+
+pub struct VecVecPolyRndConfig {
+    row_logsize: usize,
+    col_logsize: usize,
+}
+
+impl<F: PrimeField> RandomlyGeneratedPoly<F> for VecVecPolynomial<F> {
+    type Config = VecVecPolyRndConfig;
+
+    fn rand_points<CC: TECurveConfig<BaseField=F>, RNG: Rng>(rng: &mut RNG, cfg: Self::Config) -> [Self; 3] {
+        Self::rand_points::<CC, _>(rng, cfg.row_logsize, cfg.col_logsize)
+    }
+
+    fn rand_points_affine<CC: TECurveConfig<BaseField=F>, RNG: Rng>(rng: &mut RNG, cfg: Self::Config) -> [Self; 2] {
+        Self::rand_points_affine::<CC, _>(rng, cfg.row_logsize, cfg.col_logsize)
+    }
 }
 
 #[cfg(test)]
@@ -751,7 +805,7 @@ mod tests {
         let data = VecVecPolynomial::rand_points::<BandersnatchConfig, _>(gen, 3, 3);
         let dense_data = data.iter().map(|p| p.vec()).collect_vec();
 
-        let out = vecvec_map(data.as_slice().try_into().unwrap(), ArcedAlgFn::new(Arc::new(foo), 3, 2, 1));
+        let out = VecVecPolynomial::algfn_map(data.as_slice().try_into().unwrap(), ArcedAlgFn::new(Arc::new(foo), 3, 2, 1));
         let expected_out = map_over_poly(&dense_data.iter().map(|p| p.as_slice()).collect_vec().as_slice(), PolynomialMapping {
             exec: Arc::new(blah),
             degree: 1,
@@ -773,7 +827,7 @@ mod tests {
             let data = VecVecPolynomial::rand_points::<BandersnatchConfig, _>(gen, 3, 3);
             let dense_data = data.iter().map(|p| p.vec()).collect_vec();
 
-            let out = vecvec_map_split(data.as_slice().try_into().unwrap(), ArcedAlgFn::new(Arc::new(foo), 3, 2, 1), SplitIdx::LO(0), 1);
+            let out = VecVecPolynomial::algfn_map_split(data.as_slice().try_into().unwrap(), ArcedAlgFn::new(Arc::new(foo), 3, 2, 1), SplitIdx::LO(0), 1);
             let expected_out = map_over_poly(&dense_data.iter().map(|p| p.as_slice()).collect_vec().as_slice(), PolynomialMapping {
                 exec: Arc::new(blah),
                 degree: 1,

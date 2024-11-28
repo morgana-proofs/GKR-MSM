@@ -1,27 +1,21 @@
 use std::collections::HashMap;
+use std::iter::repeat_n;
 use std::marker::PhantomData;
-use std::mem::{transmute, MaybeUninit};
 use std::ops::{Add, Index, Mul, Sub};
-use std::ptr::read;
-
 use ark_bls12_381::Fr;
-use ark_ec::twisted_edwards::{Affine, Projective, TECurveConfig};
-use ark_ed_on_bls12_381_bandersnatch::BandersnatchConfig;
+use ark_ec::twisted_edwards::{Projective, TECurveConfig};
 use ark_ff::{BigInt, Field, PrimeField};
 use ark_std::iterable::Iterable;
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
 use hashcaster::ptr_utils::{AsSharedMUMutPtr, UninitArr, UnsafeIndexRawMut};
-use itertools::{repeat_n, Itertools};
+use itertools::Itertools;
 use liblasso::poly::dense_mlpoly::DensePolynomial;
 use liblasso::utils::math::Math;
 use num_traits::PrimInt;
 #[cfg(feature = "prof")]
 use profi::prof;
-use rayon::current_num_threads;
 use rayon::prelude::*;
-use crate::cleanup::protocols::splits::SplitIdx;
-use crate::cleanup::protocols::sumcheck::{bind_dense_poly};
 use crate::protocol::protocol::{MultiEvalClaim, PolynomialMapping};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 
@@ -90,7 +84,6 @@ pub fn map_over_poly<F: Field>(
         })
         .collect::<Vec<Vec<F>>>()
 }
-
 
 pub fn scale<F: Field + TwistedEdwardsConfig, T: Fn (&[F]) -> Vec<F>>(f: T) -> impl Fn (&[F]) -> Vec<F> {
     move |data: &[F]| -> Vec<F> {
@@ -181,212 +174,6 @@ pub fn fix_var_bot<F>(vec: &mut Vec<F>, v: F) {
 
 pub fn random_point<F: UniformRand>(gen: &mut impl Rng, num_vars: usize) -> Vec<F> {
     (0..num_vars).map(|_| F::rand(gen)).collect_vec()
-}
-
-pub trait EvaluateAtPoint<F: PrimeField> {
-    fn evaluate(&self, p: &[F]) -> F;
-}
-impl<F: PrimeField> EvaluateAtPoint<F> for Vec<F> {
-    fn evaluate(&self, p: &[F]) -> F {
-        assert_eq!(self.len(), 1 << p.len());
-        let mut tmp = Some(self.clone());
-        for f in p.iter().rev() {
-            tmp = Some(tmp.unwrap().bind(*f));
-        }
-        tmp.unwrap()[0]
-    }
-}
-pub trait BindVar<F: PrimeField> {
-    fn bind(self, t: F) -> Self;
-}
-impl<F: PrimeField> BindVar<F> for Vec<F> {
-    fn bind(mut self, t: F) -> Self {
-        bind_dense_poly(&mut self, t);
-        self
-    }
-}
-pub trait BindVar21<F: PrimeField> {
-    fn bind_21(&mut self, t: F);
-}
-impl<F: PrimeField> BindVar21<F> for Vec<F> {
-    fn bind_21(&mut self, t: F) {
-        let tm1 = t - F::one();
-        let iter = self.iter();
-
-        for i in 0..(self.len() / 2) {
-            self[i] = self[2 * i + 1] + tm1 * (self[2 * i] - self[2 * i + 1]);
-        }
-        let mut i = self.len() / 2;
-        if i % 2 == 1 {
-            self[i] = F::zero();
-            i += 1;
-        }
-        self.truncate(i);
-    }
-}
-pub trait Make21<F: PrimeField> {
-    fn make_21(&mut self);
-}
-impl<F: PrimeField> Make21<F> for Vec<F> {
-    fn make_21(&mut self) {
-
-        let iter = self.chunks_mut(2);
-        // let iter = self.par_chunks_mut(2);
-
-        iter.map(|c| {
-            for i in 0..(c.len() / 2) {
-                c[2 * i] = c[2 * i + 1].double() - c[2 * i];
-            }
-        }).count();
-    }
-}
-pub trait MapSplit<F: PrimeField>: Sized {
-    fn algfn_map_split<Fnc: AlgFn<F>>(
-        polys: &[Self],
-        func: Fnc,
-        var_idx: SplitIdx,
-        bundle_size: usize,
-    ) -> Vec<Self>;
-
-    fn algfn_map<Fnc: AlgFn<F>>(
-        polys: &[Self],
-        func: Fnc
-    ) -> Vec<Self>;
-}
-impl<F: PrimeField> MapSplit<F> for Vec<F> {
-    fn algfn_map_split<Fnc: AlgFn<F>>(polys: &[Self], func: Fnc, var_idx: SplitIdx, bundle_size: usize) -> Vec<Self> {
-        #[cfg(debug_assertions)]
-        println!("SPLIT MAP D->D   with {}", func.description());
-        
-        let mut outs = [
-            (0..func.n_outs()).map(|_| Vec::with_capacity(polys[0].len() / 2)).collect_vec(),
-            (0..func.n_outs()).map(|_| Vec::with_capacity(polys[0].len() / 2)).collect_vec(),
-        ];
-        
-        let num_vars = polys[0].len().log_2();
-
-        let segment_size = 1 << var_idx.lo_usize(num_vars);
-
-        let mut inputs = polys.iter().map(|_| F::zero()).collect_vec();
-
-        for idx in 0..polys[0].len() {
-            inputs = polys.iter().map(|p| p[idx]).collect_vec();
-            for (data, ret) in outs[(idx / segment_size) % 2].iter_mut().zip_eq(func.exec(&inputs)) {
-                data.push(ret)
-            }
-        }
-
-        let [l, r] = outs;
-        l.into_iter().chunks(bundle_size).into_iter().interleave(r.into_iter().chunks(bundle_size).into_iter()).flatten().collect_vec()
-    }
-
-    fn algfn_map<Fnc: AlgFn<F>>(polys: &[Self], func: Fnc) -> Vec<Self> {
-        #[cfg(debug_assertions)]
-        println!("..... MAP D->D   with {}", func.description());
-        #[cfg(feature = "parallel")]
-        let chunk_size = {
-            let split_factor = 4 * current_num_threads();
-            (polys[0].len() + split_factor - 1) / split_factor
-        };
-        #[cfg(not(feature = "parallel"))]
-        let chunk_size = {
-            polys[0].len()
-        };
-        
-        let mut outs = (0..func.n_outs()).map(|_| UninitArr::new(polys[0].len())).collect_vec();
-        let mut iter_ins = polys.iter().map(|i| i.chunks(chunk_size)).collect_vec();
-        let mut iter_out = outs.iter_mut().map(|i| i.chunks_mut(chunk_size)).collect_vec();
-
-        let mut row_chunked_iterator = (0..iter_ins[0].len()).map(|_| {
-            (
-            iter_ins.iter_mut().map(|c| c.next().unwrap()).collect_vec(),
-            iter_out.iter_mut().map(|c| c.next().unwrap()).collect_vec()
-            )
-        }).collect_vec();
-
-        #[cfg(feature = "parallel")]
-        let iter = row_chunked_iterator.into_par_iter();
-        #[cfg(not(feature = "parallel"))]
-        let iter = row_chunked_iterator.into_iter();
-
-        iter.map(|(input_chunks, mut output_chunks)| {
-            let mut inputs = input_chunks.iter().map(|c| c[0]).collect_vec();
-
-            for idx in 0..input_chunks[0].len() {
-                let out = func.exec(&inputs);
-                for (tgt, val) in out.enumerate() {
-                    output_chunks[tgt][idx].write(val);
-                }
-                if idx + 1 < input_chunks[0].len() {
-                    inputs = input_chunks.iter().map(|c| c[idx + 1]).collect_vec();
-                }
-            }
-        }).count();
-        unsafe { outs.into_iter().map(|o| o.assume_init()).collect_vec() }
-    }
-}
-pub trait RandomlyGeneratedPoly<F: PrimeField>: Sized {
-    type Config;
-    fn rand_points<
-        CC: TECurveConfig<BaseField=F>,
-        RNG: Rng,
-    >(rng: &mut RNG, cfg: Self::Config) -> [Self; 3];
-
-    fn rand_points_affine<
-        CC: TECurveConfig<BaseField=F>,
-        RNG: Rng,
-    >(rng: &mut RNG, cfg: Self::Config) -> [Self; 2];
-
-}
-pub struct DensePolyRndConfig {
-    pub num_vars: usize,
-}
-impl<F: PrimeField> RandomlyGeneratedPoly<F> for Vec<F> {
-    type Config = DensePolyRndConfig;
-
-    fn rand_points<CC: TECurveConfig<BaseField=F>, RNG: Rng>(rng: &mut RNG, cfg: Self::Config) -> [Self; 3] {
-        // let count = (0..(rng.next_u64() as usize % ((1 << (cfg.num_vars - 1)) + 1)) * 2);
-        let count = 0..(1 << cfg.num_vars);
-        let data = count.map(|_| {
-            let p = Projective::<CC>::rand(rng);
-            (p.x, p.y, p.z)
-        }).collect_vec();
-
-        let (x, y, z) = data.into_iter().multiunzip();
-
-        [
-            x,
-            y,
-            z
-        ]
-    }
-
-    fn rand_points_affine<CC: TECurveConfig<BaseField=F>, RNG: Rng>(rng: &mut RNG, cfg: Self::Config) -> [Self; 2] {
-        let data = (0..(rng.next_u64() as usize % (1 << (cfg.num_vars - 1) + 1)) * 2).map(|_| {
-            let p = Affine::<CC>::rand(rng);
-            (p.x, p.y)
-        }).collect_vec();
-
-        let (x, y) = data.into_iter().multiunzip();
-
-        [
-            x,
-            y,
-        ]
-    }
-}
-pub trait Densify<F: Clone> {
-    type Hint;
-    fn to_dense(&self, hint: Self::Hint) -> Vec<F>;
-}
-impl<F: PrimeField> Densify<F> for Vec<F> {
-    type Hint = usize;
-
-    fn to_dense(&self, hint: Self::Hint) -> Vec<F> {
-        let mut out = self.clone();
-        out.extend(repeat_n(F::zero(), (1 << hint) - out.len()));
-        out
-    }
 }
 
 #[cfg(feature = "parallel")]
@@ -566,11 +353,12 @@ mod test {
     use itertools::Itertools;
     use num_traits::One;
     use rstest::rstest;
+    use crate::cleanup::polys::common::{Densify, MapSplit, RandomlyGeneratedPoly};
     use crate::cleanup::protocols::splits::SplitIdx;
     use crate::cleanup::utils::algfn::ArcedAlgFn;
-    use crate::polynomial::vecvec::{vecvec_map_split, VecVecPolynomial};
     use crate::protocol::protocol::PolynomialMapping;
-    use crate::utils::{eq_poly_sequence_from_multiplier, eq_sum, map_over_poly, padded_eq_poly_sequence, DensePolyRndConfig, Densify, MapSplit, RandomlyGeneratedPoly};
+    use crate::utils::{eq_poly_sequence_from_multiplier, eq_sum, map_over_poly, padded_eq_poly_sequence};
+    use crate::cleanup::polys::dense::DensePolyRndConfig;
 
     use super::eq_poly_sequence;
 

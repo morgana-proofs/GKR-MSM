@@ -11,12 +11,11 @@ use crate::{
         proof_transcript::TProofTranscript2,
         protocol2::Protocol2,
     },
-    polynomial::vecvec::VecVecPolynomial
+    cleanup::polys::vecvec::VecVecPolynomial
 };
-use crate::cleanup::protocols::sumcheck::{BareSumcheckSO, DenseSumcheckObjectSO, GenericSumcheckProtocol};
 use crate::cleanup::protocols::sumchecks::dense_eq::DenseDeg2Sumcheck;
 use crate::cleanup::protocols::zero_check::ZeroCheck;
-use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
+use crate::cleanup::utils::algfn::AlgFn;
 macro_rules! build_advice_into {
     ($name:ident <$($l:lifetime, )*$($x:ident : $xt:path),+>, $value:ident($held:ty)) => {
         impl <$($l, )*$($x : $xt),+> Into<$held> for $name <$($l, )*$($x),+> {

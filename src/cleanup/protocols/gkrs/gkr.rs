@@ -1,12 +1,8 @@
 use std::marker::PhantomData;
 use ark_ff::PrimeField;
 use itertools::Itertools;
-use merlin::Transcript;
 use crate::cleanup::proof_transcript::{TProofTranscript2};
 use crate::cleanup::protocol2::Protocol2;
-use crate::cleanup::protocols::sumcheck::{SinglePointClaims};
-use crate::polynomial::vecvec::VecVecPolynomial;
-use crate::cleanup::protocols::sumchecks::vecvec_eq::{VecVecDeg2Sumcheck, VecVecDeg2SumcheckObject};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 
 

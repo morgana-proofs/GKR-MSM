@@ -1,30 +1,24 @@
-use std::fmt::Alignment::Right;
 use std::iter::repeat;
 use std::marker::PhantomData;
 use std::ops::AddAssign;
-use std::sync::Arc;
 use ark_bls12_381::Fr;
 use ark_ff::{Field, PrimeField};
 use ark_std::iterable::Iterable;
 use itertools::{repeat_n, Itertools};
-use liblasso::poly::dense_mlpoly::DensePolynomial;
-use liblasso::poly::eq_poly::EqPolynomial;
-use liblasso::poly::unipoly;
 use liblasso::poly::unipoly::UniPoly;
 use liblasso::utils::math::Math;
-use merlin::Transcript;
-use rayon::iter::{Either, IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
-use crate::copoly::{Copolynomial, EqPoly};
-use crate::polynomial::vecvec::{EQPolyData, VecVecPolynomial};
-use crate::protocol::protocol::{Claim, EvalClaim, MultiEvalClaim, PolynomialMapping, Protocol, ProtocolProver, ProtocolVerifier};
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
+use crate::copoly::Copolynomial;
+use crate::cleanup::polys::vecvec::{EQPolyData, VecVecPolynomial};
+use crate::cleanup::polys::common::{Make21, BindVar21};
+use crate::protocol::protocol::{Protocol, ProtocolProver, ProtocolVerifier};
 
 #[cfg(feature = "prof")]
 use profi::{prof, prof_guard};
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
-use crate::cleanup::protocols::gkrs::split_map_gkr::SplitVecVecMapGKRAdvice;
-use crate::cleanup::protocols::sumcheck::{BareSumcheckSO, DenseSumcheckObject, DenseSumcheckObjectSO, EqWrapper, FoldToSumcheckable, GammaWrapper, GenericSumcheckProtocol, SinglePointClaims, SumClaim};
+use crate::cleanup::protocols::sumcheck::{DenseSumcheckObjectSO, EqWrapper, FoldToSumcheckable, GammaWrapper, GenericSumcheckProtocol, SinglePointClaims};
 use crate::utils::{eq_eval, eq_poly_sequence_from_multiplier_last, eq_poly_sequence_last, make_gamma_pows, zip_with_gamma};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 
@@ -486,23 +480,23 @@ impl<Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> GKRLayer<Trans
 mod test {
     use std::ops::Index;
     use rstest::*;
-    use std::sync::{Arc, OnceLock};
     use ark_bls12_381::Fr;
     use ark_ec::CurveConfig;
     use ark_ec::twisted_edwards::{MontCurveConfig, TECurveConfig};
     use ark_ed_on_bls12_381_bandersnatch::BandersnatchConfig;
     use ark_ff::{Field, PrimeField};
     use ark_std::{test_rng, UniformRand};
-    use itertools::{repeat_n, Itertools};
+    use itertools::Itertools;
     use num_traits::{One, Zero};
+    use crate::cleanup::polys::common::{Densify, MapSplit};
     use crate::cleanup::proof_transcript::ProofTranscript2;
-    use crate::copoly::{Copolynomial, EqPoly};
+    use crate::copoly::Copolynomial;
     use crate::cleanup::utils::twisted_edwards_ops::algfns::twisted_edwards_add_l1;
-    use crate::polynomial::vecvec::{vecvec_map, EQPolyData, EQPolyPointParts, VecVecPolynomial};
-    use crate::protocol::sumcheck::{make_folded_f, FragmentedLincomb, Sumcheckable as OldSumcheckable};
-    use crate::utils::{eq_poly_sequence_last, make_gamma_pows_static, Densify};
-    use super::{VecVecDeg2SumcheckObjectSO, VecVecDeg2SumcheckObject, Sumcheckable as NewSumcheckable, VecVecDeg2SumcheckStage};
-    use crate::cleanup::protocols::sumcheck::{EqWrapper, ExampleSumcheckObjectSO, FoldToSumcheckable, GammaWrapper, SumClaim};
+    use crate::cleanup::polys::vecvec::{VecVecPolynomial};
+    use crate::protocol::sumcheck::Sumcheckable as OldSumcheckable;
+    use crate::utils::{eq_poly_sequence_last, make_gamma_pows_static};
+    use super::{Sumcheckable as NewSumcheckable, VecVecDeg2SumcheckObject};
+    use crate::cleanup::protocols::sumcheck::{EqWrapper, ExampleSumcheckObjectSO, FoldToSumcheckable, GammaWrapper};
     use crate::cleanup::utils::arith::evaluate_poly;
     use super::*;
 
@@ -631,7 +625,7 @@ mod test {
 
             let polys = data_l.into_iter().chain(data_r.into_iter()).collect_vec();
 
-            let output = vecvec_map(&polys, twisted_edwards_add_l1());
+            let output = VecVecPolynomial::algfn_map(&polys, twisted_edwards_add_l1());
             let dense_output = output.iter().map(|p| p.to_dense(())).collect_vec();
             let point = (0..num_vars).map(|_| Fr::rand(rng)).collect_vec();
             let ev_claims = SinglePointClaims {

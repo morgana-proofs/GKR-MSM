@@ -461,7 +461,7 @@ impl<F: Clone> VecVecPolynomial<F> {
 impl<F: Clone> Densify<F> for VecVecPolynomial<F> {
     type Hint = ();
 
-    fn to_dense(&self, hint: Self::Hint) -> Vec<F> {
+    fn to_dense(&self, _: Self::Hint) -> Vec<F> {
         self.vec()
     }
 }

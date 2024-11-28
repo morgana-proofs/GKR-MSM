@@ -6,8 +6,8 @@ use itertools::Itertools;
 use liblasso::poly::{eq_poly::EqPolynomial, unipoly::UniPoly};
 use rayon::{current_num_threads, iter::{repeatn, IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator}, slice::{ParallelSlice, ParallelSliceMut}};
 
-use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2, protocols::{pushforward::logup_mainphase::LogupMainphaseProtocol, splits::{SplitAt, SplitIdx}, sumcheck::{decompress_coefficients, DenseEqSumcheckObject, FoldToSumcheckable, PointClaim}, verifier_polys::{EqPoly, EqTruncPoly, SelectorPoly, VerifierPoly}}, utils::{algfn::AlgFnUtils, arith::evaluate_poly}}, cleanup::polys::vecvec::VecVecPolynomial, utils::{eq_eval, eq_sum, make_gamma_pows, pad_vector, EvaluateAtPoint}};
-
+use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2, protocols::{pushforward::logup_mainphase::LogupMainphaseProtocol, splits::{SplitAt, SplitIdx}, sumcheck::{decompress_coefficients, DenseEqSumcheckObject, FoldToSumcheckable, PointClaim}, verifier_polys::{EqPoly, EqTruncPoly, SelectorPoly, VerifierPoly}}, utils::{algfn::AlgFnUtils, arith::evaluate_poly}}, cleanup::polys::vecvec::VecVecPolynomial, utils::{eq_eval, eq_sum, make_gamma_pows, pad_vector}};
+use crate::cleanup::polys::common::EvaluateAtPoint;
 use super::super::{sumcheck::{compress_coefficients, evaluate_univar, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec_eq::Sumcheckable};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 
@@ -744,6 +744,7 @@ mod tests {
     use itertools::Itertools;
     use liblasso::{poly::eq_poly::{self, EqPolynomial}, utils::transcript};
     use rand::RngCore;
+    use crate::cleanup::polys::common::Densify;
     use crate::cleanup::proof_transcript::ProofTranscript2;
 
     use super::*;
@@ -851,7 +852,7 @@ mod tests {
         let r : Vec<Fr> = (0 .. x_logsize + y_logsize + d_logsize).map(|_|Fr::rand(rng)).collect();
 
         let image_evals = image.iter().map(|vv|{
-            evaluate_poly(&vv.vec(), &r)
+            evaluate_poly(&vv.to_dense(()), &r)
         }).collect::<Vec<Fr>>();
 
         let mut d : Vec<Fr> =

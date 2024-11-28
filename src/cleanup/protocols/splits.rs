@@ -7,12 +7,6 @@ use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
 use crate::cleanup::protocols::sumcheck::{SinglePointClaims};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 
-use crate::cleanup::polys::vecvec::VecVecPolynomial;
-use crate::protocol::protocol::EvalClaim;
-use crate::cleanup::protocols::sumchecks::vecvec_eq::VecVecDeg2Sumcheck;
-use crate::utils::fix_var_top;
-
-
 #[derive(Debug, Copy, Clone)]
 pub enum SplitIdx {
     LO(usize),
@@ -172,7 +166,7 @@ impl<Transcript: TProofTranscript2, F: PrimeField> Protocol2<Transcript> for Glu
     type ClaimsBefore = SinglePointClaims<F>;
     type ClaimsAfter = SinglePointClaims<F>;
 
-    fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
+    fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, _: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         let r = transcript.challenge_sumcheck();
         let SinglePointClaims { mut point, evs } = claims;
 

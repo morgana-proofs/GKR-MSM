@@ -670,7 +670,7 @@ impl<F: PrimeField, Fun: AlgFnSO<F>, S: Sumcheckable<F>, PT: TProofTranscript2> 
         let degrees = repeat(self.f.deg()).take(self.num_vars);
         let generic_protocol_config = GenericSumcheckProtocol::new(degrees);
 
-        let ((ev, point), poly_evs) = generic_protocol_config.prove(transcript, claims.sum, advice);
+        let ((_, point), poly_evs) = generic_protocol_config.prove(transcript, claims.sum, advice);
 
         transcript.write_scalars(&poly_evs);
 
@@ -714,7 +714,7 @@ impl<F: PrimeField, Fun: AlgFn<F>> GammaWrapper<F, Fun> {
         assert!(f.n_outs() > 1);
         let mut gamma_pows = Vec::with_capacity(f.n_outs() - 1);
         gamma_pows.push(gamma);
-        for i in 0..f.n_outs() - 2 {
+        for _ in 0..f.n_outs() - 2 {
             let tmp = gamma_pows.last().unwrap();
             gamma_pows.push(gamma * tmp);
         }

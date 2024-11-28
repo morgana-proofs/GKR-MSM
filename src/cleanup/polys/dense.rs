@@ -34,7 +34,6 @@ impl<F: PrimeField> BindVar<F> for Vec<F> {
 impl<F: PrimeField> BindVar21<F> for Vec<F> {
     fn bind_21(&mut self, t: F) {
         let tm1 = t - F::one();
-        let iter = self.iter();
 
         for i in 0..(self.len() / 2) {
             self[i] = self[2 * i + 1] + tm1 * (self[2 * i] - self[2 * i + 1]);

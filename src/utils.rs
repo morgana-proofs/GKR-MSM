@@ -353,12 +353,12 @@ mod test {
     use itertools::Itertools;
     use num_traits::One;
     use rstest::rstest;
-    use crate::cleanup::polys::common::{Densify, MapSplit, RandomlyGeneratedPoly};
+    use crate::cleanup::polys::common::{BindVar21, Densify, Make21, MapSplit, RandomlyGeneratedPoly};
     use crate::cleanup::protocols::splits::SplitIdx;
     use crate::cleanup::utils::algfn::ArcedAlgFn;
     use crate::protocol::protocol::PolynomialMapping;
     use crate::utils::{eq_poly_sequence_from_multiplier, eq_sum, map_over_poly, padded_eq_poly_sequence};
-    use crate::cleanup::polys::dense::DensePolyRndConfig;
+    use crate::cleanup::polys::dense::{bind_21_single_thread, DensePolyRndConfig};
 
     use super::eq_poly_sequence;
 
@@ -395,6 +395,7 @@ mod test {
             ins[1] + ins[2],
         ]
     }
+
     fn blah(ins: &[F]) -> Vec<F> {
         let tmp = ins.iter().collect_vec();
         let tmp = tmp.as_slice();
@@ -446,6 +447,20 @@ mod test {
         let dense_out = out.into_iter().map(|p| p.to_dense(num_vars)).collect_vec();
 
         assert_eq!(dense_out, expected_out)
+    }
+
+    #[test]
+    fn vec_make21() {
+        let gen = &mut test_rng();
+
+        let num_vars = 8;
+        let mut data = (0..(1 << num_vars)).map(|_| F::rand(gen)).collect_vec();
+        let t = F::rand(gen);
+        data.make_21();
+        let mut expected = data.clone();
+        bind_21_single_thread(&mut expected, t);
+        data.bind_21(t);
+        assert_eq!(expected, data);
     }
 
     #[test]

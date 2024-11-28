@@ -419,6 +419,9 @@ impl<F: Field> VecVecPolynomial<F> {
     /// Where p_*2 = 2 * p_*1 - p_*0
     fn bind_21(&mut self, t: F) {
         let tm1 = t - F::one();
+        #[cfg(not(feature = "parallel"))]
+        let iter = self.data.iter_mut();
+        #[cfg(feature = "parallel")]
         let iter = self.data.par_iter_mut();
         
         iter

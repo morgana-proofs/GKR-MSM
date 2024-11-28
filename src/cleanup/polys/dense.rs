@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use ark_ff::{Field, PrimeField};
 use itertools::{repeat_n, Itertools};
 use ark_ec::twisted_edwards::{Affine, Projective, TECurveConfig};
@@ -8,10 +9,14 @@ use num_traits::{One, Zero};
 use liblasso::utils::math::Math;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use ark_std::UniformRand;
+use rayon::prelude::ParallelSliceMut;
 use crate::cleanup::polys::common::{BindVar, BindVar21, Densify, EvaluateAtPoint, Make21, MapSplit, RandomlyGeneratedPoly};
 use crate::cleanup::protocols::splits::SplitIdx;
 use crate::cleanup::protocols::sumcheck::bind_dense_poly;
 use crate::cleanup::utils::algfn::AlgFn;
+use rayon::iter::IndexedParallelIterator;
+
+pub const MIN_PAR_CHUNK_INPUT: Cell<usize> = Cell::new(1 << 13);
 
 impl<F: PrimeField> EvaluateAtPoint<F> for Vec<F> {
     fn evaluate(&self, p: &[F]) -> F {
@@ -31,27 +36,63 @@ impl<F: PrimeField> BindVar<F> for Vec<F> {
     }
 }
 
-impl<F: PrimeField> BindVar21<F> for Vec<F> {
-    fn bind_21(&mut self, t: F) {
-        let tm1 = t - F::one();
-
-        for i in 0..(self.len() / 2) {
-            self[i] = self[2 * i + 1] + tm1 * (self[2 * i] - self[2 * i + 1]);
+pub fn bind_21_single_thread<F: PrimeField>(vec: &mut Vec<F>, t: F) {
+    let tm1 = t - F::one();
+    {
+        for i in 0..(vec.len() / 2) {
+            vec[i] = vec[2 * i + 1] + tm1 * (vec[2 * i] - vec[2 * i + 1]);
         }
-        let mut i = self.len() / 2;
+        let mut i = vec.len() / 2;
         if i % 2 == 1 {
-            self[i] = F::zero();
+            vec[i] = F::zero();
             i += 1;
         }
-        self.truncate(i);
+        vec.truncate(i);
+    }
+
+}
+
+impl<F: PrimeField> BindVar21<F> for Vec<F> {
+    fn bind_21(&mut self, t: F) {
+        #[cfg(not(feature = "parallel"))]
+        {
+            bind_21_single_thread(self, t);
+        }
+        #[cfg(feature = "parallel")]
+        {
+            let tm1 = t - F::one();
+            let num_threads = 1 << current_num_threads().log_2();
+
+            let mut batch_size = (MIN_PAR_CHUNK_INPUT.get() * num_threads).min(self.len());
+
+            for i in 0..(batch_size / 2) {
+                self[i] = self[2 * i + 1] + tm1 * (self[2 * i] - self[2 * i + 1]);
+            }
+
+            while batch_size < self.len() {
+                let (current, _) = self.split_at_mut(batch_size * 2);
+                let (previous, input) = current.split_at_mut(batch_size);
+                let (_, output) = previous.split_at_mut(batch_size / 2);
+                let iter_out = output.par_chunks_mut(batch_size / 2 / num_threads);
+                let iter_in = input.par_chunks_mut(batch_size / num_threads);
+                iter_out.zip_eq(iter_in).for_each(|(output, input)| {
+                    for i in 0..output.len() {
+                        output[i] = input[2 * i + 1] + tm1 * (input[2 * i] - input[2 * i + 1]);
+                    }
+                });
+                batch_size *= 2;
+            }
+            self.truncate(batch_size / 2);
+        }
     }
 }
 
 impl<F: PrimeField> Make21<F> for Vec<F> {
     fn make_21(&mut self) {
-
+        #[cfg(not(feature = "parallel"))]
         let iter = self.chunks_mut(2);
-        // let iter = self.par_chunks_mut(2);
+        #[cfg(feature = "parallel")]
+        let iter = self.par_chunks_mut(2);
 
         iter.map(|c| {
             for i in 0..(c.len() / 2) {

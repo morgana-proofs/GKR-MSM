@@ -5,11 +5,13 @@
 #[allow(unused_imports)]
 
 use std::{cmp::min, mem::MaybeUninit, ops::Sub};
+use crate::cleanup::protocols::sumcheck::PointClaim;
+
 use super::utils::bit_utils::{BitMath, *};
 use ark_ff::{biginteger::{BigInt, BigInteger64 as B1}, BigInteger};
 use ark_ff::{Field, PrimeField};
 use hashcaster::ptr_utils::{AsSharedMUMutPtr, UninitArr, UnsafeIndexMut, UnsafeIndexRawMut};
-use liblasso::utils::math::Math;
+use liblasso::{poly::eq_poly, utils::math::Math};
 use ark_std::{One, Zero, UniformRand};
 use rayon::{current_num_threads, iter::{IntoParallelIterator, ParallelIterator}, slice::ParallelSlice};
 
@@ -38,13 +40,13 @@ pub fn native_repr<F: PrimeField, NNF: PrimeField>(poly: &[NNF]) -> Vec<F> {
 
 #[derive(Debug, Default, Clone)]
 pub struct Eqpoly<F: Zero>{
-    evals: Vec<F>,
+    pub evals: Vec<F>,
     num_limbs_in_fe: usize,
 }
 
 
-impl<F: PrimeField> Eqpoly<F>{
-    fn new<NNF: PrimeField>(pt: &[NNF], num_limbs: usize) -> Self{
+impl<F: Zero + From<u64>> Eqpoly<F>{
+    pub fn new<NNF: PrimeField>(pt: &[NNF], num_limbs: usize) -> Self{
         assert!((NNF::MODULUS_BIT_SIZE  as usize) < (64 * num_limbs), "not enough limbs");
         let num_var = pt.len();
         let poly_size = 1<<num_var;
@@ -74,7 +76,37 @@ impl<F: PrimeField> Eqpoly<F>{
                 num_limbs_in_fe: num_limbs,
             }   
         }
-}
+    }
+
+// pub fn make_equalizer_limbs<const N :usize, NNF: PrimeField>(pt: &[NNF]) -> ([u64; N], [u64; N]){
+//     // where NNF::BigInt::N = N;
+//     assert!((NNF::MODULUS_BIT_SIZE  as usize) < (64 * N*2), "not enough limbs");
+//     let num_var = pt.len();
+//     let poly_size = 1<<num_var;
+//     let evals: Vec<_> = (0..poly_size).map(
+//         |x| {
+//             let x_bits = x.to_bits(num_var);
+//             let factor = x_bits
+//                 .iter()
+//                 .zip(pt)
+//                 .map(|(&y, r)|
+//                     match y {
+//                         true => *r,
+//                         false => NNF::one() - r,
+//                 })
+//                 //.collect::<Vec<_>>()
+//                 .fold(NNF::one(), |acc, x| acc*x);
+//             let factor_limbs = fe_to_limbs(&factor);
+//             factor_limbs.iter().map(|x| F::from(*x)).collect::<Vec<_>>()
+//         })
+//         .flatten()
+//         .collect();
+
+//     let mut eq_poly = Eqpoly::new_u64_limbs(pt, num_limbs);
+//     let mid = eq_poly.evals.len();
+//     eq_poly.evals.split_at(mid)
+
+// }
 
 mod tests{
     #[allow(unused_imports)]
@@ -129,7 +161,12 @@ mod tests{
         let dim = 5;
         let pt: Vec<_> = (1..dim).map(|_| Fq::rand(&mut rng)).collect();
 
+        let poly : Eqpoly<u64> = Eqpoly::new(&pt, num_limbs);
         let poly : Eqpoly<Fr> = Eqpoly::new(&pt, num_limbs);
+
+        // let coeffs = (1..(1<<dim)).map(|_| Fq::rand(&mut rng)).collect();
+        // let evals = 
+
     }
 
 }

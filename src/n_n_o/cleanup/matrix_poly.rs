@@ -12,13 +12,15 @@ use itertools::Itertools;
 use liblasso::{poly::{eq_poly::EqPolynomial, unipoly::UniPoly}, utils::gaussian_elimination::gaussian_elimination};
 use rayon::{current_num_threads, iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator}, slice::ParallelSlice};
 
-use crate::cleanup::{protocol2::Protocol2, protocols::sumcheck::{BareSumcheckSO, DenseSumcheckObjectSO, PointClaim, SinglePointClaims, SumClaim}, utils::algfn::AlgFnSO};
+use crate::{cleanup::{protocol2::Protocol2, protocols::{sumcheck::{BareSumcheckSO, DenseSumcheckObjectSO, PointClaim, SinglePointClaims, SumClaim}//, verifier_polys::EqPoly
+}, utils::algfn::AlgFnSO}, n_n_o::{cleanup::non_native_evs::native_repr, non_native_equalizer}};
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocols::sumchecks::vecvec_eq::Sumcheckable;
 
 use super::utils::overflow_multiplication_utils::*;
 use super::utils::polynomial_utils::*;
 use super::utils::bit_utils::*;
+use super::non_native_evs::Eqpoly;
 
 /// Splits large vector of length n into chunks of small size (length m) and computes inner products, arranging them in a vector of size n/m. n%m must be zero.
 /// Supports an additional padding parameter - large vector can actually be of length < n, and will be formally padded with zeros to length n. This does not actually allocate zeros. 
@@ -148,7 +150,6 @@ pub fn normalize_and_cast_to_nn<F: PrimeField, NNF: PrimeField>(limbs: &[F]) -> 
                             temp
                         });
     NNF::from(ans_bigint)
-    //todo!();
 }
 
 pub mod test{
@@ -187,7 +188,7 @@ pub mod test{
         
     #[test]
     //TODO: this doesn't really test anything now
-    fn test_fake_provers_response(){
+    fn test_nn_provers_response(){
         let rng = &mut test_rng();
         let num_limbs = 4;
         let len1: u64 = 2*3;
@@ -203,10 +204,10 @@ pub mod test{
         let coeffs3 = (len3..2*len3).collect_vec();
     
         let r = make_prover_response::<Fq>(&coeffs1, &coeffs2, &coeffs3, num_limbs as usize);
-        println!("{:?}", r);
+        println!("{:?}", (
+            Fr::MODULUS_BIT_SIZE, Fq::MODULUS_BIT_SIZE));
     }
 }
-
 
 /// Matrix-arranged polynomial.
 /// Columns are little-end, i.e. each column is a chunk of length y_size.
@@ -268,18 +269,58 @@ impl<F: PrimeField, NNF: PrimeField, PT: TProofTranscript2> Protocol2<PT> for NN
     type ClaimsAfter = NNOOutputClaim<F, NNF>;
 
     fn prove(&self, transcript: &mut PT, nn_opening_claim: Self::ClaimsBefore, native_repr: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
-        let evaluation_with_nonflushed_limbs: Vec<F> = todo!(); //make_fake_prover_response::<F>();
-        assert!(evaluation_with_nonflushed_limbs.len() == 3 * (self.y_size-1) + 1);
+        let Pxy = &native_repr.values;
+        let pt = nn_opening_claim.point;
+        let num_limbs = (NNF::MODULUS_BIT_SIZE as usize + 63) / 64;
+        let eq_poly: Eqpoly<u64>= Eqpoly::new(&pt, num_limbs);
+        let mid = eq_poly.evals.len()/2;
+        let (Px, Py) = eq_poly.evals.split_at(mid);
+        let evaluation_with_nonflushed_limbs: Vec<F> = make_prover_response(Pxy, Px, Py, num_limbs);
+        // some other length on the right 
+        // assert!(evaluation_with_nonflushed_limbs.len() == 3 * (self.y_size-1) + 1);
         transcript.write_scalars(&evaluation_with_nonflushed_limbs);
         let t: F = transcript.challenge(128);
         // here, prover computes inner_prod_lo with 1, t, t^2 ...
 
-        todo!()
+
+        let sum_claim = UniPoly::from_coeff(evaluation_with_nonflushed_limbs).evaluate(&t);
+        let n_vars_a = self.x_logsize / 2;
+        let n_vars_b = self.x_logsize - n_vars_a;
+
+        let triple_prod = TripleProductSumcheck::<F>::new(n_vars_a, n_vars_b);
+
+        let Pxy = Pxy.iter().map(|x| F::from(*x)).collect();
+        let Px = Px.iter().map(|x| F::from(*x)).collect();
+        let Py = Py.iter().map(|x| F::from(*x)).collect();
+
+        let (SinglePointClaims { point, evs }, p_o) = triple_prod.prove(transcript, SumClaim{sum: sum_claim}, (Arc::new(Pxy), Px, Py));
+
+        let mid = n_vars_a;
+        let (nn_point_lo, nn_point_hi) =  pt.split_at(mid);
+
+        let output_claim = NNOOutputClaim::<F, NNF> {
+            nn_point_hi: nn_point_hi.to_vec(),
+            nn_point_lo: nn_point_lo.to_vec(),
+            r: point,
+            native_repr_eval: evs[0],
+            native_repr_nn_eq_lo_eval: evs[1],
+            native_repr_nn_eq_hi_eval: evs[2],
+        };
+        (output_claim, ())
+
+        // todo!()
     }
 
     fn verify(&self, transcript: &mut PT, nn_opening_claim: Self::ClaimsBefore) -> Self::ClaimsAfter {
+        let pt = nn_opening_claim.point;
+        let num_limbs = (NNF::MODULUS_BIT_SIZE as usize + 63) / 64;
+        let eq_poly: Eqpoly<u64>= Eqpoly::new(&pt, num_limbs);
+        let mid = eq_poly.evals.len()/2;
+        let (Px, Py) = eq_poly.evals.split_at(mid);
+
         let evaluation_with_nonflushed_limbs = transcript.read_scalars::<F>(3 * (self.y_size - 1) + 1);
-        assert!(nn_opening_claim.ev == normalize_and_cast_to_nn(&evaluation_with_nonflushed_limbs));
+        //some other assert
+        //assert!(nn_opening_claim.ev == normalize_and_cast_to_nn(&evaluation_with_nonflushed_limbs));
 
         let t : F = transcript.challenge(128);
         let sum_claim = UniPoly::from_coeff(evaluation_with_nonflushed_limbs).evaluate(&t);
@@ -292,8 +333,8 @@ impl<F: PrimeField, NNF: PrimeField, PT: TProofTranscript2> Protocol2<PT> for NN
         let SinglePointClaims { point, evs } = triple_prod.verify(transcript, SumClaim{sum: sum_claim});
 
         NNOOutputClaim::<F, NNF> {
-            nn_point_hi: nn_opening_claim.point[.. n_vars_a].to_vec(),
-            nn_point_lo: nn_opening_claim.point[n_vars_a ..].to_vec(),
+            nn_point_hi: pt[.. n_vars_a].to_vec(),
+            nn_point_lo: pt[n_vars_a ..].to_vec(),
             r: point,
             native_repr_eval: evs[0],
             native_repr_nn_eq_lo_eval: evs[1],

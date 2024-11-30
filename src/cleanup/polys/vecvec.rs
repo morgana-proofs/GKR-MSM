@@ -612,7 +612,7 @@ pub fn vecvec_map_split_to_dense<F: PrimeField, Fnc: AlgFn<F>>(
     bundle_size: usize,
 ) -> Vec<Vec<F>> {
     #[cfg(debug_assertions)]
-    println!("SPLID MAP VV->D  with {}", func.description());
+    println!("SPLIT MAP VV->D  with {}", func.description());
     let num_vars = polys[0].num_vars();
     let row_logsize = polys[0].row_logsize;
     assert_eq!(row_logsize, 1);

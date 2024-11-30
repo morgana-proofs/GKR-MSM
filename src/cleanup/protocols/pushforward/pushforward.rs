@@ -1,6 +1,8 @@
 use std::{cmp::min, iter::repeat_n, marker::PhantomData};
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
+use ark_ec::twisted_edwards::{Affine, TECurveConfig};
+use ark_ff::{BigInteger, PrimeField};
+use ark_std::log2;
 use hashcaster::ptr_utils::{AsSharedMutPtr, UnsafeIndexRawMut};
 use itertools::Itertools;
 use liblasso::poly::{eq_poly::EqPolynomial, unipoly::UniPoly};
@@ -10,6 +12,7 @@ use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2,
 use crate::cleanup::polys::common::EvaluateAtPoint;
 use super::super::{sumcheck::{compress_coefficients, evaluate_univar, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec_eq::Sumcheckable};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
+use crate::utils::TwistedEdwardsConfig;
 
 #[derive(Clone)]
 pub struct Prod3Fn<F: PrimeField> {
@@ -412,6 +415,138 @@ impl<F: PrimeField> PushforwardProtocol<F> {
     pub fn new(x_logsize: usize, y_logsize: usize, y_size: usize, d_logsize: usize) -> Self {
         assert!(y_size <= (1 << y_logsize));
         Self { x_logsize, y_logsize, y_size, d_logsize, _marker: PhantomData }
+    }
+}
+
+pub struct PushForwardAdvice<F: PrimeField> {
+    pub p1: PipMSMPhase1Data<F>,
+    pub p2: Option<PipMSMPhase2Data<F>>,
+    pub y_logsize: usize,
+    pub d_logsize: usize,
+    pub x_logsize: usize,
+    pub size_y: usize,
+    pub size_x: usize,
+    pub counter: Vec<Vec<u32>>,
+    pub digits: Vec<Vec<u32>>,
+    pub image: Option<Vec<VecVecPolynomial<F>>>
+}
+
+impl<F: PrimeField> PushForwardAdvice<F> {
+    pub fn new<CC: TECurveConfig<BaseField=F>>(
+        points: &[Affine<CC>],
+        coefs: &[CC::ScalarField],
+        size_y: usize,
+        y_logsize: usize,
+        d_logsize: usize,
+        x_logsize: usize,
+    ) -> Self {
+        let polys = vec![
+            points.iter().map(|a| a.x).collect_vec(),
+            points.iter().map(|a| a.y).collect_vec(),
+            points.iter().map(|_| F::one()).collect_vec(),
+        ];
+
+        let mut digits = vec![vec![0u32; points.len()]; size_y];
+
+        for x in 0..points.len() {
+            let coef = coefs[x].into_bigint().to_bits_be();
+            for y in 0..size_y {
+                digits[y][x] = 0;
+                for i in 0..d_logsize {
+                    digits[y][x] += (coef[y * d_logsize + i] as u32) << i;
+                }
+            }
+        }
+
+        let (mut image, counter)
+            = compute_bucketing_image(
+            &polys,
+            &digits,
+            d_logsize,
+            x_logsize,
+            y_logsize,
+            points.len(),
+            size_y,
+            vec![CC::BaseField::zero(); 3],
+            vec![CC::BaseField::zero(); 3]
+        );
+
+        let mut d : Vec<CC::BaseField> =
+            digits.iter().map(|row| row.iter().map(|elt| CC::BaseField::from(*elt as u64))).flatten().collect();
+
+        let mut c : Vec<CC::BaseField> =
+            counter.iter().map(|row| row.iter().map(|elt| CC::BaseField::from(*elt as u64))).flatten().collect();
+
+        let mut ac_d = vec![0u64; 1 << d_logsize];
+        let mut ac_c = vec![0u64; 1 << x_logsize];
+
+        for row in &digits {
+            for &elt in row {
+                ac_d[elt as usize] += 1
+            }
+        }
+        for row in &counter {
+            for &elt in row {
+                ac_c[elt as usize] += 1
+            }
+        }
+
+        let ac_c = ac_c.iter().map(|&x| -CC::BaseField::from(x)).collect_vec();
+        let ac_d = ac_d.iter().map(|&x| -CC::BaseField::from(x)).collect_vec();
+
+        let p1 = PipMSMPhase1Data{
+            c : c.clone(),
+            d : d.clone(),
+            p_0: polys[0].clone(),
+            p_1: polys[1].clone(),
+            ac_c,
+            ac_d
+        };
+        Self {
+            p1,
+            p2: None,
+            y_logsize,
+            d_logsize,
+            x_logsize,
+            size_y,
+            size_x: points.len(),
+            counter,
+            digits,
+            image: Some(image),
+        }
+    }
+
+    pub fn bind(&mut self, r: &[F]) {
+        assert!(self.p2.is_none());
+        let (r_y, rest) = r.split_at(self.y_logsize);
+        let r_y = r_y.to_vec();
+        let (r_d, rest) = rest.split_at(self.d_logsize);
+        let r_d = r_d.to_vec();
+        let (r_c, rest) = rest.split_at(self.x_logsize);
+        let r_c = r_c.to_vec();
+        assert_eq!(rest.len(), 0);
+
+        let eq_c = EqPoly::new(self.x_logsize, &r_c).evals();
+        let eq_d = EqPoly::new(self.d_logsize, &r_d).evals();
+
+        let mut c_pull : Vec<F> = self.counter.iter().map(|row| {
+            row.iter().map(|&elt| {
+                eq_c[elt as usize]
+            })
+        }).flatten().collect();
+
+        let mut d_pull : Vec<F> = self.digits.iter().map(|row| {
+            row.iter().map(|&elt| {
+                eq_d[elt as usize]
+            })
+        }).flatten().collect();
+
+        self.p2 = Some(
+            PipMSMPhase2Data{
+                c_pull : c_pull.clone(),
+                d_pull : d_pull.clone()
+            }
+        )
     }
 }
 

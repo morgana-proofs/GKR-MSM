@@ -14,7 +14,7 @@ struct VecVecGrp {
 
 impl Display for VecVecGrp {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}, {}]", self.num_vars, self.num_vertical_vars)
+        write!(f, "[{:02}, {:02}]", self.num_vars, self.num_vertical_vars)
     }
 }
 
@@ -25,7 +25,7 @@ struct GridSearch {
 
 impl Display for GridSearch {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}, {}]", self.num_vars, self.param)
+        write!(f, "[{:02}, {:02}]", self.num_vars, self.param)
     }
 }
 
@@ -73,10 +73,15 @@ mod splitmaps {
 mod binds {
     use ark_ff::PrimeField;
     use GKR_MSM::cleanup::polys::common::{BindVar21, Make21};
+    use GKR_MSM::cleanup::polys::dense::{bind_21_single_thread, bind_21_with_alloc};
     use GKR_MSM::cleanup::polys::vecvec::VecVecPolynomial;
 
-    pub fn naive<F: PrimeField>(poly: &mut Vec<F>, t: F) {
-        poly.bind_21(t);
+    pub fn single_thread<F: PrimeField>(poly: &mut Vec<F>, t: F) {
+        bind_21_single_thread(poly, t);
+    }
+
+    pub fn with_alloc<F: PrimeField>(poly: &mut Vec<F>, t: F) {
+        bind_21_with_alloc(poly, t);
     }
 
     pub fn dense<F: PrimeField>(poly: &mut Vec<F>, t: F) {
@@ -90,7 +95,7 @@ mod binds {
 fn bench_map(c: &mut Criterion) {
     let mut group = c.benchmark_group("Poly/Map");
     let rng = &mut test_rng();
-    for num_vars in 18..19 {
+    for num_vars in 20..21 {
         let data = (0..4).map(|_| (0..1 << num_vars).map(|_| Fq::rand(rng)).collect_vec()).collect_vec();
         group.bench_with_input(
             BenchmarkId::new("Naive", num_vars),
@@ -143,18 +148,29 @@ fn bench_map(c: &mut Criterion) {
 fn bench_bind(c: &mut Criterion) {
     let mut group = c.benchmark_group("Poly/Bind");
     let rng = &mut test_rng();
-    for num_vars in 22..23 {
+    for num_vars in 20..21 {
         let data = (
             (0..1 << num_vars).map(|_| Fq::rand(rng)).collect_vec(),
             Fq::rand(rng),
         );
         group.bench_with_input(
-            BenchmarkId::new("Naive", num_vars),
+            BenchmarkId::new("SingleThread", num_vars),
             &num_vars,
             |b, i| {
                 b.iter_batched_ref(
                     || data.clone(),
-                    |(data, t)| binds::naive(data, *t),
+                    |(data, t)| binds::single_thread(data, *t),
+                    BatchSize::SmallInput,
+                )
+            }
+        );
+        group.bench_with_input(
+            BenchmarkId::new("WithAlloc", num_vars),
+            &num_vars,
+            |b, i| {
+                b.iter_batched_ref(
+                    || data.clone(),
+                    |(data, t)| binds::with_alloc(data, *t),
                     BatchSize::SmallInput,
                 )
             }

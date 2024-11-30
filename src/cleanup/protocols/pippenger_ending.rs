@@ -20,7 +20,7 @@ use crate::utils::{build_points, TwistedEdwardsConfig};
 
 
 pub struct PippengerEndingWG<F: PrimeField + TwistedEdwardsConfig> {
-    advices: Vec<SplitVecVecMapGKRAdvice<F>>,
+    pub(crate) advices: Vec<SplitVecVecMapGKRAdvice<F>>,
 }
 
 impl<F: PrimeField + TwistedEdwardsConfig> Iterator for PippengerEndingWG<F> {
@@ -38,6 +38,7 @@ impl<F: PrimeField + TwistedEdwardsConfig> PippengerEndingWG<F> {
         horizontal_vars: usize,
         inputs: Vec<VecVecPolynomial<F>>
     ) -> Self {
+        assert_eq!(inputs.len(), 6);
         let mut advices = bintree_add::builder::witness::build(
             SplitVecVecMapGKRAdvice::VecVecMAP(inputs),
             horizontal_vars,
@@ -127,6 +128,16 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Protoc
 }
 
 
+pub fn vecvec_domain<F: PrimeField>(input: &VecVecPolynomial<F>) -> VecVecPolynomial<F> {
+    VecVecPolynomial::new(
+        input.data.iter().map(|r| vec![F::one(); r.len()]).collect_vec(),
+        F::zero(),
+        F::zero(),
+        input.row_logsize,
+        input.col_logsize,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use num_traits::One;
@@ -142,13 +153,9 @@ mod tests {
         type F = <BandersnatchConfig as CurveConfig>::BaseField;
 
         let pre_inputs = VecVecPolynomial::rand_points_affine::<BandersnatchConfig, _>(rng, point_vars, multirow_vars + bucket_vars).to_vec();
-        let domain = [VecVecPolynomial::new(
-            pre_inputs[0].data.iter().map(|r| vec![F::one(); r.len()]).collect_vec(),
-            F::zero(),
-            F::zero(),
-            pre_inputs[0].row_logsize,
-            pre_inputs[0].col_logsize,
-        )];
+        let domain = [
+            vecvec_domain(&pre_inputs[0]),
+        ];
         
         let mut inputs = VecVecPolynomial::algfn_map_split(&pre_inputs, IdAlgFn::new(2), SplitIdx::LO(0), 2);
         inputs.extend(VecVecPolynomial::algfn_map_split(&domain, IdAlgFn::new(1), SplitIdx::LO(0), 1));
@@ -161,7 +168,7 @@ mod tests {
             inputs
         );
         
-        let bintree_triangle = PippengerEnding::new(
+        let ending = PippengerEnding::new(
             multirow_vars,
             bucket_vars,
             point_vars,
@@ -181,13 +188,13 @@ mod tests {
 
         let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
         
-        let (bintree_output_claims, _) = bintree_triangle.prove(&mut transcript_p, claims.clone(), bintree_triangle_wg);
+        let (bintree_output_claims, _) = ending.prove(&mut transcript_p, claims.clone(), bintree_triangle_wg);
         
         let proof = transcript_p.end();
 
         let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);
         
-        let bintree_expected_claims = bintree_triangle.verify(&mut transcript_v, claims.clone());
+        let bintree_expected_claims = ending.verify(&mut transcript_v, claims.clone());
         
         assert_eq!(bintree_output_claims, bintree_expected_claims);
 

@@ -1,11 +1,13 @@
 use std::marker::PhantomData;
 use ark_ff::PrimeField;
 use itertools::Itertools;
+use crate::cleanup::polys::common::MapSplit;
+use crate::cleanup::polys::vecvec::VecVecPolynomial;
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
 use crate::cleanup::protocols::sumcheck::{SinglePointClaims};
-use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
+use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO, IdAlgFn};
 
 #[derive(Debug, Copy, Clone)]
 pub enum SplitIdx {
@@ -158,6 +160,20 @@ impl<Transcript: TProofTranscript2, F: PrimeField> GKRLayer<Transcript, SinglePo
 
 pub struct GlueSplit<F: PrimeField> {
     _pd: PhantomData<F>,
+}
+
+impl<F: PrimeField> GlueSplit<F> {
+    pub fn new() -> Self {
+        Self {
+            _pd: PhantomData,
+        }
+    }
+
+    pub fn witness(polys: &[VecVecPolynomial<F>]) -> Vec<VecVecPolynomial<F>> {
+        let mut out = VecVecPolynomial::algfn_map_split(&polys[0..2], IdAlgFn::new(2), SplitIdx::LO(0), 2);
+        out.extend(VecVecPolynomial::algfn_map_split(&polys[2..3], IdAlgFn::new(1), SplitIdx::LO(0), 1));
+        out
+    }
 }
 
 impl<Transcript: TProofTranscript2, F: PrimeField> Protocol2<Transcript> for GlueSplit<F> {

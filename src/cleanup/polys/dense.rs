@@ -9,7 +9,7 @@ use num_traits::{One, Zero};
 use liblasso::utils::math::Math;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use ark_std::UniformRand;
-use rayon::prelude::ParallelSliceMut;
+use rayon::prelude::{ParallelSlice, ParallelSliceMut};
 use crate::cleanup::polys::common::{BindVar, BindVar21, Densify, EvaluateAtPoint, Make21, MapSplit, RandomlyGeneratedPoly};
 use crate::cleanup::protocols::splits::SplitIdx;
 use crate::cleanup::protocols::sumcheck::bind_dense_poly;
@@ -49,7 +49,15 @@ pub fn bind_21_single_thread<F: PrimeField>(vec: &mut Vec<F>, t: F) {
         }
         vec.truncate(i);
     }
+}
 
+pub fn bind_21_with_alloc<F: PrimeField>(vec: &mut Vec<F>, t: F) {
+    let tm1 = t - F::one();
+    let mut tgt = Vec::with_capacity(vec.len() / 2);
+    vec.par_chunks(2).map(|chunk| {
+        chunk[1] + tm1 * (chunk[0] - chunk[1])
+    }).collect_into_vec(&mut tgt);
+    *vec = tgt;
 }
 
 impl<F: PrimeField> BindVar21<F> for Vec<F> {
@@ -60,29 +68,30 @@ impl<F: PrimeField> BindVar21<F> for Vec<F> {
         }
         #[cfg(feature = "parallel")]
         {
-            let tm1 = t - F::one();
-            let num_threads = 1 << current_num_threads().log_2();
-
-            let mut batch_size = (MIN_PAR_CHUNK_INPUT.get() * num_threads).min(self.len());
-
-            for i in 0..(batch_size / 2) {
-                self[i] = self[2 * i + 1] + tm1 * (self[2 * i] - self[2 * i + 1]);
-            }
-
-            while batch_size < self.len() {
-                let (current, _) = self.split_at_mut(batch_size * 2);
-                let (previous, input) = current.split_at_mut(batch_size);
-                let (_, output) = previous.split_at_mut(batch_size / 2);
-                let iter_out = output.par_chunks_mut(batch_size / 2 / num_threads);
-                let iter_in = input.par_chunks_mut(batch_size / num_threads);
-                iter_out.zip_eq(iter_in).for_each(|(output, input)| {
-                    for i in 0..output.len() {
-                        output[i] = input[2 * i + 1] + tm1 * (input[2 * i] - input[2 * i + 1]);
-                    }
-                });
-                batch_size *= 2;
-            }
-            self.truncate(batch_size / 2);
+            bind_21_with_alloc(self, t);
+            // let tm1 = t - F::one();
+            // let num_threads = 1 << current_num_threads().log_2();
+            // 
+            // let mut batch_size = (MIN_PAR_CHUNK_INPUT.get() * num_threads).min(self.len());
+            // 
+            // for i in 0..(batch_size / 2) {
+            //     self[i] = self[2 * i + 1] + tm1 * (self[2 * i] - self[2 * i + 1]);
+            // }
+            // 
+            // while batch_size < self.len() {
+            //     let (current, _) = self.split_at_mut(batch_size * 2);
+            //     let (previous, input) = current.split_at_mut(batch_size);
+            //     let (_, output) = previous.split_at_mut(batch_size / 2);
+            //     let iter_out = output.par_chunks_mut(batch_size / 2 / num_threads);
+            //     let iter_in = input.par_chunks_mut(batch_size / num_threads);
+            //     iter_out.zip_eq(iter_in).for_each(|(output, input)| {
+            //         for i in 0..output.len() {
+            //             output[i] = input[2 * i + 1] + tm1 * (input[2 * i] - input[2 * i + 1]);
+            //         }
+            //     });
+            //     batch_size *= 2;
+            // }
+            // self.truncate(batch_size / 2);
         }
     }
 }

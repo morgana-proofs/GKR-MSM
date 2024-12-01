@@ -20,7 +20,7 @@ use crate::utils::{build_points, TwistedEdwardsConfig};
 
 
 pub struct PippengerEndingWG<F: PrimeField + TwistedEdwardsConfig> {
-    pub(crate) advices: Vec<SplitVecVecMapGKRAdvice<F>>,
+    pub advices: Vec<SplitVecVecMapGKRAdvice<F>>,
 }
 
 impl<F: PrimeField + TwistedEdwardsConfig> Iterator for PippengerEndingWG<F> {

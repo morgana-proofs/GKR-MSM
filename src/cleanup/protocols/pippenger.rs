@@ -17,7 +17,7 @@ use crate::utils::TwistedEdwardsConfig;
 
 pub struct PippengerWG<CC: TECurveConfig> where CC::BaseField: PrimeField + TwistedEdwardsConfig {
     beginning: PushForwardAdvice<CC::BaseField>,
-    ending: PippengerEndingWG<CC::BaseField>,
+    pub ending: PippengerEndingWG<CC::BaseField>,
     _pd: PhantomData<CC>,
 }
 

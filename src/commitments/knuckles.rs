@@ -80,6 +80,10 @@ impl<Ctx: Pairing> KnucklesProvingKey<Ctx> {
         Self { kzg_pk, num_vars, k, inverses: k_pows }
     }
 
+    pub fn num_vars(&self) -> usize {
+        self.num_vars
+    }
+
     pub fn load(file: &mut File) -> Self {
         todo!()
     }
@@ -94,8 +98,12 @@ impl<Ctx: Pairing> KnucklesProvingKey<Ctx> {
     }
 
     pub fn commit(&self, poly: &[Ctx::ScalarField]) -> Ctx::G1Affine {
-        assert_eq!(poly.len(), 1 << self.num_vars);
+        assert!(poly.len() <= 1 << self.num_vars);
         self.kzg_pk.commit(poly)
+    }
+
+    pub fn kzg_basis(&self) -> &[Ctx::G1Affine] {
+        self.kzg_pk.ptau_1()
     }
 
     /// Returns polynomial T and an opening c, such that T(kx) - k^{N-1}T(x) + c = P(x)E_r(x)

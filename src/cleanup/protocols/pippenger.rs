@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use ark_ec::pairing::Pairing;
 use ark_ec::twisted_edwards::{Affine, TECurveConfig};
 use ark_ed_on_bls12_381_bandersnatch::BandersnatchConfig;
 use ark_ff::{BigInteger, Field, PrimeField};
@@ -6,6 +7,7 @@ use ark_std::iterable::Iterable;
 use ark_std::log2;
 use itertools::Itertools;
 use num_traits::{One, Zero};
+use crate::cleanup::polys::vecvec::VecVecPolynomial;
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::protocols::pippenger_ending::{vecvec_domain, PippengerEnding, PippengerEndingWG};
@@ -13,15 +15,16 @@ use crate::cleanup::protocols::pushforward::pushforward::{compute_bucketing_imag
 use crate::cleanup::protocols::splits::GlueSplit;
 use crate::cleanup::protocols::sumcheck::SinglePointClaims;
 use crate::cleanup::protocols::verifier_polys::EqPoly;
+use crate::commitments::knuckles::KnucklesProvingKey;
 use crate::utils::TwistedEdwardsConfig;
 
-pub struct PippengerWG<CC: TECurveConfig> where CC::BaseField: PrimeField + TwistedEdwardsConfig {
-    beginning: PushForwardAdvice<CC::BaseField>,
-    pub ending: PippengerEndingWG<CC::BaseField>,
+pub struct PippengerWG<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TECurveConfig<BaseField = F>> {
+    beginning: PushForwardAdvice<F, Ctx>,
+    pub ending: PippengerEndingWG<F>,
     _pd: PhantomData<CC>,
 }
 
-impl<CC: TECurveConfig> PippengerWG<CC> where CC::BaseField: PrimeField + TwistedEdwardsConfig {
+impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TECurveConfig<BaseField = F>> PippengerWG<F, Ctx, CC> {
     pub fn new(
         points: &[Affine<CC>],
         coefs: &[CC::ScalarField],
@@ -29,17 +32,22 @@ impl<CC: TECurveConfig> PippengerWG<CC> where CC::BaseField: PrimeField + Twiste
         y_logsize: usize,
         d_logsize: usize,
         x_logsize: usize,
+
+        commitment_log_multiplicity: usize,
+        commitment_key: KnucklesProvingKey<Ctx>,
     ) -> Self {
-        let size_y = y_size;
         let mut pfa = PushForwardAdvice::new(
             points,
             coefs,
-            size_y,
+            y_size,
             y_logsize,
             d_logsize,
             x_logsize,
+
+            commitment_log_multiplicity,
+            commitment_key,
         );
-        let image = pfa.image.take().unwrap();
+        let image = Option::take(&mut pfa.image).unwrap();
 
         Self {
             beginning: pfa,
@@ -54,13 +62,13 @@ impl<CC: TECurveConfig> PippengerWG<CC> where CC::BaseField: PrimeField + Twiste
     }
 }
 
-pub struct Pippenger<CC: TECurveConfig, Transcript: TProofTranscript2> where CC::BaseField: PrimeField + TwistedEdwardsConfig {
-    beginning: PushforwardProtocol<CC::BaseField>,
-    ending: PippengerEnding<CC::BaseField, Transcript>,
-    _pd: PhantomData<CC>,
+pub struct Pippenger<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TECurveConfig<BaseField = F>, Transcript: TProofTranscript2> {
+    beginning: PushforwardProtocol<F>,
+    ending: PippengerEnding<F, Transcript>,
+    _pd: PhantomData<(F, Ctx, CC)>,
 }
 
-impl<CC: TECurveConfig, Transcript: TProofTranscript2> Pippenger<CC, Transcript> where CC::BaseField: PrimeField + TwistedEdwardsConfig {
+impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TECurveConfig<BaseField = F>, Transcript: TProofTranscript2> Pippenger<F, Ctx, CC, Transcript> {
     pub fn new(
         y_size: usize,
         y_logsize: usize,
@@ -84,8 +92,8 @@ impl<CC: TECurveConfig, Transcript: TProofTranscript2> Pippenger<CC, Transcript>
     }
 }
 
-impl<CC: TECurveConfig, Transcript: TProofTranscript2> Protocol2<Transcript> for Pippenger<CC, Transcript> where CC::BaseField: PrimeField + TwistedEdwardsConfig {
-    type ProverInput = PippengerWG<CC>;
+impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TECurveConfig<BaseField = F>, Transcript: TProofTranscript2> Protocol2<Transcript> for Pippenger<F, Ctx, CC, Transcript> {
+    type ProverInput = PippengerWG<F, Ctx, CC>;
     type ProverOutput = ();
     type ClaimsBefore = SinglePointClaims<CC::BaseField>;
     type ClaimsAfter = SinglePointClaims<CC::BaseField>;
@@ -93,8 +101,8 @@ impl<CC: TECurveConfig, Transcript: TProofTranscript2> Protocol2<Transcript> for
     fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, mut advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         let (claims, _) = self.ending.prove(transcript, claims, advice.ending);
         let (claims, _) = GlueSplit::new().prove(transcript, claims, ());
-        advice.beginning.bind(&claims.point);
-        let (claims, _) = self.beginning.prove(transcript, claims, (advice.beginning.p1, advice.beginning.p2.unwrap()));
+        advice.beginning.second_phase(&claims.point);
+        let (claims, _) = self.beginning.prove(transcript, claims, (advice.beginning.phase_1_data, advice.beginning.phase_2_data.unwrap()));
         (claims, ())
     }
 
@@ -113,7 +121,12 @@ mod test {
     use crate::cleanup::protocols::gkrs::triangle_add;
     use crate::cleanup::protocols::splits::SplitIdx;
     use crate::cleanup::utils::arith::evaluate_poly;
+    use crate::commitments::kzg::random_kzg_pk;
     use super::*;
+
+    use ark_bls12_381::Bls12_381 as Ctx;
+    use ark_bls12_381::Fr;
+
 
     #[test]
     fn test_pippenger() {
@@ -124,18 +137,30 @@ mod test {
 
         let d_logsize = 8;
         let num_bits = <<BandersnatchConfig as CurveConfig>::ScalarField as PrimeField>::BigInt::NUM_LIMBS * 8;
-        let size_x = points.len();
+        let x_size = points.len();
         let y_size = (num_bits + d_logsize - 1) / d_logsize;
-        let x_logsize = log2(size_x) as usize;
+        let x_logsize = log2(x_size) as usize;
         let y_logsize = log2(y_size) as usize;
 
-        let pip_wg = PippengerWG::<BandersnatchConfig>::new(
+        let commitment_log_multiplicity = 3;
+
+        let comm_n_vars = commitment_log_multiplicity + x_logsize;
+        let comm_size = 1 << comm_n_vars;
+
+        let kzg_pk  = random_kzg_pk(2*comm_size - 1, rng);
+
+        let commitment_key = KnucklesProvingKey::new(kzg_pk, commitment_log_multiplicity + x_logsize, Fr::from(2));
+
+        let pip_wg = PippengerWG::<Fr, Ctx, BandersnatchConfig>::new(
             &points,
             &coefs,
             y_size,
             y_logsize,
             d_logsize,
             x_logsize,
+
+            commitment_log_multiplicity,
+            commitment_key,
         );
 
         let pippenger = Pippenger::new(

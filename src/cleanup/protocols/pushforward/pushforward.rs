@@ -1,4 +1,6 @@
+use std::cmp::max;
 use std::{cmp::min, iter::repeat_n, marker::PhantomData};
+use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
 use ark_ec::twisted_edwards::{Affine, TECurveConfig};
 use ark_ff::{BigInteger, PrimeField};
@@ -6,8 +8,15 @@ use ark_std::log2;
 use hashcaster::ptr_utils::{AsSharedMutPtr, UnsafeIndexRawMut};
 use itertools::Itertools;
 use liblasso::poly::{eq_poly::EqPolynomial, unipoly::UniPoly};
+use rayon::iter::IntoParallelRefMutIterator;
 use rayon::{current_num_threads, iter::{repeatn, IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator}, slice::{ParallelSlice, ParallelSliceMut}};
 
+use num_traits::Zero;
+use ark_ec::VariableBaseMSM;
+use crate::msm_nonaffine::VariableBaseMsmNonaffine;
+
+use crate::commitments::knuckles::KnucklesProvingKey;
+use crate::msm_nonaffine;
 use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2, protocols::{pushforward::logup_mainphase::LogupMainphaseProtocol, splits::{SplitAt, SplitIdx}, sumcheck::{decompress_coefficients, DenseEqSumcheckObject, FoldToSumcheckable, PointClaim}, verifier_polys::{EqPoly, EqTruncPoly, SelectorPoly, VerifierPoly}}, utils::{algfn::AlgFnUtils, arith::evaluate_poly}}, cleanup::polys::vecvec::VecVecPolynomial, utils::{eq_eval, eq_sum, make_gamma_pows, pad_vector}};
 use crate::cleanup::polys::common::EvaluateAtPoint;
 use super::super::{sumcheck::{compress_coefficients, evaluate_univar, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec_eq::Sumcheckable};
@@ -39,193 +48,6 @@ impl<F: PrimeField> AlgFnSO<F> for Prod3Fn<F> {
     }
 }
 
-#[derive(Clone)]
-pub struct Prod4Fn<F: PrimeField> {
-    _marker: PhantomData<F>
-}
-
-impl<F: PrimeField> Prod4Fn<F> {
-    pub fn new() -> Self {
-        Self { _marker: PhantomData }
-    }
-}
-
-impl<F: PrimeField> AlgFnSO<F> for Prod4Fn<F> {
-    fn exec(&self, args: &impl std::ops::Index<usize, Output = F>) -> F {
-        args[0] * args[1] * args[2] * args[3]
-    }
-
-    fn deg(&self) -> usize {
-        4
-    }
-
-    fn n_ins(&self) -> usize {
-        4
-    }
-}
-
-// /// This is a sumcheck object for sumcheck P(x) A(x, y) B(x, y). It treats y-s as lower coordinates, and sumchecks by them first.
-// /// Currently, it is implemented naively through dense sumcheck. An optimized implementation should be deployed later.
-// pub struct LayeredProd3SumcheckObject<F: PrimeField> {
-//     n_vars_x: usize,
-//     n_vars_y: usize,
-//     object: DenseSumcheckObjectSO<F, Prod3Fn<F>>,
-// }
-
-// impl<F: PrimeField> LayeredProd3SumcheckObject<F> {
-//     pub fn new(p: Vec<F>, a: Vec<F>, b: Vec<F>, n_vars_x: usize, n_vars_y: usize, claim_hint: F) -> Self {
-//         assert!(p.len() == 1 << n_vars_x);
-//         assert!(a.len() == 1 << (n_vars_x + n_vars_y));
-//         assert!(a.len() == b.len());
-//         let p = p.into_par_iter().map(|x| repeatn(x, 1 << n_vars_y)).flatten().collect();
-//         let f = Prod3Fn::new();
-//         let object = DenseSumcheckObjectSO::new(vec![p, a, b], f, n_vars_x + n_vars_y, claim_hint);
-//         Self { n_vars_x, n_vars_y, object }
-//     }
-// }
-
-// impl<F: PrimeField> Sumcheckable<F> for LayeredProd3SumcheckObject<F> {
-//     fn bind(&mut self, t: F) {
-//         self.object.bind(t);
-//     }
-
-//     fn unipoly(&mut self) -> UniPoly<F> {
-//         let mut u = self.object.unipoly().as_vec();
-//         if self.object.current_round() < self.n_vars_y {
-//             let s = u.pop().unwrap();
-//             assert!(s == F::zero());
-//         }
-//         UniPoly::from_coeff(u)
-//     }
-
-//     fn final_evals(&self) -> Vec<F> {
-//         self.object.final_evals()
-//     }
-
-//     fn challenges(&self) -> &[F] {
-//         self.object.challenges()
-//     }
-
-//     fn current_round(&self) -> usize {
-//         self.object.current_round()
-//     }
-// }
-
-// pub struct Layer1CombinedObject<F: PrimeField> {
-//     prod3: LayeredProd4SumcheckObject<F>,
-//     add_inverses: AddInversesSumcheckObjectSO<F>,
-// }
-// pub struct LayeredProd4SumcheckObject<F: PrimeField> {
-//     n_vars_x: usize,
-//     n_vars_y: usize,
-//     object: DenseSumcheckObjectSO<F, Prod4Fn<F>>,
-// }
-
-// impl<F: PrimeField> LayeredProd4SumcheckObject<F> {
-//     pub fn new(p: Vec<F>, a: Vec<F>, b: Vec<F>, c: Vec<F>, n_vars_x: usize, n_vars_y: usize, claim_hint: F) -> Self {
-//         assert!(p.len() == 1 << n_vars_x);
-//         assert!(a.len() == 1 << (n_vars_x + n_vars_y));
-//         assert!(a.len() == b.len());
-//         let p = p.into_par_iter().map(|x| repeatn(x, 1 << n_vars_y)).flatten().collect();
-//         let f = Prod4Fn::new();
-//         let object = DenseSumcheckObjectSO::new(vec![p, a, b, c], f, n_vars_x + n_vars_y, claim_hint);
-//         Self { n_vars_x, n_vars_y, object }
-//     }
-// }
-
-// impl<F: PrimeField> Sumcheckable<F> for LayeredProd4SumcheckObject<F> {
-//     fn bind(&mut self, t: F) {
-//         self.object.bind(t);
-//     }
-
-//     fn unipoly(&mut self) -> UniPoly<F> {
-//         let mut u = self.object.unipoly().as_vec();
-//         if self.object.current_round() < self.n_vars_y {
-//             let s = u.pop().unwrap();
-//             assert!(s == F::zero());
-//         }
-//         UniPoly::from_coeff(u)
-//     }
-
-//     fn final_evals(&self) -> Vec<F> {
-//         self.object.final_evals()
-//     }
-
-//     fn challenges(&self) -> &[F] {
-//         self.object.challenges()
-//     }
-
-//     fn current_round(&self) -> usize {
-//         self.object.current_round()
-//     }
-// }
-
-// #[derive(Clone, Copy)]
-// pub struct LayeredProd4Protocol<F: PrimeField> {
-//     n_vars_x: usize,
-//     n_vars_y: usize,
-//     _marker: PhantomData<F>,
-// }
-
-// impl<F: PrimeField> LayeredProd4Protocol<F> {
-//     pub fn new(n_vars_x: usize, n_vars_y: usize) -> Self {
-//         Self { n_vars_x, n_vars_y, _marker: PhantomData }
-//     }
-// }
-
-// #[derive(Clone)]
-// pub struct LayeredProd4ProtocolInput<F: PrimeField> {
-//     pub p: Vec<F>,
-//     pub a: Vec<F>,
-//     pub b: Vec<F>,
-//     pub c: Vec<F>,
-// }
-
-
-// impl<T: TProofTranscript2, F: PrimeField> Protocol2<T> for LayeredProd4Protocol<F> {
-//     type ProverInput = LayeredProd4ProtocolInput<F>;
-
-//     type ProverOutput = ();
-
-//     type ClaimsBefore = SumClaim<F>;
-
-//     type ClaimsAfter = SinglePointClaims<F>;
-
-//     fn prove(&self, transcript: &mut T, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
-//         let mut claim = claims.sum;
-//         let mut object = LayeredProd4SumcheckObject::new(advice.p, advice.a, advice.b, advice.c, self.n_vars_x, self.n_vars_y, claim);
-//         for i in 0 .. (self.n_vars_x + self.n_vars_y) {
-//             let u = object.unipoly().as_vec();
-//             transcript.write_scalars(&compress_coefficients(&u));
-//             let t = transcript.challenge(128);
-//             claim = evaluate_univar(&u, t);
-//             object.bind(t);
-//         }
-//         let evs = object.final_evals();
-//         let mut point = object.challenges().to_vec();
-//         point.reverse();
-
-//         assert!(evs.len() == 4);
-//         transcript.write_scalars(&evs);
-
-//         (SinglePointClaims {point, evs}, ())
-//     }
-
-//     fn verify(&self, transcript: &mut T, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
-//         let degrees = repeat_n(3, self.n_vars_y).chain(repeat_n(4, self.n_vars_x)).collect_vec();
-
-//         let verifier = SumcheckVerifierConfig::new(degrees.into_iter());
-
-//         let (final_claim, point) = verifier.main_cycle_sumcheck_verifier(transcript, claims.sum);
-
-//         let evs = transcript.read_scalars(4);
-
-//         assert!(evs[0] * evs[1] * evs[2] * evs[3] == final_claim);
-
-//         SinglePointClaims {point, evs}
-//     }
-// }
-
 
 pub type AddInversesSumcheckObject<F> = DenseEqSumcheckObject<F, AddInversesFn<F>>;
 pub type AddInversesSumcheckObjectSO<F> = <DenseEqSumcheckObject<F, AddInversesFn<F>> as FoldToSumcheckable<F>>::Target;
@@ -233,45 +55,53 @@ pub type AddInversesSumcheckObjectSO<F> = <DenseEqSumcheckObject<F, AddInversesF
 pub type Prod3SumcheckObjectSO<F> = DenseSumcheckObjectSO<F, Prod3Fn<F>>;
 
 /// Returns bucketing image (i.e. sorting of values of poly by buckets) and a counter (counter[y][x] is and address where poly[y][x] lands after bucketing). Assumes that digits are in base 2^c.
-/// Not optimized.
 pub fn compute_bucketing_image<F: PrimeField>(
     polys: &Vec<Vec<F>>,
     digits: &Vec<Vec<u32>>,
     c: usize,
     n_vars_x: usize,
     n_vars_y: usize,
-    size_x: usize,
-    size_y: usize,
+    x_size: usize,
+    y_size: usize,
 
     row_pad: Vec<F>,
     col_pad: Vec<F>,
 ) -> (Vec<VecVecPolynomial<F>>, Vec<Vec<u32>>) {
     for poly in polys {
-        assert!(poly.len() == size_x);
+        assert!(poly.len() == x_size);
     }
     assert!(row_pad.len() == polys.len());
     assert!(col_pad.len() == polys.len());
-    assert!(digits.len() == size_y);
+    assert!(digits.len() == y_size);
     for row in digits {
-        assert!(row.len() == size_x);
+        assert!(row.len() == x_size);
     }
-    assert!(1 << n_vars_x >= size_x);
-    assert!(1 << n_vars_y >= size_y);
+    assert!(1 << n_vars_x >= x_size);
+    assert!(1 << n_vars_y >= y_size);
 
-    let mut counter = vec![vec![0u32; size_x]; size_y];
-    let mut buckets = vec![vec![vec![]; size_y << c]; polys.len()];
-    for x in 0..size_x {
-        for y in 0..size_y {
-            let d = (y << c) + digits[y][x] as usize; // target bucket index
-            counter[y][x] = buckets[0][d].len() as u32;
+    let mut counter = vec![vec![0u32; x_size]; y_size];
+    let mut buckets = vec![vec![vec![]; polys.len()]; y_size << c];
+
+    buckets.par_chunks_mut(1 << c).into_par_iter().zip(counter.par_iter_mut()).enumerate().map(|(y, (bucket_chunk, counter_row))| {
+        for x in 0..x_size {
+            let d = digits[y][x] as usize;
+            counter_row[x] = bucket_chunk[d][0].len() as u32;
             for poly_id in 0..polys.len() {
-                buckets[poly_id][d].push(polys[poly_id][x]);
+                bucket_chunk[d][poly_id].push(polys[poly_id][x])
             }
+        }
+    }).count();
+
+    let mut buckets_transposed = vec![vec![]; polys.len()];
+
+    for y in 0 .. y_size << c {
+        for poly_id in 0 .. polys.len() {
+            buckets_transposed[poly_id].push(std::mem::replace(&mut buckets[y][poly_id], vec![]))
         }
     }
 
     (
-        buckets
+        buckets_transposed
             .into_iter()
             .enumerate()
             .map(|(i, buckets)| VecVecPolynomial::new(
@@ -286,61 +116,100 @@ pub fn compute_bucketing_image<F: PrimeField>(
     )
 }
 
-// assumes that digits are in range (1 << c).
-// parallelized version, TODO: finish and use as drop-in replacement
-pub fn compute_bucketing_image_wip<F: PrimeField>(
-    polys: Vec<Vec<F>>,
-    digits: Vec<Vec<u32>>,
+
+pub struct BucketingData<F: PrimeField, Ctx: Pairing<ScalarField = F>> {
+    pub image: Vec<VecVecPolynomial<F>>,
+    pub counter: Vec<Vec<u32>>,
+
+    pub phase_1_comm: PipMSMPhase1Comm<Ctx>,
+    pub phase_2_comm: Option<PipMSMPhase2Comm<Ctx>>,
+
+    pub d_bucketed_basis: Vec<Ctx::G1>,
+    pub c_bucketed_basis: Vec<Ctx::G1>, 
+}
+
+
+pub fn compute_bucketing<F: PrimeField, Ctx: Pairing<ScalarField = F>>(
+    polys: &Vec<Vec<F>>,
+    digits: &Vec<Vec<u32>>,
     c: usize,
     n_vars_x: usize,
     n_vars_y: usize,
-    size_x: usize,
-    size_y: usize,
+    x_size: usize,
+    y_size: usize,
 
     row_pad: Vec<F>,
     col_pad: Vec<F>,
-) -> Vec<VecVecPolynomial<F>> {    
-    for poly in &polys {
-        assert!(poly.len() == size_x);
-    }
 
+    commitment_log_multiplicity: usize,
+    commitment_key: &KnucklesProvingKey<Ctx>,
+) -> BucketingData<F, Ctx> {
+    for poly in polys {
+        assert!(poly.len() == x_size);
+    }
     assert!(row_pad.len() == polys.len());
     assert!(col_pad.len() == polys.len());
-
-    assert!(digits.len() == size_y);
-    for row in &digits {
-        assert!(row.len() == size_x);
+    assert!(digits.len() == y_size);
+    for row in digits {
+        assert!(row.len() == x_size);
     }
+    assert!(1 << n_vars_x >= x_size);
+    assert!(1 << n_vars_y >= y_size);
 
-    assert!(1 << n_vars_x >= size_x);
-    assert!(1 << n_vars_y >= size_y);
+    let mut counter = vec![vec![0u32; x_size]; y_size];
+    let mut buckets = vec![vec![vec![]; polys.len()]; y_size << c];
 
-    let n_tasks = current_num_threads();
-    let height = size_y / n_tasks; 
-    
-    let mut buckets : Vec<Vec<Vec<F>>> = vec![vec![vec![]; size_y << c]; polys.len()];
-
-    let mut buckets_ptrs = buckets.iter_mut().map(|b|b.as_shared_mut_ptr()).collect_vec();
-
-    let buckets_ptr = buckets_ptrs.as_shared_mut_ptr();
-    
-    (0..n_tasks).into_par_iter().map(|task_idx|{
-        (task_idx * height .. min((task_idx + 1) * height, size_y)).map(|y| {
-            for id_p in 0..polys.len() {
-                for x in 0..size_x {
-                    unsafe{
-                        let b = buckets_ptr.clone();
-                        let b2 = b.get_mut(id_p);
-                        (b2.clone().get_mut((y << c) + digits[y][x] as usize)).push(polys[id_p][x])
-                    }
-                }
+    buckets.par_chunks_mut(1 << c).into_par_iter().zip(counter.par_iter_mut()).enumerate().map(|(y, (bucket_chunk, counter_row))| {
+        for x in 0..x_size {
+            let d = digits[y][x] as usize;
+            counter_row[x] = bucket_chunk[d][0].len() as u32;
+            for poly_id in 0..polys.len() {
+                bucket_chunk[d][poly_id].push(polys[poly_id][x])
             }
-        })
+        }
     }).count();
 
+    let mut buckets_transposed = vec![vec![]; polys.len()];
 
-    buckets.into_iter().enumerate().map(|(i, buckets)| VecVecPolynomial::new(buckets, row_pad[i], col_pad[i], n_vars_x, n_vars_y)).collect_vec()
+    for y in 0 .. y_size << c {
+        for poly_id in 0 .. polys.len() {
+            buckets_transposed[poly_id].push(std::mem::replace(&mut buckets[y][poly_id], vec![]))
+        }
+    }
 
+    let image = buckets_transposed
+        .into_iter()
+        .enumerate()
+        .map(|(i, buckets)| VecVecPolynomial::new(
+            buckets,
+            row_pad[i],
+            col_pad[i],
+            n_vars_x,
+            n_vars_y + c)
+        )
+        .collect_vec();
+
+
+    let phase_1_comm = PipMSMPhase1Comm {
+        c: todo!(),
+        d: todo!(),
+        p_0: todo!(),
+        p_1: todo!(),
+        ac_c: todo!(),
+        ac_d: todo!(),
+    };
+
+
+    BucketingData {
+        image,
+        counter,
+        phase_1_comm,
+        phase_2_comm: todo!(),
+        d_bucketed_basis: todo!(),
+        c_bucketed_basis: todo!(),
+        
+    
+    }
 }
 
 
@@ -360,13 +229,22 @@ pub struct PipMSMPhase2Data<F: PrimeField> {
     pub d_pull: Vec<F>,
 }
 
-pub trait PipMSMCommitmentEngine<F: PrimeField, G: CurveGroup<ScalarField = F>> {
-    /// computes c, and access counts ac_c and ac_d, and commits them all (it is convenient to do both at the same time)
-    fn compute_counters_and_commit_phase_1(&self, p_x: Vec<F>, p_y: Vec<F>, d: Vec<Vec<u32>>) -> (Vec<G::Affine>, PipMSMPhase1Data<F>);
+pub struct PipMSMPhase1Comm<Ctx: Pairing> {
+    pub c: Vec<Ctx::G1Affine>,
+    pub d: Vec<Ctx::G1Affine>,
 
-    /// commits pullbacks
-    fn commit_phase_2(&self, pullbacks: PipMSMPhase2Data<F>) -> Vec<G::Affine>;
+    pub p_0: Ctx::G1Affine,
+    pub p_1: Ctx::G1Affine,
+
+    pub ac_c: Ctx::G1Affine,
+    pub ac_d: Ctx::G1Affine,
 }
+
+pub struct PipMSMPhase2Comm<Ctx: Pairing> {
+    pub c_pull: Vec<Ctx::G1Affine>,
+    pub d_pull: Vec<Ctx::G1Affine>,
+}
+
 
 #[derive(Debug, Clone, Copy)]
 pub struct AddInversesFn<F: PrimeField> {
@@ -418,27 +296,40 @@ impl<F: PrimeField> PushforwardProtocol<F> {
     }
 }
 
-pub struct PushForwardAdvice<F: PrimeField> {
-    pub p1: PipMSMPhase1Data<F>,
-    pub p2: Option<PipMSMPhase2Data<F>>,
+pub struct PushForwardAdvice<F: PrimeField, Ctx:Pairing<ScalarField = F>> {
+    pub phase_1_data: PipMSMPhase1Data<F>,
+    pub phase_2_data: Option<PipMSMPhase2Data<F>>,
     pub y_logsize: usize,
     pub d_logsize: usize,
     pub x_logsize: usize,
-    pub size_y: usize,
-    pub size_x: usize,
+    pub y_size: usize,
+    pub x_size: usize,
     pub counter: Vec<Vec<u32>>,
     pub digits: Vec<Vec<u32>>,
-    pub image: Option<Vec<VecVecPolynomial<F>>>
+    pub image: Option<Vec<VecVecPolynomial<F>>>,
+
+    pub commitment_log_multiplicity: usize,
+    pub commitment_key: KnucklesProvingKey<Ctx>,
+
+    pub phase_1_comm: PipMSMPhase1Comm<Ctx>,
+    pub phase_2_comm: Option<PipMSMPhase2Comm<Ctx>>,
+
+    pub d_outer_buckets: Vec<Vec<Ctx::G1>>,
+    pub c_outer_buckets: Vec<Vec<Ctx::G1>>,
+
 }
 
-impl<F: PrimeField> PushForwardAdvice<F> {
+impl<F: PrimeField, Ctx: Pairing<ScalarField = F>> PushForwardAdvice<F, Ctx> {
     pub fn new<CC: TECurveConfig<BaseField=F>>(
         points: &[Affine<CC>],
         coefs: &[CC::ScalarField],
-        size_y: usize,
+        y_size: usize,
         y_logsize: usize,
         d_logsize: usize,
         x_logsize: usize,
+
+        commitment_log_multiplicity: usize, // log amount of digit rows that fit in a single commitment column. i.e. column size is 2^comm_log_mult * x_size
+        commitment_key: KnucklesProvingKey<Ctx>,
     ) -> Self {
         let polys = vec![
             points.iter().map(|a| a.x).collect_vec(),
@@ -446,36 +337,133 @@ impl<F: PrimeField> PushForwardAdvice<F> {
             points.iter().map(|_| F::one()).collect_vec(),
         ];
 
-        let mut digits = vec![vec![0u32; points.len()]; size_y];
+        assert!(commitment_key.num_vars() == x_logsize + commitment_log_multiplicity);
 
-        for x in 0..points.len() {
-            let coef = coefs[x].into_bigint().to_bits_be();
-            for y in 0..size_y {
-                digits[y][x] = 0;
+        assert!(points.len() == 1 << x_logsize);
+        let x_size = 1 << x_logsize;
+
+        let mut digits = vec![vec![0u32; x_size]; y_size];
+
+        for x in 0..x_size {
+            let coef : <CC::ScalarField as PrimeField>::BigInt = coefs[x].into_bigint();
+            let coef = coef.to_bits_be();
+            for y in 0..y_size {
+//                digits[y][x] = 0;
                 for i in 0..d_logsize {
                     digits[y][x] += (coef[y * d_logsize + i] as u32) << i;
                 }
             }
         }
 
-        let (mut image, counter)
-            = compute_bucketing_image(
-            &polys,
-            &digits,
-            d_logsize,
-            x_logsize,
-            y_logsize,
-            points.len(),
-            size_y,
-            vec![CC::BaseField::zero(); 3],
-            vec![CC::BaseField::zero(); 3]
-        );
+// ------------------------------------------------
 
-        let mut d : Vec<CC::BaseField> =
-            digits.iter().map(|row| row.iter().map(|elt| CC::BaseField::from(*elt as u64))).flatten().collect();
+        for poly in &polys {
+            assert!(poly.len() == x_size);
+        }
+        let row_pad = vec![F::zero(), F::zero(), F::zero()];
+        let col_pad = vec![F::zero(), F::zero(), F::zero()];
 
-        let mut c : Vec<CC::BaseField> =
-            counter.iter().map(|row| row.iter().map(|elt| CC::BaseField::from(*elt as u64))).flatten().collect();
+        assert!(digits.len() == y_size);
+        for row in &digits {
+            assert!(row.len() == x_size);
+        }
+        assert!(1 << x_logsize >= x_size);
+        assert!(1 << y_logsize >= y_size);
+
+        let mut counter = vec![vec![0u32; x_size]; y_size];
+        let mut buckets = vec![vec![vec![]; polys.len()]; y_size << d_logsize];
+
+        let zero = Ctx::G1::zero();
+
+        let comm_mul = 1 << commitment_log_multiplicity;
+        let num_matrix_commitments = y_size.div_ceil(comm_mul);
+
+        let mut d_outer_buckets = vec![vec![zero; 1 << d_logsize]; y_size]; // we will first aggregate along each row, then combine them
+        let mut c_outer_buckets = vec![vec![zero; 1 << x_logsize]; y_size];
+
+        let c_upper_bound : Vec<usize> = buckets.par_chunks_mut(1 << d_logsize).into_par_iter().zip(counter.par_iter_mut())
+            .zip(
+                d_outer_buckets.par_iter_mut().zip(
+                    c_outer_buckets.par_iter_mut()
+                )
+            )
+            .enumerate().map(|(y, ((bucket_chunk, counter_row), (d_outer_buckets, c_outer_buckets)))| {
+            
+            let mut max_c = 0;
+
+            for x in 0..x_size {
+                let d = digits[y][x] as usize;
+                let c = bucket_chunk[d][0].len();
+
+                max_c = max(c, max_c);
+
+                let point = commitment_key.kzg_basis()[x + x_size * (y % comm_mul)];
+
+                d_outer_buckets[d] += point;
+                c_outer_buckets[c] += point;
+
+                counter_row[x] = c as u32;
+                for poly_id in 0..polys.len() {
+                    bucket_chunk[d][poly_id].push(polys[poly_id][x])
+                }
+            }
+
+            max_c + 1
+        }).collect();
+
+        let c_upper_bound : Vec<usize> = c_upper_bound.chunks(comm_mul).map(|chunk| {chunk.into_iter().fold(0, |a, &b| a.max(b))}).collect();
+
+        let d_outer_buckets = d_outer_buckets.par_chunks(comm_mul).into_par_iter().map(
+            |chunk| {
+                (0..(1 << d_logsize)).map(|i| {
+                    let mut acc = chunk[0][i];
+                    for j in 1..chunk.len() {
+                        acc += chunk[j][i];
+                    }
+                    acc
+                }).collect::<Vec<Ctx::G1>>()
+            }
+        ).collect::<Vec<Vec<Ctx::G1>>>();
+
+        let c_outer_buckets = c_outer_buckets.par_chunks(comm_mul).into_par_iter().zip(c_upper_bound).map(
+            |(chunk, max_c)| {
+                
+                (0..max_c).map(|i| {
+                    let mut acc = chunk[0][i];
+                    for j in 1..chunk.len() {
+                        acc += chunk[j][i];
+                    }
+                    acc
+                }).collect::<Vec<Ctx::G1>>()
+            }
+        ).collect::<Vec<Vec<Ctx::G1>>>();
+
+        let mut buckets_transposed = vec![vec![]; polys.len()];
+
+        for y in 0 .. y_size << d_logsize {
+            for poly_id in 0 .. polys.len() {
+                buckets_transposed[poly_id].push(std::mem::replace(&mut buckets[y][poly_id], vec![]))
+            }
+        }
+
+        let image = buckets_transposed
+            .into_iter()
+            .enumerate()
+            .map(|(i, buckets)| VecVecPolynomial::new(
+                buckets,
+                row_pad[i],
+                col_pad[i],
+                x_logsize,
+                y_logsize + d_logsize)
+            )
+            .collect_vec();
+
+
+        let d : Vec<CC::BaseField> =
+            digits.par_iter().map(|row| row.par_iter().map(|elt| CC::BaseField::from(*elt as u64))).flatten().collect();
+
+        let c : Vec<CC::BaseField> =
+            counter.par_iter().map(|row| row.par_iter().map(|elt| CC::BaseField::from(*elt as u64))).flatten().collect();
 
         let mut ac_d = vec![0u64; 1 << d_logsize];
         let mut ac_c = vec![0u64; 1 << x_logsize];
@@ -491,33 +479,81 @@ impl<F: PrimeField> PushForwardAdvice<F> {
             }
         }
 
-        let ac_c = ac_c.iter().map(|&x| -CC::BaseField::from(x)).collect_vec();
-        let ac_d = ac_d.iter().map(|&x| -CC::BaseField::from(x)).collect_vec();
+        let ac_c : Vec<F> = ac_c.par_iter().map(|&x| -CC::BaseField::from(x)).collect();
+        let ac_d : Vec<F> = ac_d.par_iter().map(|&x| -CC::BaseField::from(x)).collect();
+        
+        let [p_0, p_1, _] = polys.try_into().unwrap();
 
-        let p1 = PipMSMPhase1Data{
-            c : c.clone(),
-            d : d.clone(),
-            p_0: polys[0].clone(),
-            p_1: polys[1].clone(),
+        let d_comm : Vec<Ctx::G1Affine> = d_outer_buckets.par_iter().map(|d_row_chunk_buckets| {
+            let mut acc = zero;
+            let mut running_sum = zero;
+            let len = 1 << d_logsize;
+            for i in 0..len-1 {
+                running_sum += d_row_chunk_buckets[len - i - 1];
+                acc += running_sum;
+            }
+            acc.into()
+        }).collect();
+
+        let c_comm : Vec<Ctx::G1Affine> = c_outer_buckets.par_iter().map(|c_row_chunk_buckets| {
+            let mut acc = zero;
+            let mut running_sum = zero;
+            let len = c_row_chunk_buckets.len();
+            for i in 0..len-1 {
+                running_sum += c_row_chunk_buckets[len - i - 1];
+                acc += running_sum;
+            }
+            acc.into()
+        }).collect();
+
+        // let expected_c_comm : Vec<Ctx::G1Affine> = c.par_chunks(1 << commitment_key.num_vars()).map(|chunk| commitment_key.commit(&chunk)).collect();
+        // let expected_d_comm : Vec<Ctx::G1Affine> = d.par_chunks(1 << commitment_key.num_vars()).map(|chunk| commitment_key.commit(&chunk)).collect();
+        // assert!(d_comm == expected_d_comm);
+        // assert!(c_comm == expected_c_comm);
+
+        let phase_1_comm = PipMSMPhase1Comm::<Ctx> {
+            c: c_comm,
+            d: d_comm,
+            p_0: commitment_key.commit(&p_0),
+            p_1: commitment_key.commit(&p_1),
+            ac_c: commitment_key.commit(&ac_c),
+            ac_d: commitment_key.commit(&ac_d),
+        };
+
+// ------------------------------------------------
+        let phase_1_data = PipMSMPhase1Data{
+            c,
+            d,
+            p_0,
+            p_1,
             ac_c,
             ac_d
         };
         Self {
-            p1,
-            p2: None,
+            phase_1_data,
+            phase_2_data: None,
             y_logsize,
             d_logsize,
             x_logsize,
-            size_y,
-            size_x: points.len(),
+            y_size,
+            x_size: points.len(),
             counter,
             digits,
             image: Some(image),
+
+            commitment_key,
+            commitment_log_multiplicity,
+
+            phase_1_comm,
+            phase_2_comm: None,
+            d_outer_buckets,
+            c_outer_buckets,
+
         }
     }
 
-    pub fn bind(&mut self, r: &[F]) {
-        assert!(self.p2.is_none());
+    pub fn second_phase(&mut self, r: &[F]) {
+        assert!(self.phase_2_data.is_none());
         let (r_y, rest) = r.split_at(self.y_logsize);
         let r_y = r_y.to_vec();
         let (r_d, rest) = rest.split_at(self.d_logsize);
@@ -529,24 +565,43 @@ impl<F: PrimeField> PushForwardAdvice<F> {
         let eq_c = EqPoly::new(self.x_logsize, &r_c).evals();
         let eq_d = EqPoly::new(self.d_logsize, &r_d).evals();
 
-        let mut c_pull : Vec<F> = self.counter.iter().map(|row| {
-            row.iter().map(|&elt| {
+        let c_pull : Vec<F> = self.counter.par_iter().map(|row| {
+            row.par_iter().map(|&elt| {
                 eq_c[elt as usize]
             })
         }).flatten().collect();
 
-        let mut d_pull : Vec<F> = self.digits.iter().map(|row| {
-            row.iter().map(|&elt| {
+        let d_pull : Vec<F> = self.digits.par_iter().map(|row| {
+            row.par_iter().map(|&elt| {
                 eq_d[elt as usize]
             })
         }).flatten().collect();
 
-        self.p2 = Some(
+
+        let d_pull_comm = self.d_outer_buckets.par_iter().map(|basis| {
+            Ctx::G1::msm_nonaff(&basis, &eq_d).unwrap().into()
+        }).collect();
+        let c_pull_comm = self.c_outer_buckets.par_iter().map(|basis| {
+            let eq_c_slice = &eq_c[..basis.len()];
+            Ctx::G1::msm_nonaff(&basis, eq_c_slice).unwrap().into()
+        }).collect();
+
+        // let expected_c_pull_comm : Vec<Ctx::G1Affine> = c_pull.par_chunks(1 << self.commitment_key.num_vars()).map(|chunk| self.commitment_key.commit(&chunk)).collect();
+        // let expected_d_pull_comm : Vec<Ctx::G1Affine> = d_pull.par_chunks(1 << self.commitment_key.num_vars()).map(|chunk| self.commitment_key.commit(&chunk)).collect();
+        // assert!(d_pull_comm == expected_d_pull_comm);
+        // assert!(c_pull_comm == expected_c_pull_comm);
+
+        self.phase_2_data = Some(
             PipMSMPhase2Data{
-                c_pull : c_pull.clone(),
-                d_pull : d_pull.clone()
+                c_pull,
+                d_pull
             }
-        )
+        );
+
+        self.phase_2_comm = Some(PipMSMPhase2Comm{
+            c_pull : c_pull_comm,
+            d_pull : d_pull_comm,
+        })
     }
 }
 
@@ -891,19 +946,19 @@ mod tests {
         let rng = &mut test_rng();
 
         let mut polys = vec![];
-        let size_x = 13783;
-        let size_y = 29;
+        let x_size = 13783;
+        let y_size = 29;
 
         let c = 8;
 
         for i in 0..3 {
-            polys.push((0..size_x).map(|_| Fr::rand(rng)).collect_vec());
+            polys.push((0..x_size).map(|_| Fr::rand(rng)).collect_vec());
         }
 
-        let mut digits = vec![vec![0u32; size_x]; size_y];
+        let mut digits = vec![vec![0u32; x_size]; y_size];
 
-        for x in 0..size_x {
-            for y in 0..size_y {
+        for x in 0..x_size {
+            for y in 0..y_size {
                 digits[y][x] = rng.next_u32() % (1 << c);
             }
         }
@@ -913,10 +968,10 @@ mod tests {
             &polys,
             &digits,
             c,
-            log2(size_x) as usize,
-            log2(size_y) as usize,
-            size_x,
-            size_y,
+            log2(x_size) as usize,
+            log2(y_size) as usize,
+            x_size,
+            y_size,
             vec![Fr::zero(); 3],
             vec![Fr::zero(); 3]
         );
@@ -925,8 +980,8 @@ mod tests {
 
         let mut image = image.into_iter().map(|vv|vv.into_iter().map(|v|v.into_iter().map(|x| Some(x)).collect_vec()).collect_vec()).collect_vec();
 
-        for x in 0..size_x {
-            for y in 0..size_y {
+        for x in 0..x_size {
+            for y in 0..y_size {
                 let y_addr = (y << c) + digits[y][x] as usize;
                 let x_addr = counter[y][x] as usize;
 

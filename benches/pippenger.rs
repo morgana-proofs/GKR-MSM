@@ -1,49 +1,73 @@
-use std::fmt::{Display, Formatter};
-use ark_ec::CurveConfig;
 use ark_ec::pairing::Pairing;
-use ark_ec::twisted_edwards::{Affine, TECurveConfig};
-use ark_ed_on_bls12_381_bandersnatch::{BandersnatchConfig, Fq};
-use ark_ff::{BigInteger, PrimeField};
-use ark_std::{log2, test_rng, UniformRand};
+use ark_std::test_rng;
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use itertools::Itertools;
-use num_traits::{One, Zero};
-use rand::Rng;
-use GKR_MSM::cleanup::polys::dense::MIN_PAR_CHUNK_INPUT;
-use GKR_MSM::cleanup::polys::vecvec::VecVecPolynomial;
+use std::fmt::{Display, Formatter};
+use std::ops::Range;
 use GKR_MSM::cleanup::proof_transcript::{ProofTranscript2, TProofTranscript2};
-use GKR_MSM::cleanup::protocol2::Protocol2;
-use GKR_MSM::cleanup::protocols::gkrs::triangle_add;
-use GKR_MSM::cleanup::protocols::pippenger::{Pippenger, PippengerWG};
-use GKR_MSM::cleanup::protocols::splits::SplitIdx;
-use GKR_MSM::cleanup::protocols::sumcheck::SinglePointClaims;
-use GKR_MSM::cleanup::utils::arith::evaluate_poly;
-use GKR_MSM::utils::TwistedEdwardsConfig;
-use ark_bls12_381::Bls12_381 as Ctx;
-use GKR_MSM::commitments::knuckles::KnucklesProvingKey;
-use GKR_MSM::commitments::kzg::random_kzg_pk;
-use ark_bls12_381::Fr;
+use GKR_MSM::cleanup::protocols::pippenger::benchutils::{build_pippenger_data, run_pippenger, PippengerData, PippengerOutput};
 
+struct PipGridSearchParams {
+    num_vars: usize,
+    d_logsize: usize,
+    commitment_log_multiplicity: usize,
+}
+impl Display for PipGridSearchParams {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[N={:02}, d={:02}, clm={}]", self.num_vars, self.d_logsize, self.commitment_log_multiplicity)
+    }
+}
+
+
+struct PipGridSearchBounds {
+    num_vars: Range<usize>,
+    d_logsize: Range<usize>,
+    commitment_log_multiplicity: Range<usize>,
+}
+
+impl PipGridSearchBounds {
+    fn into_iter(self) -> impl Iterator<Item=PipGridSearchParams> {
+        self.num_vars.clone().into_iter().map(move |num_vars| {
+            let _commitment_log_multiplicity = self.commitment_log_multiplicity.clone();
+            self.d_logsize.clone().into_iter().map(move |d_logsize|
+                _commitment_log_multiplicity.clone().into_iter().map(move |commitment_log_multiplicity|
+                PipGridSearchParams { num_vars, d_logsize, commitment_log_multiplicity }
+            )
+            ).flatten()
+        }).flatten()
+    }
+}
+
+fn pippenger_benchmark(data: PippengerData) -> PippengerOutput {
+    let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
+    let ret = run_pippenger(&mut transcript_p, data);
+    transcript_p.end();
+    ret
+}
 
 fn bench_pippenger(c: &mut Criterion) {
     let mut group = c.benchmark_group("Pippenger");
     let rng = &mut test_rng();
-    for num_vars in 10..=10 {
-        for d_logsize in 8..=8 {
-            let pipdata = build_pippenger_data(rng, d_logsize, num_vars);
-            group.bench_with_input(
-                BenchmarkId::new("wtns+prover", format!("{:02} vars, {:02} d_logsize", num_vars, d_logsize)),
-                &num_vars,
-                |b, i| {
-                    b.iter_batched(
-                        || pipdata.clone(),
-                        pippenger,
-                        BatchSize::SmallInput,
-                    )
-                }
-            );
-        }
+    let grid_search = PipGridSearchBounds {
+        num_vars: 10..16,
+        d_logsize: 2..10,
+        commitment_log_multiplicity: 1..3,
+    };
+    for params in grid_search.into_iter() {
+        let PipGridSearchParams { num_vars, d_logsize, commitment_log_multiplicity } = params;
+        let pipdata = build_pippenger_data(rng, d_logsize, num_vars, 128, commitment_log_multiplicity);
+        group.bench_with_input(
+            BenchmarkId::new("wtns+prover", format!("{}", params)),
+            &num_vars,
+            |b, i| {
+                b.iter_batched(
+                    || pipdata.clone(),
+                    pippenger_benchmark,
+                    BatchSize::SmallInput,
+                )
+            }
+        );
     }
+
     group.finish();
 }
 

@@ -1,21 +1,79 @@
+use clap::{arg, command, value_parser};
 use std::env;
 use std::error::Error;
+use GKR_MSM::cleanup::proof_transcript::{ProofTranscript2, TProofTranscript2};
 use GKR_MSM::cleanup::protocols::pippenger::benchutils::{build_pippenger_data, run_pippenger, verify_pippenger};
-use fork::{daemon, Fork};
-use std::process::Command;
+
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let matches = command!() // requires `cargo` feature
+        .arg(
+            arg!(
+                d_logsize: -d <NUMBER> "digit size"
+            )
+                .long("d-logsize")
+                .required(false)
+                .default_value("8")
+                .value_parser(value_parser!(u8).range(2..10)),
+        )
+        .arg(
+            arg!(
+                x_logsize: -x <NUMBER> "input logsize"
+            )
+                .long("x-logsize")
+                .visible_short_aliases(['N'])
+                .visible_aliases(["N-logsize"])
+                .required(false)
+                .default_value("10")
+                .value_parser(value_parser!(u8).range(8..20)),
+        )
+        .arg(
+            arg!(
+                nbits: -s <NUMBER> "scalar size"
+            )
+                .long("nbits")
+                .visible_aliases(["scalar-logsize"])
+                .required(false)
+                .default_value("128")
+                .value_parser(value_parser!(u16)),
+        )
+        .arg(
+            arg!(
+                commitment_log_multiplicity: <NUMBER> "log(number of d-logsize rows in one commitment)"
+            )
+                .long("commitment-log-multiplicity")
+                .required(false)
+                .default_value("0")
+                .value_parser(value_parser!(u16).range(1..2)),
+        )
+        .get_matches();
 
-    let args: Vec<String> = env::args().collect();
-    let d_logsize = args.get(1).map(|s| s.parse().unwrap_or(8)).unwrap_or(8);
-    let x_logsize = args.get(2).map(|s| s.parse().unwrap_or(10)).unwrap_or(10);
+
+    let d_logsize = *matches.get_one::<u8>("d_logsize").expect("digit size not set somehow") as usize;
+    let x_logsize = *matches.get_one::<u8>("x_logsize").expect("input logsize  not set somehow") as usize;
+    let num_bits = *matches.get_one::<u16>("nbits").expect("scalar size not set somehow") as usize;
+    let commitment_log_multiplicity = *matches.get_one::<u16>("commitment_log_multiplicity").unwrap() as usize;
+
     let rng = &mut rand::thread_rng();
-    let data = build_pippenger_data(rng, d_logsize, x_logsize);
+    let data = build_pippenger_data(rng, d_logsize, x_logsize, num_bits, commitment_log_multiplicity);
     let config = data.config.clone();
 
-    let output = run_pippenger(data);
-    
-    println!("{}", verify_pippenger(config, output));
+    let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
+    transcript_p.record_current_time("Start");
+    let output = run_pippenger(&mut transcript_p, data);
+    let time_records = transcript_p.time_records();
+    let proof = transcript_p.end();
+
+    println!("MSM params:");
+    println!("log num points: {}, num bits: {}, d_logsize: {}", x_logsize, num_bits, d_logsize);
+    println!("Timings:");
+    for i in 0..time_records.len() - 1 {
+        println!("{} : {}ms", time_records[i+1].1, (time_records[i+1].0 - time_records[i].0).as_millis());
+    }
+
+    let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);
+    verify_pippenger(&mut transcript_v, config, output);
+    transcript_v.end();
 
     Ok(())
 }

@@ -17,20 +17,18 @@ rand = {version = "^ 0.8.5"}
 liblasso = { git = "https://github.com/rebenkoy/liblasso.git", branch = "master", features = ["default", "multicore"]}
 #liblasso = { path = "./../liblasso", features = ["default", "multicore"]}
 hashcaster = { git = "https://github.com/morgana-proofs/hashcaster.git" }
-bytemuck = "1.18.0"
 
 ark-ed-on-bls12-381-bandersnatch = "0.4.0"
 rayon = "1.10.0"
 itertools = "0.12.1"
 merlin = "3.0.0"
-log = "0.4.21"
-paste = "1.0.15"
 # bandersnatch = { git = "https://github.com/zhenfeizhang/bandersnatch.git", version = "0.1.1", features = ["asm", "std"] }
 # ark-ed-on-bls12-381-bandersnatch = { git = "https://github.com/arkworks-rs/algebra.git", rev = "bf96a5b"}
 jemalloc-ctl = { version = "0.5.4", optional = true }
 jemallocator = { version = "0.5.4", optional = true }
 profi = { version = "*", default-features = true, optional = true }
 num-traits = "0.2.19"
+clap = { version = "4.5.22", features = ["cargo"]}
 
 [profile.rel-with-debinfo]
 inherits = "release"

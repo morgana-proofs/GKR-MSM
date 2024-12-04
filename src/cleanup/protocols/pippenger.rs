@@ -1,6 +1,12 @@
-use std::iter::repeat_n;
-use std::marker::PhantomData;
-use ark_bls12_381::G1Affine;
+use crate::cleanup::proof_transcript::TProofTranscript2;
+use crate::cleanup::protocol2::Protocol2;
+use crate::cleanup::protocols::pippenger_ending::{PippengerEnding, PippengerEndingWG};
+use crate::cleanup::protocols::pushforward::pushforward::{PushForwardState, PushforwardFinalClaims, PushforwardProtocol};
+use crate::cleanup::protocols::splits::GlueSplit;
+use crate::cleanup::protocols::sumcheck::SinglePointClaims;
+use crate::cleanup::protocols::verifier_polys::{EqPoly, VerifierPoly};
+use crate::commitments::knuckles::{KnucklesProvingKey, KnucklesVerifyingKey};
+use crate::utils::{make_gamma_pows, TwistedEdwardsConfig};
 use ark_ec::pairing::Pairing;
 use ark_ec::twisted_edwards::{Affine, TECurveConfig};
 use ark_ed_on_bls12_381_bandersnatch::BandersnatchConfig;
@@ -10,16 +16,8 @@ use ark_std::log2;
 use itertools::Itertools;
 use num_traits::{One, Zero};
 use rayon::prelude::*;
-use crate::cleanup::polys::vecvec::VecVecPolynomial;
-use crate::cleanup::proof_transcript::TProofTranscript2;
-use crate::cleanup::protocol2::Protocol2;
-use crate::cleanup::protocols::pippenger_ending::{vecvec_domain, PippengerEnding, PippengerEndingWG};
-use crate::cleanup::protocols::pushforward::pushforward::{compute_bucketing_image, PipMSMPhase1Data, PipMSMPhase2Data, PushForwardState, PushforwardFinalClaims, PushforwardProtocol};
-use crate::cleanup::protocols::splits::GlueSplit;
-use crate::cleanup::protocols::sumcheck::SinglePointClaims;
-use crate::cleanup::protocols::verifier_polys::{EqPoly, VerifierPoly};
-use crate::commitments::knuckles::{KnucklesProvingKey, KnucklesVerifyingKey};
-use crate::utils::{make_gamma_pows, TwistedEdwardsConfig};
+use std::iter::repeat_n;
+use std::marker::PhantomData;
 
 use super::opening::{KnucklesOpeningProtocol, OpeningClaim};
 use super::pushforward::pushforward::{PipMSMPhase1Comm, PipMSMPhase2Comm};
@@ -361,27 +359,25 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
 }
 
 pub mod benchutils {
-    use std::fmt::{Display, Formatter};
-    use ark_ec::CurveConfig;
-    use ark_ec::pairing::Pairing;
-    use ark_ec::twisted_edwards::{Affine, TECurveConfig};
-    use ark_ed_on_bls12_381_bandersnatch::{BandersnatchConfig, Fq};
-    use ark_ff::{BigInteger, PrimeField};
-    use ark_std::{log2, test_rng, UniformRand};
-    use itertools::Itertools;
-    use rand::Rng;
+    use super::*;
     use crate::cleanup::protocol2::Protocol2;
     use crate::cleanup::protocols::gkrs::triangle_add;
     use crate::cleanup::protocols::pippenger::{Pippenger, PippengerWG};
     use crate::cleanup::protocols::splits::SplitIdx;
     use crate::cleanup::protocols::sumcheck::SinglePointClaims;
     use crate::cleanup::utils::arith::evaluate_poly;
-    use ark_bls12_381::{Bls12_381 as Ctx, Bls12_381};
     use crate::commitments::knuckles::KnucklesProvingKey;
     use crate::commitments::kzg::random_kzg_pk;
     use ark_bls12_381::Fr;
-    use crate::cleanup::proof_transcript::ProofTranscript2;
-    use super::*;
+    use ark_bls12_381::{Bls12_381 as Ctx, Bls12_381};
+    use ark_ec::pairing::Pairing;
+    use ark_ec::twisted_edwards::Affine;
+    use ark_ec::CurveConfig;
+    use ark_ed_on_bls12_381_bandersnatch::BandersnatchConfig;
+    use ark_std::{log2, UniformRand};
+    use itertools::Itertools;
+    use rand::Rng;
+    use std::fmt::Display;
 
     #[derive(Clone)]
     pub struct PippengerConfig {
@@ -389,6 +385,7 @@ pub mod benchutils {
         pub y_logsize: usize,
         pub d_logsize: usize,
         pub x_logsize: usize,
+        pub commitment_log_multiplicity: usize,
     }
 
     #[derive(Clone)]
@@ -398,31 +395,26 @@ pub mod benchutils {
         pub config: PippengerConfig,
         pub r: Vec<<BandersnatchConfig as CurveConfig>::BaseField>,
 
-        pub commitment_log_multiplicity: usize,
         pub commitment_key: KnucklesProvingKey<Ctx>,
+        pub vkey: KnucklesVerifyingKey<Bls12_381>,
     }
 
     pub struct PippengerOutput {
         output: Vec<Vec<<BandersnatchConfig as CurveConfig>::BaseField>>,
         claims: SinglePointClaims<<BandersnatchConfig as CurveConfig>::BaseField>,
-        proof: Vec<u8>,
-        pub prover_claims: SinglePointClaims<Fr>,
+        pub vkey: KnucklesVerifyingKey<Bls12_381>,
     }
 
-    pub fn build_pippenger_data<RNG: Rng>(rng: &mut RNG, d_logsize: usize, x_logsize: usize) -> PippengerData {
+    pub fn build_pippenger_data<RNG: Rng>(rng: &mut RNG, d_logsize: usize, x_logsize: usize, num_bits: usize, commitment_log_multiplicity: usize) -> PippengerData {
         let points = (0..(1 << x_logsize)).map(|_| Affine::<BandersnatchConfig>::rand(rng)).collect_vec();
         let coefs = (0..(1 << x_logsize)).map(|_| <BandersnatchConfig as CurveConfig>::ScalarField::rand(rng)).collect_vec();
 
-        let num_bits = <<BandersnatchConfig as CurveConfig>::ScalarField as PrimeField>::BigInt::NUM_LIMBS * 8;
         let size_x = points.len();
         let y_size = (num_bits + d_logsize - 1) / d_logsize;
         let x_logsize = log2(size_x) as usize;
         let y_logsize = log2(y_size) as usize;
 
         let r = (0..y_logsize).map(|_| <BandersnatchConfig as CurveConfig>::BaseField::rand(rng)).collect_vec();
-
-
-        let commitment_log_multiplicity = 3;
 
         let comm_n_vars = commitment_log_multiplicity + x_logsize;
         let comm_size = 1 << comm_n_vars;
@@ -440,15 +432,15 @@ pub mod benchutils {
                 y_logsize,
                 d_logsize,
                 x_logsize,
+                commitment_log_multiplicity,
             },
             r,
-
-            commitment_log_multiplicity,
+            vkey: commitment_key.verifying_key(),
             commitment_key,
         }
     }
 
-    pub fn run_pippenger(data: PippengerData) -> PippengerOutput {
+    pub fn run_pippenger(p_transcript: &mut impl TProofTranscript2, data: PippengerData) -> PippengerOutput {
         let PippengerData {
             points,
             coefs,
@@ -457,10 +449,10 @@ pub mod benchutils {
                 y_logsize,
                 d_logsize,
                 x_logsize,
+                commitment_log_multiplicity,
             },
             r,
-
-            commitment_log_multiplicity,
+            vkey,
             commitment_key,
         } = data;
 
@@ -475,7 +467,6 @@ pub mod benchutils {
             commitment_log_multiplicity,
             commitment_key,
         );
-
 
         let dense_output: Vec<Vec<_>> = triangle_add::builder::witness::last_step(
             pip_wg.ending.advices.last().unwrap().into(),
@@ -492,145 +483,75 @@ pub mod benchutils {
             y_logsize,
             d_logsize,
             x_logsize,
+            vkey,
+            commitment_log_multiplicity,
         );
 
-
-        let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
-
-        let (prover_claims, _) = pippenger.prove(&mut transcript_p, claims.clone(), pip_wg);
-        let proof = transcript_p.end();
+        pippenger.prove(p_transcript, claims.clone(), pip_wg);
         PippengerOutput {
             output: dense_output,
             claims,
-            prover_claims,
-            proof,
+            vkey,
         }
     }
 
-    pub fn verify_pippenger(config: PippengerConfig, output: PippengerOutput) -> bool {
+    pub fn verify_pippenger(transcript: &mut impl TProofTranscript2, config: PippengerConfig, output: PippengerOutput) -> () {
         let PippengerConfig {
             y_size,
             y_logsize,
             d_logsize,
             x_logsize,
+            commitment_log_multiplicity,
         } = config;
         let PippengerOutput {
             output: _,
             claims,
-            proof,
-            prover_claims,
+            vkey,
         } = output;
 
-        let pippenger = Pippenger::<Fr, Bls12_381, BandersnatchConfig, ProofTranscript2>::new(
+        let pippenger = Pippenger::<Fr, Bls12_381, BandersnatchConfig, _>::new(
             y_size,
             y_logsize,
             d_logsize,
             x_logsize,
+
+            vkey,
+            commitment_log_multiplicity
         );
-        let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);
 
-        let verifier_claims = pippenger.verify(&mut transcript_v, claims);
-        transcript_v.end();
-
-        verifier_claims == prover_claims
+        pippenger.verify(transcript, claims);
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::time::Instant;
-
-    use ark_ec::CurveConfig;
-    use ark_std::{test_rng, UniformRand};
-    use crate::cleanup::proof_transcript::ProofTranscript2;
-    use crate::cleanup::protocols::gkrs::triangle_add;
-    use crate::cleanup::protocols::splits::SplitIdx;
-    use crate::cleanup::utils::arith::evaluate_poly;
-    use crate::commitments::kzg::random_kzg_pk;
     use super::*;
+    use crate::cleanup::proof_transcript::ProofTranscript2;
+    use ark_std::test_rng;
 
-    use ark_bls12_381::Bls12_381 as Ctx;
-    use ark_bls12_381::Fr;
-
+    use crate::cleanup::protocols::pippenger::benchutils::{build_pippenger_data, run_pippenger, verify_pippenger};
 
     #[test]
     fn test_pippenger() {
         let rng = &mut test_rng();
         
         let d_logsize = 8;
-        let num_bits = <<BandersnatchConfig as CurveConfig>::ScalarField as PrimeField>::MODULUS_BIT_SIZE as usize;
         let num_bits = 128;
-
-        let x_logsize = 16;
-        let x_size = 1 << x_logsize;
-        let y_size = (num_bits + d_logsize - 1) / d_logsize;
-        let y_logsize = log2(y_size) as usize;
-
-
-        let points = (0..x_size).map(|_| Affine::<BandersnatchConfig>::rand(rng)).collect_vec();
-        let coeffs = (0..x_size).map(|_| <BandersnatchConfig as CurveConfig>::ScalarField::rand(rng)).collect_vec();
-
+        let x_logsize = 8;
         let commitment_log_multiplicity = 0;
 
-        let comm_n_vars = commitment_log_multiplicity + x_logsize;
-        let comm_size = 1 << comm_n_vars;
-
-        let kzg_pk  = random_kzg_pk::<Ctx>(2*comm_size - 1, rng);
-
-        let commitment_key = KnucklesProvingKey::new(kzg_pk, commitment_log_multiplicity + x_logsize, Fr::from(2));
-
-        let vk = commitment_key.verifying_key();
-
-        let label_start = Instant::now();
-
-        let pippenger = Pippenger::new(
-            y_size,
-            y_logsize,
-            d_logsize,
-            x_logsize,
-            vk,
-            commitment_log_multiplicity,
-        );
-
-
-        let pip_wg = PippengerWG::new(&points,
-            &coeffs,
-            y_size,
-            y_logsize,
-            d_logsize,
-            x_logsize,
-            commitment_log_multiplicity,
-            commitment_key
-        );
-
-        let point = (0..y_logsize).map(|_| <BandersnatchConfig as CurveConfig>::BaseField::rand(rng)).collect_vec();
-        let dense_output: Vec<Vec<_>> = triangle_add::builder::witness::last_step(
-            pip_wg.ending.advices.last().unwrap().into(),
-            y_logsize + d_logsize - 2 - SplitIdx::HI(y_logsize).hi_usize(y_logsize + d_logsize - 2)
-        );
-
-        let claims = SinglePointClaims {
-            point: point.clone(),
-            evs: dense_output.iter().map(|output| evaluate_poly(output, &point)).collect(),
-        };
+        let rng = &mut rand::thread_rng();
+        let data = build_pippenger_data(rng, d_logsize, x_logsize, num_bits, commitment_log_multiplicity);
+        let config = data.config.clone();
 
         let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
-
-        let (prover_claims, _) = pippenger.prove(&mut transcript_p, claims.clone(), pip_wg);
-
+        transcript_p.record_current_time("Start");
+        let output = run_pippenger(&mut transcript_p, data);
         let time_records = transcript_p.time_records();
-
         let proof = transcript_p.end();
 
-        println!("MSM params:");
-        println!("log num points: {}, num bits: {}, d_logsize: {}", x_logsize, num_bits, d_logsize);
-        println!("{} : {}ms", time_records[0].1, (time_records[0].0 - label_start).as_millis());
-        for i in 0..time_records.len() - 1 {
-            println!("{} : {}ms", time_records[i+1].1, (time_records[i+1].0 - time_records[i].0).as_millis());
-        }
-
         let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);
-        let verifier_claims = pippenger.verify(&mut transcript_v, claims);
-        assert_eq!(prover_claims, verifier_claims);
+        verify_pippenger(&mut transcript_v, config, output);
+        transcript_v.end();
     }
 }

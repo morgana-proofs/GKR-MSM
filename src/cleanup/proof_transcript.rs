@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use ark_ec::{CurveGroup, AffineRepr};
 use ark_ff::{BigInteger, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -65,6 +67,10 @@ pub trait TProofTranscript2 : Sized {
         msg.iter().map(|x| (*x).into().serialize_compressed(&mut writer)).count();
         self.write_raw_msg(&writer);
     }
+
+    // ugly hack to record time for testing
+    fn record_current_time(&mut self, s: impl Into<String>);
+    fn time_records(&self) -> Vec<(Instant, String)>;
 }
 
 pub struct ProofTranscript2 {
@@ -72,6 +78,8 @@ pub struct ProofTranscript2 {
     proof: Vec<u8>,
     ctr: usize,
     mode: PTMode,
+
+    time_records: Vec<(Instant, String)>
 }
 
 impl TProofTranscript2 for ProofTranscript2 {
@@ -86,7 +94,7 @@ impl TProofTranscript2 for ProofTranscript2 {
     fn start_prover(pparam: Self::PParam) -> Self {
         let merlin_transcript = Transcript::new(&pparam);
         let proof = vec![];
-        Self { merlin_transcript, proof, ctr: 0, mode: PTMode::Prover }
+        Self { merlin_transcript, proof, ctr: 0, mode: PTMode::Prover, time_records: vec![] }
     }
 
     fn end(self) -> Self::RawProof {
@@ -95,7 +103,7 @@ impl TProofTranscript2 for ProofTranscript2 {
 
     fn start_verifier(pparam: Self::PParam, proof: Self::RawProof) -> Self {
         let merlin_transcript = Transcript::new(&pparam);
-        Self {merlin_transcript, proof, ctr: 0, mode: PTMode::Verifier}
+        Self {merlin_transcript, proof, ctr: 0, mode: PTMode::Verifier, time_records: vec![]}
     }
 
     fn raw_challenge(&mut self, bytesize: usize) -> Vec<u8> {
@@ -126,6 +134,15 @@ impl TProofTranscript2 for ProofTranscript2 {
             }
         }
     }
+    
+    fn record_current_time(&mut self, s: impl Into<String>) {
+        self.time_records.push((Instant::now(), s.into()));
+    }
+    
+    fn time_records(&self) -> Vec<(Instant, String)> {
+        self.time_records.clone()
+    }
+
 
 }
 

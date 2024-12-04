@@ -36,12 +36,20 @@ impl<Ctx: Pairing, Transcript: TProofTranscript2> Protocol2<Transcript> for Knuc
     type ClaimsAfter = (Ctx::G1Affine, Ctx::G1Affine); // Deferred pair (A, B) satisfying <A, H0> = <B, H1>.
 
     fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
+        transcript.record_current_time(">> OPENING");
+
         let pk = self.pk.as_ref().unwrap();
         
         let a = pk.compute_t(&advice, &claims.point);
+        
+        transcript.record_current_time(">> OPENING: compute T");
+        
         let (t, opening) = a;
         assert!(opening == claims.ev);
         let t_comm = pk.kzg_pk.commit(&t);
+        
+        transcript.record_current_time(">> OPENING: commit T");
+        
         transcript.write_points::<Ctx::G1>(&[t_comm]);
         let x = transcript.challenge(128);
 
@@ -66,9 +74,14 @@ impl<Ctx: Pairing, Transcript: TProofTranscript2> Protocol2<Transcript> for Knuc
                         .collect();
         
         let (p_lt_x_proof, _) = pk.kzg_pk.open(&p_lt, x);
+        
+        transcript.record_current_time(">> OPENING: kzg open p_lt in x");
+        
         transcript.write_points::<Ctx::G1>(&[p_lt_x_proof]);
 
         let (t_kx_proof, t_kx) = pk.kzg_pk.open(&t, kx);
+
+        transcript.record_current_time(">> OPENING: kzg open p in kx");
 
         transcript.write_scalars(&[t_kx]);
         transcript.write_points::<Ctx::G1>(&[t_kx_proof]);

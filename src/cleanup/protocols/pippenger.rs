@@ -118,6 +118,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
 
     fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, mut state: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         
+
         assert!(&state.beginning.commitment_key.verifying_key() == &self.vkey);
         let num_matrix_comms = self.beginning.y_size.div_ceil(1 << self.commitment_log_multiplicity);
 
@@ -126,6 +127,8 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
         assert!(c.len() == num_matrix_comms); //sanity
         assert!(d.len() == num_matrix_comms); //sanity
         
+        transcript.record_current_time("compute buckets and commit phase 1");
+
         transcript.write_points::<<Ctx as Pairing>::G1>(&c);
         transcript.write_points::<<Ctx as Pairing>::G1>(&d);
         transcript.write_points::<<Ctx as Pairing>::G1>(&[p_0]);
@@ -135,7 +138,12 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
 
         let (claims, _) = self.ending.prove(transcript, claims, state.ending);
         let (claims, _) = GlueSplit::new().prove(transcript, claims, ());
+        
+        transcript.record_current_time("prove image part");
+        
         state.beginning.second_phase(&claims.point);
+
+        transcript.record_current_time("commit phase 2");
 
         let PushForwardState{phase_2_comm, ..} = &state.beginning;
         let PipMSMPhase2Comm{ c_pull, d_pull } = phase_2_comm.as_ref().unwrap().clone();
@@ -146,7 +154,9 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
         transcript.write_points::<<Ctx as Pairing>::G1>(&d_pull);
 
         let (claims, (phase_1_data, phase_2_data)) = self.beginning.prove(transcript, claims, (state.beginning.phase_1_data, state.beginning.phase_2_data.unwrap()));
-        
+
+        transcript.record_current_time("prove pushforward");
+
         let PushforwardFinalClaims{
             gamma,
             claims_about_matrix,
@@ -197,7 +207,6 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
             phase_1_data.ac_d
         );
 
-
         let multirow_evs = EqPoly::new(
             self.beginning.y_logsize - self.commitment_log_multiplicity,
             &matrix_pt[..self.beginning.y_logsize - self.commitment_log_multiplicity]
@@ -247,6 +256,8 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
             },
             combined_witness
         );
+
+        transcript.record_current_time("open");
 
         ((), ())
     }
@@ -369,7 +380,7 @@ mod test {
     #[test]
     fn test_pippenger() {
         let rng = &mut test_rng();
-
+        
         let d_logsize = 8;
         let num_bits = <<BandersnatchConfig as CurveConfig>::ScalarField as PrimeField>::MODULUS_BIT_SIZE as usize;
         let num_bits = 128;
@@ -378,12 +389,12 @@ mod test {
         let x_size = 1 << x_logsize;
         let y_size = (num_bits + d_logsize - 1) / d_logsize;
         let y_logsize = log2(y_size) as usize;
-        
+
 
         let points = (0..x_size).map(|_| Affine::<BandersnatchConfig>::rand(rng)).collect_vec();
         let coeffs = (0..x_size).map(|_| <BandersnatchConfig as CurveConfig>::ScalarField::rand(rng)).collect_vec();
 
-        let commitment_log_multiplicity = 3;
+        let commitment_log_multiplicity = 0;
 
         let comm_n_vars = commitment_log_multiplicity + x_logsize;
         let comm_size = 1 << comm_n_vars;
@@ -427,20 +438,20 @@ mod test {
             evs: dense_output.iter().map(|output| evaluate_poly(output, &point)).collect(),
         };
 
-        let label_start_proof = Instant::now();
-
         let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
 
         let (prover_claims, _) = pippenger.prove(&mut transcript_p, claims.clone(), pip_wg);
 
+        let time_records = transcript_p.time_records();
+
         let proof = transcript_p.end();
 
-        let label_end_proof = Instant::now();
-
         println!("MSM params:");
-        println!("log num points: {}, num bits: {}", x_logsize, num_bits);
-        println!("Witness gen took: {}ms", (label_start_proof - label_start).as_millis());
-        println!("Proof took: {}ms", (label_end_proof - label_start_proof).as_millis());
+        println!("log num points: {}, num bits: {}, d_logsize: {}", x_logsize, num_bits, d_logsize);
+        println!("{} : {}ms", time_records[0].1, (time_records[0].0 - label_start).as_millis());
+        for i in 0..time_records.len() - 1 {
+            println!("{} : {}ms", time_records[i+1].1, (time_records[i+1].0 - time_records[i].0).as_millis());
+        }
 
         let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);
         let verifier_claims = pippenger.verify(&mut transcript_v, claims);

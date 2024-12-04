@@ -29,6 +29,8 @@ jemallocator = { version = "0.5.4", optional = true }
 profi = { version = "*", default-features = true, optional = true }
 num-traits = "0.2.19"
 clap = { version = "4.5.22", features = ["cargo"]}
+tracing = { version = "0.1.41", features = ["log-always"] }
+tracing-span-tree = "0.1.1"
 
 [profile.rel-with-debinfo]
 inherits = "release"

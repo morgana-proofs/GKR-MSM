@@ -18,7 +18,7 @@ use num_traits::{One, Zero};
 use rayon::prelude::*;
 use std::iter::repeat_n;
 use std::marker::PhantomData;
-
+use tracing::{event, info, info_span, instrument};
 use super::opening::{KnucklesOpeningProtocol, OpeningClaim};
 use super::pushforward::pushforward::{PipMSMPhase1Comm, PipMSMPhase2Comm};
 
@@ -114,9 +114,8 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
     type ClaimsBefore = SinglePointClaims<CC::BaseField>;
     type ClaimsAfter = ();
 
+    #[instrument(skip_all)]
     fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, mut state: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
-        
-
         assert!(&state.beginning.commitment_key.verifying_key() == &self.vkey);
         let num_matrix_comms = self.beginning.y_size.div_ceil(1 << self.commitment_log_multiplicity);
 
@@ -124,7 +123,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
         let PipMSMPhase1Comm{ c, d, p_0, p_1, ac_c, ac_d } = phase_1_comm;
         assert!(c.len() == num_matrix_comms); //sanity
         assert!(d.len() == num_matrix_comms); //sanity
-        
+
         transcript.record_current_time("compute buckets and commit phase 1");
 
         transcript.write_points::<<Ctx as Pairing>::G1>(&c);
@@ -134,15 +133,21 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
         transcript.write_points::<<Ctx as Pairing>::G1>(&[ac_c]);
         transcript.write_points::<<Ctx as Pairing>::G1>(&[ac_d]);
 
+        let span = info_span!("prove image part").entered();
         let (claims, _) = self.ending.prove(transcript, claims, state.ending);
         let (claims, _) = GlueSplit::new().prove(transcript, claims, ());
-        
+        span.exit();
+
+
         transcript.record_current_time("prove image part");
-        
+
+        let span = info_span!("commit phase 2").entered();
         state.beginning.second_phase(&claims.point);
+        span.exit();
 
         transcript.record_current_time("commit phase 2");
 
+        let span = info_span!("prove pushforward").entered();
         let PushForwardState{phase_2_comm, ..} = &state.beginning;
         let PipMSMPhase2Comm{ c_pull, d_pull } = phase_2_comm.as_ref().unwrap().clone();
         assert!(c_pull.len() == num_matrix_comms); //sanity
@@ -152,9 +157,11 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
         transcript.write_points::<<Ctx as Pairing>::G1>(&d_pull);
 
         let (claims, (phase_1_data, phase_2_data)) = self.beginning.prove(transcript, claims, (state.beginning.phase_1_data, state.beginning.phase_2_data.unwrap()));
+        span.exit();
 
         transcript.record_current_time("prove pushforward");
 
+        let span = info_span!("open").entered();
         let PushforwardFinalClaims{
             gamma,
             claims_about_matrix,
@@ -255,6 +262,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
             combined_witness
         );
 
+        span.exit();
         transcript.record_current_time("open");
 
         ((), ())
@@ -378,6 +386,7 @@ pub mod benchutils {
     use itertools::Itertools;
     use rand::Rng;
     use std::fmt::Display;
+    use tracing::{instrument, span, Level};
 
     #[derive(Clone)]
     pub struct PippengerConfig {
@@ -405,6 +414,7 @@ pub mod benchutils {
         pub vkey: KnucklesVerifyingKey<Bls12_381>,
     }
 
+    #[instrument(skip_all)]
     pub fn build_pippenger_data<RNG: Rng>(rng: &mut RNG, d_logsize: usize, x_logsize: usize, num_bits: usize, commitment_log_multiplicity: usize) -> PippengerData {
         let points = (0..(1 << x_logsize)).map(|_| Affine::<BandersnatchConfig>::rand(rng)).collect_vec();
         let coefs = (0..(1 << x_logsize)).map(|_| <BandersnatchConfig as CurveConfig>::ScalarField::rand(rng)).collect_vec();
@@ -440,6 +450,7 @@ pub mod benchutils {
         }
     }
 
+    #[instrument(skip_all)]
     pub fn run_pippenger(p_transcript: &mut impl TProofTranscript2, data: PippengerData) -> PippengerOutput {
         let PippengerData {
             points,
@@ -455,7 +466,7 @@ pub mod benchutils {
             vkey,
             commitment_key,
         } = data;
-
+        let span = info_span!("compute buckets and commit phase 1").entered();
         let pip_wg = PippengerWG::<<BandersnatchConfig as CurveConfig>::BaseField, Ctx, BandersnatchConfig>::new(
             &points,
             &coefs,
@@ -487,6 +498,8 @@ pub mod benchutils {
             commitment_log_multiplicity,
         );
 
+        span.exit();
+
         pippenger.prove(p_transcript, claims.clone(), pip_wg);
         PippengerOutput {
             output: dense_output,
@@ -495,7 +508,9 @@ pub mod benchutils {
         }
     }
 
+    #[instrument(skip_all)]
     pub fn verify_pippenger(transcript: &mut impl TProofTranscript2, config: PippengerConfig, output: PippengerOutput) -> () {
+        
         let PippengerConfig {
             y_size,
             y_logsize,

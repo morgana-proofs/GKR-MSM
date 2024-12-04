@@ -8,7 +8,7 @@ use crate::{cleanup::protocol2::Protocol2, utils::eq_eval};
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocols::sumchecks::vecvec_eq::Sumcheckable;
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
-
+use crate::utils::eq_poly_sequence_last;
 
 /// Given polynomial in coefficient form with linear term skipped, and sum P(0) + P(1), recovers full polynomial.
 pub fn decompress_coefficients<F: PrimeField>(coeffs_wo_lin_term: &[F], sum: F) -> Vec<F> {
@@ -403,7 +403,7 @@ impl<F: PrimeField, Fun: AlgFn<F>> FoldToSumcheckable<F> for DenseEqSumcheckObje
         let num_vars = self.point.len();
 
         let mut polys = self.polys;
-        let eq = EqPolynomial::new(self.point).evals();
+        let eq = eq_poly_sequence_last(&self.point).unwrap();
         polys.push(eq);
 
         Self::Target::new(

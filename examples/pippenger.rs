@@ -1,6 +1,7 @@
 use clap::{arg, command, value_parser};
 use std::env;
 use std::error::Error;
+use tracing::instrument;
 use GKR_MSM::cleanup::proof_transcript::{ProofTranscript2, TProofTranscript2};
 use GKR_MSM::cleanup::protocols::pippenger::benchutils::{build_pippenger_data, run_pippenger, verify_pippenger};
 
@@ -44,7 +45,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .long("commitment-log-multiplicity")
                 .required(false)
                 .default_value("0")
-                .value_parser(value_parser!(u16).range(1..2)),
+                .value_parser(value_parser!(u8)),
         )
         .get_matches();
 
@@ -52,7 +53,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     let d_logsize = *matches.get_one::<u8>("d_logsize").expect("digit size not set somehow") as usize;
     let x_logsize = *matches.get_one::<u8>("x_logsize").expect("input logsize  not set somehow") as usize;
     let num_bits = *matches.get_one::<u16>("nbits").expect("scalar size not set somehow") as usize;
-    let commitment_log_multiplicity = *matches.get_one::<u16>("commitment_log_multiplicity").unwrap() as usize;
+    let commitment_log_multiplicity = *matches.get_one::<u8>("commitment_log_multiplicity").unwrap() as usize;
+
+    tracing_span_tree::span_tree()
+        .aggregate(false)
+        .enable();
+
+    example(d_logsize, x_logsize, num_bits, commitment_log_multiplicity);
+
+    Ok(())
+}
+
+#[instrument]
+fn example(d_logsize: usize, x_logsize: usize, num_bits: usize, commitment_log_multiplicity: usize) {
 
     let rng = &mut rand::thread_rng();
     let data = build_pippenger_data(rng, d_logsize, x_logsize, num_bits, commitment_log_multiplicity);
@@ -66,14 +79,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("MSM params:");
     println!("log num points: {}, num bits: {}, d_logsize: {}", x_logsize, num_bits, d_logsize);
-    println!("Timings:");
-    for i in 0..time_records.len() - 1 {
-        println!("{} : {}ms", time_records[i+1].1, (time_records[i+1].0 - time_records[i].0).as_millis());
-    }
-
+    // println!("Timings:");
+    // for i in 0..time_records.len() - 1 {
+    //     println!("{} : {}ms", time_records[i+1].1, (time_records[i+1].0 - time_records[i].0).as_millis());
+    // }
+    println!("Proof size: {} B", proof.len());
     let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);
     verify_pippenger(&mut transcript_v, config, output);
     transcript_v.end();
-
-    Ok(())
+    println!("Trace:");
 }

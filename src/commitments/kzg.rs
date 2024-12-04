@@ -21,7 +21,7 @@ pub struct KzgProvingKey<Ctx: Pairing> {
     h1: Ctx::G2Affine,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct KzgVerifyingKey<Ctx: Pairing> {
     g0: Ctx::G1Affine,
     h0: Ctx::G2Affine,

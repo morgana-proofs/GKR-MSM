@@ -213,6 +213,7 @@ pub fn compute_bucketing<F: PrimeField, Ctx: Pairing<ScalarField = F>>(
 }
 
 
+#[derive(Clone)]
 pub struct PipMSMPhase1Data<F: PrimeField> {
     pub c: Vec<F>,
     pub d: Vec<F>,
@@ -224,11 +225,13 @@ pub struct PipMSMPhase1Data<F: PrimeField> {
     pub ac_d: Vec<F>, // access counts
 }
 
+#[derive(Clone)]
 pub struct PipMSMPhase2Data<F: PrimeField> {
     pub c_pull: Vec<F>,
     pub d_pull: Vec<F>,
 }
 
+#[derive(Clone)]
 pub struct PipMSMPhase1Comm<Ctx: Pairing> {
     pub c: Vec<Ctx::G1Affine>,
     pub d: Vec<Ctx::G1Affine>,
@@ -240,6 +243,7 @@ pub struct PipMSMPhase1Comm<Ctx: Pairing> {
     pub ac_d: Ctx::G1Affine,
 }
 
+#[derive(Clone)]
 pub struct PipMSMPhase2Comm<Ctx: Pairing> {
     pub c_pull: Vec<Ctx::G1Affine>,
     pub d_pull: Vec<Ctx::G1Affine>,
@@ -278,13 +282,13 @@ impl<F: PrimeField> AlgFn<F> for AddInversesFn<F> {
 
 #[derive(Clone, Debug)]
 pub struct PushforwardProtocol<F: PrimeField> {
-    x_logsize: usize,
-    y_logsize: usize,
+    pub x_logsize: usize,
+    pub y_logsize: usize,
 
     // x_size is currently unsupported to protect our mental health, you are always adding 2^N points.
-    y_size: usize,
+    pub y_size: usize,
 
-    d_logsize: usize,
+    pub d_logsize: usize,
 
     _marker: PhantomData<F>,
 }
@@ -296,7 +300,7 @@ impl<F: PrimeField> PushforwardProtocol<F> {
     }
 }
 
-pub struct PushForwardAdvice<F: PrimeField, Ctx:Pairing<ScalarField = F>> {
+pub struct PushForwardState<F: PrimeField, Ctx:Pairing<ScalarField = F>> {
     pub phase_1_data: PipMSMPhase1Data<F>,
     pub phase_2_data: Option<PipMSMPhase2Data<F>>,
     pub y_logsize: usize,
@@ -319,7 +323,7 @@ pub struct PushForwardAdvice<F: PrimeField, Ctx:Pairing<ScalarField = F>> {
 
 }
 
-impl<F: PrimeField, Ctx: Pairing<ScalarField = F>> PushForwardAdvice<F, Ctx> {
+impl<F: PrimeField, Ctx: Pairing<ScalarField = F>> PushForwardState<F, Ctx> {
     pub fn new<CC: TECurveConfig<BaseField=F>>(
         points: &[Affine<CC>],
         coefs: &[CC::ScalarField],
@@ -605,14 +609,21 @@ impl<F: PrimeField, Ctx: Pairing<ScalarField = F>> PushForwardAdvice<F, Ctx> {
     }
 }
 
+pub struct PushforwardFinalClaims<F: PrimeField> {
+    pub gamma: F,
+    pub claims_about_matrix: SinglePointClaims<F>,
+    pub claims_ac_c: SinglePointClaims<F>,
+    pub claims_ac_d: SinglePointClaims<F>,
+}
+
 impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol<F> {
     type ProverInput = (PipMSMPhase1Data<F>, PipMSMPhase2Data<F>);
 
-    type ProverOutput = F;
+    type ProverOutput = (PipMSMPhase1Data<F>, PipMSMPhase2Data<F>);
 
     type ClaimsBefore = SinglePointClaims<F>; // Full evaluation claim
 
-    type ClaimsAfter = SinglePointClaims<F>;
+    type ClaimsAfter = PushforwardFinalClaims<F>; // Evaluation claims and gamma
 
     fn prove(&self, transcript: &mut PT, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
 
@@ -651,6 +662,11 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         assert!(ac_d.len() == 1 << d_logsize);
         assert!(c_pull.len() == matrix_size);
         assert!(d_pull.len() == matrix_size);
+
+        let _ac_c = ac_c.clone();
+        let _ac_d = ac_d.clone();
+        let _c_pull = c_pull.clone();
+        let _d_pull = d_pull.clone();
 
         // get challenges
 
@@ -708,10 +724,6 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
 
         assert!(mainphase_claims.len() == 3); // sanity.
         let [cd_claims, ac_c_claims, ac_d_claims] = mainphase_claims.try_into().unwrap();
-        
-        // TODO: VALIDATE AC CLAIMS !!
-        println!("WARNING: WE ARE NOT VALIDATING AC CLAIMS YET, FIX");
-        // VALIDATE AC CLAIMS !!
 
         let split = SplitAt::<F>::new(SplitIdx::HI(0), 2);
 
@@ -798,7 +810,23 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
 
         transcript.write_scalars(&output_evs);
 
-        (SinglePointClaims{ point: output_point, evs: output_evs }, gamma)
+        c.truncate(matrix_size);
+        d.truncate(matrix_size);
+
+
+        let output = (
+            PipMSMPhase1Data { c, d, p_0, p_1, ac_c: _ac_c, ac_d: _ac_d },
+            PipMSMPhase2Data { c_pull: _c_pull, d_pull: _d_pull }
+        );
+
+        (
+            PushforwardFinalClaims{ gamma,
+                claims_about_matrix: SinglePointClaims{ point: output_point, evs: output_evs },
+                claims_ac_c: ac_c_claims,
+                claims_ac_d: ac_d_claims 
+            },
+            output
+        )
 
     }
 
@@ -854,10 +882,6 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         assert!(mainphase_claims.len() == 3); // sanity.
         let [cd_claims, ac_c_claims, ac_d_claims] = mainphase_claims.try_into().unwrap();
         
-        // TODO: VALIDATE AC CLAIMS !!
-        println!("WARNING: WE ARE NOT VALIDATING AC CLAIMS YET, FIX");
-        // VALIDATE AC CLAIMS !!
-
         let split = SplitAt::<F>::new(SplitIdx::HI(0), 2);
 
         let cd_claims = split.verify(transcript, cd_claims);
@@ -894,7 +918,8 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
 
         // c_adj_ev = c_pull_ev + psi c_ev - tau_c * sel_ev + tau_suppression_term * (1 - sel_ev)
         // similar for d
-        let eq_sel_y = EqTruncPoly::new(y_logsize, y_size, &r_y).evals();
+        let eq_sel_y = EqTruncPoly::new(y_logsize, y_size, &r_y);
+
         let p_selector_prod_ev = p_folded_ev * eq_sel_y.evaluate(&output_point[..y_logsize]);
 
 
@@ -918,8 +943,12 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
 
         let output_evs = vec![p_folded_ev, c_pull_ev, d_pull_ev, c_ev, d_ev];
 
-        SinglePointClaims{ point: output_point, evs: output_evs }
 
+        PushforwardFinalClaims{ gamma,
+            claims_about_matrix: SinglePointClaims{ point: output_point, evs: output_evs },
+            claims_ac_c: ac_c_claims,
+            claims_ac_d: ac_d_claims 
+        }
     }
 }
 
@@ -1114,11 +1143,11 @@ mod tests {
 
         let pparam = b"ez first try";
         let mut transcript = ProofTranscript2::start_prover(pparam);
-        let (output_claim_p, gamma) = pushforward.prove(&mut transcript, claim.clone(), (p1_data, p2_data));
+        let (PushforwardFinalClaims{ gamma, claims_about_matrix: output_claim_p, ..}, _) = pushforward.prove(&mut transcript, claim.clone(), (p1_data, p2_data));
         let proof = transcript.end();
 
         let mut transcript = ProofTranscript2::start_verifier(pparam, proof);
-        let output_claim_v = pushforward.verify(&mut transcript, claim);
+        let PushforwardFinalClaims{ gamma, claims_about_matrix: output_claim_v, ..} = pushforward.verify(&mut transcript, claim);
 
         assert!(output_claim_p == output_claim_v);
 

@@ -44,10 +44,10 @@ use ark_std::{Zero, One};
 
 #[derive(Clone)]
 pub struct KnucklesProvingKey<Ctx: Pairing> {
-    kzg_pk: KzgProvingKey<Ctx>,
-    num_vars: usize, // N = 2^num_vars, kzg_pk must have size at least 2N.
-    k: Ctx::ScalarField, // Taking k = 2 should work in most cases.
-    inverses: Vec<Ctx::ScalarField> // Precomputed inverses of (k^s - k^N), except for s = N (where it can be anything).
+    pub kzg_pk: KzgProvingKey<Ctx>,
+    pub num_vars: usize, // N = 2^num_vars, kzg_pk must have size at least 2N.
+    pub k: Ctx::ScalarField, // Taking k = 2 should work in most cases.
+    pub inverses: Vec<Ctx::ScalarField> // Precomputed inverses of (k^s - k^N), except for s = N (where it can be anything).
 }
 
 #[derive(Clone)]
@@ -115,15 +115,15 @@ impl<Ctx: Pairing> KnucklesProvingKey<Ctx> {
         pt.reverse(); // To keep on parity with liblasso's ordering.
         
         let n = 1 << self.num_vars;
-        assert_eq!(poly.len(), n);
+        assert!(poly.len() <= n);
+        
         let mut t : Vec<Ctx::ScalarField> = Vec::with_capacity(2 * n - 1);
         let mut t_scaled = vec![Ctx::ScalarField::zero(); 2 * n - 1];
 
         let pt_rev : Vec<_> = pt.par_iter().map(|x| Ctx::ScalarField::one() - *x).collect();
         // It is more convenient to multiply by 1-pt.
 
-        t.extend(poly);
-        t.extend(std::iter::repeat(Ctx::ScalarField::zero()).take(n - 1));
+        t.extend(poly.iter().map(|x| *x).chain(std::iter::repeat(Ctx::ScalarField::zero())).take(2 * n - 1));
 
         let mut curr_size = n; // This will hold the size of our data
         for i in 0..self.num_vars {
@@ -215,15 +215,15 @@ impl<Ctx: Pairing> KnucklesProvingKey<Ctx> {
         }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct KnucklesVerifyingKey<Ctx: Pairing> {
-    kzg_vk: KzgVerifyingKey<Ctx>,
-    num_vars: usize,
-    k: Ctx::ScalarField, 
+    pub kzg_vk: KzgVerifyingKey<Ctx>,
+    pub num_vars: usize,
+    pub k: Ctx::ScalarField, 
 }
 
 impl<Ctx: Pairing> KnucklesVerifyingKey<Ctx> {
-    
+
     /// Reduces a proof to deferred pair (a, b), allegedly satisfying <a, h0> == <b, h1>.
     /// poly_comm, point and opening MUST already be in transcript (they are not added
     /// to give user opportunity to derive them deterministically from other components of the protocol).

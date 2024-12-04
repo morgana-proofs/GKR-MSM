@@ -284,4 +284,9 @@ impl <F: PrimeField> AlgFn<F> for BitCheckFn<F> {
     fn n_outs(&self) -> usize {
         1
     }
+
+    #[cfg(debug_assertions)]
+    fn description(&self) -> String {
+        "Bitcheck".to_string()
+    }
 }

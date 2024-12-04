@@ -32,6 +32,10 @@ jemallocator = { version = "0.5.4", optional = true }
 profi = { version = "*", default-features = true, optional = true }
 num-traits = "0.2.19"
 
+[profile.rel-with-debinfo]
+inherits = "release"
+debug = true
+
 [features]
 parallel = []
 #multicore = []
@@ -71,3 +75,7 @@ harness = false
 [[example]]
 name = "nn"
 path = "examples/nn.rs"
+
+[[example]]
+name = "pippenger"
+path = "examples/pippenger.rs"

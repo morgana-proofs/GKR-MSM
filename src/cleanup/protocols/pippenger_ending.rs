@@ -5,6 +5,7 @@ use ark_ff::PrimeField;
 use ark_std::UniformRand;
 use itertools::{repeat_n, Itertools};
 use num_traits::Zero;
+use tracing::instrument;
 use crate::cleanup::polys::common::{Densify, MapSplit};
 use crate::cleanup::proof_transcript::{ProofTranscript2, TProofTranscript2};
 use crate::cleanup::protocol2::Protocol2;
@@ -117,6 +118,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Protoc
     type ClaimsBefore = SinglePointClaims<F>;
     type ClaimsAfter = SinglePointClaims<F>;
 
+    #[instrument(name="GKR_MSM::PippengerBucketed::prove", level="debug", skip_all)]
     fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         self.gkr.prove(transcript, claims, advice)
     }

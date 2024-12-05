@@ -1,5 +1,6 @@
 use std::fmt::{Display, Formatter};
 use ark_ff::PrimeField;
+use tracing::instrument;
 use crate::cleanup::polys::common::MapSplit;
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
@@ -238,6 +239,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Protoc
     type ClaimsBefore = SinglePointClaims<F>;
     type ClaimsAfter = SinglePointClaims<F>;
 
+    #[instrument(name="GKR_MSM::TriangleAdd::prove", level="debug", skip_all)]
     fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         self.gkr.prove(transcript, claims, advice)
     }

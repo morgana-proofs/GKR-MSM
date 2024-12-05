@@ -13,6 +13,7 @@ use rayon::{current_num_threads, iter::{repeatn, IndexedParallelIterator, IntoPa
 
 use num_traits::Zero;
 use ark_ec::VariableBaseMSM;
+use tracing::instrument;
 use crate::msm_nonaffine::VariableBaseMsmNonaffine;
 
 use crate::commitments::knuckles::KnucklesProvingKey;
@@ -324,6 +325,7 @@ pub struct PushForwardState<F: PrimeField, Ctx:Pairing<ScalarField = F>> {
 }
 
 impl<F: PrimeField, Ctx: Pairing<ScalarField = F>> PushForwardState<F, Ctx> {
+    #[instrument(name="PushForwardState::new", level="trace", skip_all)]
     pub fn new<CC: TECurveConfig<BaseField=F>>(
         points: &[Affine<CC>],
         coefs: &[CC::ScalarField],

@@ -12,6 +12,7 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*, reload, Registry, Layer};
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::layer::{Layered, SubscriberExt};
 use tracing_subscriber::util::{SubscriberInitExt, TryInitError};
+use tracing_tree::HierarchicalLayer;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let matches = command!() // requires `cargo` feature
@@ -76,7 +77,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             .from_env_lossy());
     let tracer = tracer
         .with(tracing_span_tree::span_tree().aggregate(false));
-
     if log {
         tracer
             .with(tracing_subscriber::fmt::layer())

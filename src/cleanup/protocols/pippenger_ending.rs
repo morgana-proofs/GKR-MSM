@@ -17,22 +17,18 @@ use crate::cleanup::protocols::sumcheck::SinglePointClaims;
 use crate::cleanup::utils::algfn::{IdAlgFn, RepeatedAlgFn};
 use crate::cleanup::utils::arith::evaluate_poly;
 use crate::cleanup::polys::vecvec::{VecVecPolynomial};
+use crate::cleanup::protocols::gkrs::bintree_add::{VecVecBintreeAdd, VecVecBintreeAddWG};
+use crate::cleanup::protocols::gkrs::triangle_add::{TriangleAdd, TriangleAddWG};
 use crate::utils::{build_points, TwistedEdwardsConfig};
 
 
 pub struct PippengerEndingWG<F: PrimeField + TwistedEdwardsConfig> {
-    pub advices: Vec<SplitVecVecMapGKRAdvice<F>>,
-}
-
-impl<F: PrimeField + TwistedEdwardsConfig> Iterator for PippengerEndingWG<F> {
-    type Item = SplitVecVecMapGKRAdvice<F>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.advices.pop()
-    }
+    pub bintree_advices: VecVecBintreeAddWG<F>,
+    pub triangle_advices: TriangleAddWG<F>,
 }
 
 impl<F: PrimeField + TwistedEdwardsConfig> PippengerEndingWG<F> {
+    #[instrument(name="PippengerEndingWG::new", level="trace", skip_all)]
     pub fn new(
         multirow_vars: usize,
         bucket_vars: usize,
@@ -40,8 +36,9 @@ impl<F: PrimeField + TwistedEdwardsConfig> PippengerEndingWG<F> {
         inputs: Vec<VecVecPolynomial<F>>
     ) -> Self {
         assert_eq!(inputs.len(), 6);
+
         let mut advices = bintree_add::builder::witness::build(
-            SplitVecVecMapGKRAdvice::VecVecMAP(inputs),
+            SplitVecVecMapGKRAdvice::VecVecMAP(inputs.clone()),
             horizontal_vars,
             horizontal_vars,
             true,
@@ -67,65 +64,96 @@ impl<F: PrimeField + TwistedEdwardsConfig> PippengerEndingWG<F> {
             SplitIdx::HI(multirow_vars),
         ));
 
-        Self {
-            advices,
-        }
-    }
-}
-
-pub struct PippengerEnding<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> {
-    pub multirow_vars: usize,
-    pub bucket_vars: usize,
-    pub horizontal_vars: usize,
-    pub gkr: SimpleGKR<SinglePointClaims<F>, SplitVecVecMapGKRAdvice<F>, Transcript, PippengerEndingWG<F>>,
-}
-
-impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> PippengerEnding<F, Transcript> {
-    pub fn new(multirow_vars: usize, bucket_vars: usize, horizontal_vars: usize) -> Self {
-        let mut layers = vec![];
-
-        layers.extend(bintree_add::builder::protocol::build(
-            multirow_vars + bucket_vars + horizontal_vars,
+        let bintree_wg = VecVecBintreeAddWG::new(
+            inputs,
             horizontal_vars,
             horizontal_vars,
             true,
-        ));
-        layers.push(Box::new(SplitAt::new(
+        );
+        let last: Vec<Vec<_>> = bintree_add::builder::witness::last_step(bintree_wg.advices.last().as_ref().unwrap(), horizontal_vars - 1).into();
+        let split_l1 = Vec::algfn_map_split(
+            &last,
+            IdAlgFn::new(3),
             SplitIdx::HI(multirow_vars),
             3,
-        )));
-        layers.push(Box::new(SplitAt::new(
+        );
+        let split_l2 = Vec::algfn_map_split(
+            &split_l1,
+            RepeatedAlgFn::new(IdAlgFn::new(3), 2),
             SplitIdx::HI(multirow_vars),
             3,
-        )));
-        layers.extend(triangle_add::builder::protocol::build(
-            multirow_vars + bucket_vars - 2,
-            SplitIdx::HI(multirow_vars),
-        ));
+        );
 
+        Self {
+            bintree_advices: bintree_wg,
+            triangle_advices: TriangleAddWG::new(
+                split_l2,
+                multirow_vars + bucket_vars - 2,
+                SplitIdx::HI(multirow_vars),
+            ),
+        }
+    }
+
+    pub fn last(&self) -> Option<&Vec<Vec<F>>> {
+        self.triangle_advices.advices.last().map(|v| v.into())
+    }
+}
+
+pub struct PippengerBucketed<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> {
+    pub multirow_vars: usize,
+    pub bucket_vars: usize,
+    pub horizontal_vars: usize,
+    pub bintree: VecVecBintreeAdd<F, Transcript>,
+    pub splits: SplitAt<F>,
+    pub triangle: TriangleAdd<F, Transcript>,
+}
+
+impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> PippengerBucketed<F, Transcript> {
+    pub fn new(multirow_vars: usize, bucket_vars: usize, horizontal_vars: usize) -> Self {
         Self {
             multirow_vars,
             bucket_vars,
             horizontal_vars,
-            gkr: SimpleGKR::new(layers),
+            bintree: VecVecBintreeAdd::new(
+                horizontal_vars,
+                multirow_vars + bucket_vars + horizontal_vars,
+                horizontal_vars,
+                true,
+            ),
+            splits: SplitAt::new(
+                SplitIdx::HI(multirow_vars),
+                3,
+            ),
+            triangle: TriangleAdd::new(
+                multirow_vars + bucket_vars - 2,
+                SplitIdx::HI(multirow_vars),
+            ),
         }
     }
 }
 
-impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Protocol2<Transcript> for PippengerEnding<F, Transcript> {
+impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Protocol2<Transcript> for PippengerBucketed<F, Transcript> {
     type ProverInput = PippengerEndingWG<F>;
     type ProverOutput = ();
     type ClaimsBefore = SinglePointClaims<F>;
     type ClaimsAfter = SinglePointClaims<F>;
 
-    #[instrument(name="GKR_MSM::PippengerBucketed::prove", level="debug", skip_all)]
+    #[instrument(name="PippengerBucketed::prove", level="debug", skip_all)]
     fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
-        self.gkr.prove(transcript, claims, advice)
+
+        let (claims, _) = self.triangle.prove(transcript, claims, advice.triangle_advices);
+        let (claims, _) = self.splits.prove(transcript, claims, ());
+        let (claims, _) = self.splits.prove(transcript, claims, ());
+        let (claims, _) = self.bintree.prove(transcript, claims, advice.bintree_advices);
+        (claims, ())
     }
 
     fn verify(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
-        self.gkr.verify(transcript, claims)
-
+        let claims = self.triangle.verify(transcript, claims);
+        let claims = self.splits.verify(transcript, claims);
+        let claims = self.splits.verify(transcript, claims);
+        let claims = self.bintree.verify(transcript, claims);
+        claims
     }
 }
 
@@ -170,7 +198,7 @@ mod tests {
             inputs
         );
         
-        let ending = PippengerEnding::new(
+        let ending = PippengerBucketed::new(
             multirow_vars,
             bucket_vars,
             point_vars,
@@ -179,7 +207,7 @@ mod tests {
         let point = (0..multirow_vars).map(|_| <BandersnatchConfig as CurveConfig>::BaseField::rand(rng)).collect_vec();
         let num_vars = multirow_vars + bucket_vars;
         let dense_output: Vec<Vec<_>> = triangle_add::builder::witness::last_step(
-            bintree_triangle_wg.advices.last().unwrap().into(),
+            bintree_triangle_wg.triangle_advices.advices.last().unwrap().into(),
             num_vars - 2 - SplitIdx::HI(multirow_vars).hi_usize(num_vars - 2)
         );
 

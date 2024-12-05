@@ -5,6 +5,7 @@ use ark_std::iterable::Iterable;
 use itertools::{repeat_n, Itertools};
 use liblasso::poly::unipoly::UniPoly;
 use rayon::iter::IntoParallelRefMutIterator;
+use tracing::instrument;
 use crate::cleanup::polys::common::{BindVar21, Make21};
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
@@ -194,6 +195,7 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
     type ClaimsBefore = SinglePointClaims<F>;
     type ClaimsAfter = SinglePointClaims<F>;
 
+    #[instrument(name="DenseDeg2Sumcheck::prove", level="trace", skip_all)]
     fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         assert_eq!(self.f.deg(), 2);
 

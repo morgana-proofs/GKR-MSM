@@ -239,7 +239,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Transcript: TProofTranscript2> Protoc
     type ClaimsBefore = SinglePointClaims<F>;
     type ClaimsAfter = SinglePointClaims<F>;
 
-    #[instrument(name="GKR_MSM::TriangleAdd::prove", level="debug", skip_all)]
+    #[instrument(name="TriangleAdd::prove", level="debug", skip_all)]
     fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         self.gkr.prove(transcript, claims, advice)
     }

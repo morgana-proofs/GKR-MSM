@@ -1,9 +1,9 @@
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
-use crate::cleanup::protocols::pippenger_ending::{PippengerEnding, PippengerEndingWG};
+use crate::cleanup::protocols::pippenger_ending::{PippengerBucketed, PippengerEndingWG};
 use crate::cleanup::protocols::pushforward::pushforward::{PushForwardState, PushforwardFinalClaims, PushforwardProtocol};
 use crate::cleanup::protocols::splits::GlueSplit;
-use crate::cleanup::protocols::sumcheck::SinglePointClaims;
+use crate::cleanup::protocols::sumcheck::{gamma_rlc, DenseSumcheckObjectSO, PointClaim, SinglePointClaims};
 use crate::cleanup::protocols::verifier_polys::{EqPoly, VerifierPoly};
 use crate::commitments::knuckles::{KnucklesProvingKey, KnucklesVerifyingKey};
 use crate::utils::{make_gamma_pows, TwistedEdwardsConfig};
@@ -16,9 +16,13 @@ use ark_std::log2;
 use itertools::Itertools;
 use num_traits::{One, Zero};
 use rayon::prelude::*;
-use std::iter::repeat_n;
+use std::iter::{repeat, repeat_n};
 use std::marker::PhantomData;
+use std::ops::Index;
 use tracing::{event, info, info_span, instrument};
+use crate::cleanup::protocols::multiopen_reduction::MultiOpenReduction;
+use crate::cleanup::protocols::sumchecks::dense_eq::DenseDeg2Sumcheck;
+use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 use super::opening::{KnucklesOpeningProtocol, OpeningClaim};
 use super::pushforward::pushforward::{PipMSMPhase1Comm, PipMSMPhase2Comm};
 
@@ -71,7 +75,7 @@ pub struct Pippenger<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarFi
     commitment_log_multiplicity: usize,
 
     beginning: PushforwardProtocol<F>,
-    ending: PippengerEnding<F, Transcript>,
+    ending: PippengerBucketed<F, Transcript>,
     _pd: PhantomData<(F, Ctx, CC)>,
 }
 
@@ -98,7 +102,7 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
                 y_size,
                 d_logsize,
             ),
-            ending: PippengerEnding::new(
+            ending: PippengerBucketed::new(
                 y_logsize,
                 d_logsize,
                 x_logsize,
@@ -124,8 +128,6 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
         assert!(c.len() == num_matrix_comms); //sanity
         assert!(d.len() == num_matrix_comms); //sanity
 
-        transcript.record_current_time("compute buckets and commit phase 1");
-
         transcript.write_points::<<Ctx as Pairing>::G1>(&c);
         transcript.write_points::<<Ctx as Pairing>::G1>(&d);
         transcript.write_points::<<Ctx as Pairing>::G1>(&[p_0]);
@@ -138,14 +140,9 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
         let (claims, _) = GlueSplit::new().prove(transcript, claims, ());
         span.exit();
 
-
-        transcript.record_current_time("prove image part");
-
         let span = info_span!("commit phase 2").entered();
         state.beginning.second_phase(&claims.point);
         span.exit();
-
-        transcript.record_current_time("commit phase 2");
 
         let span = info_span!("prove pushforward").entered();
         let PushForwardState{phase_2_comm, ..} = &state.beginning;
@@ -159,58 +156,34 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
         let (claims, (phase_1_data, phase_2_data)) = self.beginning.prove(transcript, claims, (state.beginning.phase_1_data, state.beginning.phase_2_data.unwrap()));
         span.exit();
 
-        transcript.record_current_time("prove pushforward");
-
         let span = info_span!("open").entered();
+
         let PushforwardFinalClaims{
             gamma,
             claims_about_matrix,
             claims_ac_c,
             claims_ac_d
         } = claims;
-        
+
         let matrix_pt = claims_about_matrix.point;
         let [p_folded_ev, c_pull_ev, d_pull_ev, c_ev, d_ev] = claims_about_matrix.evs.try_into().unwrap();
-        
+
         let pk = state.beginning.commitment_key;
 
         let opener = KnucklesOpeningProtocol::new(self.vkey, Some(pk));
 
-        let point = repeat_n(F::zero(), self.commitment_log_multiplicity).chain(matrix_pt[self.beginning.y_logsize..].iter().map(|x|*x)).collect();
 
-        let ps_pair = opener.prove(
-            transcript,
-            OpeningClaim{
-                commitment: (p_0 + p_1 * gamma).into(),
-                point,
-                ev: p_folded_ev - gamma * gamma
-            },
-            phase_1_data.p_0.into_par_iter().zip(phase_1_data.p_1.into_par_iter()).map(|(x, y)| x + gamma * y).collect()
-        );        
+        let p_folded_point = repeat_n(F::zero(), self.commitment_log_multiplicity)
+            .chain(matrix_pt[self.beginning.y_logsize..].iter().map(|x|*x))
+            .collect();
+        let ac_c_point = repeat_n(F::zero(), self.commitment_log_multiplicity)
+            .chain(claims_ac_c.point.iter().map(|x|*x))
+            .collect();
+        let ac_d_point = repeat_n(F::zero(), self.beginning.x_logsize + self.commitment_log_multiplicity - self.beginning.d_logsize)
+            .chain(claims_ac_d.point.iter().map(|x|*x))
+            .collect();
+        let combined_opening_point = matrix_pt[self.beginning.y_logsize - self.commitment_log_multiplicity ..].to_vec();
 
-        let ac_c_point = repeat_n(F::zero(), self.commitment_log_multiplicity).chain(claims_ac_c.point.iter().map(|x|*x)).collect();
-
-        let ac_c_pair = opener.prove(
-            transcript,
-            OpeningClaim{
-                commitment: ac_c,
-                point: ac_c_point,
-                ev: claims_ac_c.evs[0]
-            },
-            phase_1_data.ac_c
-        );
-
-        let ac_d_point = repeat_n(F::zero(), self.beginning.x_logsize + self.commitment_log_multiplicity - self.beginning.d_logsize).chain(claims_ac_d.point.iter().map(|x|*x)).collect();
-
-        let ac_d_pair = opener.prove(
-            transcript,
-            OpeningClaim{
-                commitment: ac_d,
-                point: ac_d_point,
-                ev: claims_ac_d.evs[0]
-            },
-            phase_1_data.ac_d
-        );
 
         let multirow_evs = EqPoly::new(
             self.beginning.y_logsize - self.commitment_log_multiplicity,
@@ -223,12 +196,10 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
         let d_pull_combined : Ctx::G1 = multirow_evs.iter().zip(d_pull.iter()).map(|(coeff, &comm)| comm * coeff).sum::<Ctx::G1>();
 
         // evals don't change, because we are just combining pieces representing our polynomials
-
         let u: F = transcript.challenge(512);
         let us : [_; 4] = make_gamma_pows(u, 4).try_into().unwrap();
 
         let combined_matrix_commitment = c_combined + d_combined * us[1] + c_pull_combined * us[2] + d_pull_combined * us[3];
-        let combined_opening_point = matrix_pt[self.beginning.y_logsize - self.commitment_log_multiplicity ..].to_vec();
         let combined_evaluation = c_ev + d_ev * us[1] + c_pull_ev * us[2] + d_pull_ev * us[3];
 
         let x_size = 1 << self.beginning.x_logsize;
@@ -252,18 +223,73 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
             ret
         }).collect();
 
-        let cd_comb_pair = opener.prove(
+        let multiopen = MultiOpenReduction::new(
+            x_logsize + self.commitment_log_multiplicity,
+            4,
+        );
+
+        let mut multiopen_witness = vec![
+            phase_1_data.p_0.into_par_iter().zip(phase_1_data.p_1.into_par_iter()).map(|(x, y)| x + gamma * y).collect(),
+            phase_1_data.ac_c,
+            phase_1_data.ac_d,
+            combined_witness,
+        ];
+
+        multiopen_witness.iter_mut().for_each(|a| a.extend(itertools::repeat_n(F::zero(), (1 << (x_logsize + self.commitment_log_multiplicity)) - a.len())));
+
+        let (multiopen_claims, _) = multiopen.prove(
+            transcript,
+            vec![
+                PointClaim {
+                    point: p_folded_point,
+                    ev: p_folded_ev - gamma * gamma,
+                },
+                PointClaim {
+                    point: ac_c_point,
+                    ev: claims_ac_c.evs[0],
+                },
+                PointClaim {
+                    point: ac_d_point,
+                    ev: claims_ac_d.evs[0],
+                },
+                PointClaim {
+                    point: combined_opening_point,
+                    ev: combined_evaluation,
+                },
+            ],
+            multiopen_witness.clone(),
+        );
+
+        let q = transcript.challenge(128);
+        let qs = make_gamma_pows(q, 4);
+
+        let folded_commitment = qs.iter().zip([
+            (p_0 + p_1 * gamma).into(),
+            ac_c,
+            ac_d,
+            combined_matrix_commitment.into(),
+        ].iter()).map(|(a, b)| {
+            b * a
+        }).sum::<Ctx::G1>();
+
+        let folded_witness = (0..multiopen_witness[0].len()).into_par_iter().map(|i| {
+            multiopen_witness[0][i] * qs[0] +
+            multiopen_witness[1][i] * qs[1] +
+            multiopen_witness[2][i] * qs[2] +
+            multiopen_witness[3][i] * qs[3]
+        }).collect();
+
+        let _ps_pair = opener.prove(
             transcript,
             OpeningClaim{
-                commitment: combined_matrix_commitment.into(),
-                point: combined_opening_point,
-                ev: combined_evaluation
+                commitment: folded_commitment.into(),
+                point: multiopen_claims.point,
+                ev: gamma_rlc(q, &multiopen_claims.evs)
             },
-            combined_witness
+            folded_witness,
         );
 
         span.exit();
-        transcript.record_current_time("open");
 
         ((), ())
     }
@@ -285,51 +311,30 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
         let d_pull = transcript.read_points::<<Ctx as Pairing>::G1>(num_matrix_comms);
 
         let claims = self.beginning.verify(transcript, claims);
-        
+
         let PushforwardFinalClaims{
             gamma,
             claims_about_matrix,
             claims_ac_c,
             claims_ac_d
         } = claims;
-        
+
         let matrix_pt = claims_about_matrix.point;
         let [p_folded_ev, c_pull_ev, d_pull_ev, c_ev, d_ev] = claims_about_matrix.evs.try_into().unwrap();
-        
+
         let opener = KnucklesOpeningProtocol::new(self.vkey, None);
 
-        let ps_point = repeat_n(F::zero(), self.commitment_log_multiplicity).chain(matrix_pt[self.beginning.y_logsize..].iter().map(|x|*x)).collect();
+        let p_folded_point = repeat_n(F::zero(), self.commitment_log_multiplicity)
+            .chain(matrix_pt[self.beginning.y_logsize..].iter().map(|x|*x))
+            .collect();
+        let ac_c_point = repeat_n(F::zero(), self.commitment_log_multiplicity)
+            .chain(claims_ac_c.point.iter().map(|x|*x))
+            .collect();
+        let ac_d_point = repeat_n(F::zero(), self.beginning.x_logsize + self.commitment_log_multiplicity - self.beginning.d_logsize)
+            .chain(claims_ac_d.point.iter().map(|x|*x))
+            .collect();
+        let combined_opening_point = matrix_pt[self.beginning.y_logsize - self.commitment_log_multiplicity ..].to_vec();
 
-        let ps_pair = opener.verify(
-            transcript,
-            OpeningClaim{
-                commitment: (p_0 + p_1 * gamma).into(),
-                point: ps_point,
-                ev: p_folded_ev - gamma * gamma
-            }
-        );
-
-        let ac_c_point = repeat_n(F::zero(), self.commitment_log_multiplicity).chain(claims_ac_c.point.iter().map(|x|*x)).collect();
-
-        let ac_c_pair = opener.verify(
-            transcript,
-            OpeningClaim{
-                commitment: ac_c,
-                point: ac_c_point,
-                ev: claims_ac_c.evs[0]
-            },
-        );
-
-        let ac_d_point = repeat_n(F::zero(), self.beginning.x_logsize + self.commitment_log_multiplicity - self.beginning.d_logsize).chain(claims_ac_d.point.iter().map(|x|*x)).collect();
-
-        let ac_d_pair = opener.verify(
-            transcript,
-            OpeningClaim{
-                commitment: ac_d,
-                point: ac_d_point,
-                ev: claims_ac_d.evs[0]
-            },
-        );
 
         let multirow_evs = EqPoly::new(
             self.beginning.y_logsize - self.commitment_log_multiplicity,
@@ -342,27 +347,63 @@ impl<F: PrimeField + TwistedEdwardsConfig, Ctx: Pairing<ScalarField = F>, CC: TE
         let d_pull_combined : Ctx::G1 = multirow_evs.iter().zip(d_pull.iter()).map(|(coeff, &comm)| comm * coeff).sum::<Ctx::G1>();
 
         // evals don't change, because we are just combining pieces representing our polynomials
-
         let u: F = transcript.challenge(512);
         let us : [_; 4] = make_gamma_pows(u, 4).try_into().unwrap();
-        
+
         let combined_matrix_commitment = c_combined + d_combined * us[1] + c_pull_combined * us[2] + d_pull_combined * us[3];
-        let combined_opening_point = matrix_pt[self.beginning.y_logsize - self.commitment_log_multiplicity ..].to_vec();
         let combined_evaluation = c_ev + d_ev * us[1] + c_pull_ev * us[2] + d_pull_ev * us[3];
 
-        let cd_comb_pair = opener.verify(
+        let x_logsize = self.beginning.x_logsize;
+
+        let multiopen = MultiOpenReduction::new(
+            x_logsize + self.commitment_log_multiplicity,
+            4,
+        );
+
+        let multiopen_claims = multiopen.verify(
+            transcript,
+            vec![
+                PointClaim {
+                    point: p_folded_point,
+                    ev: p_folded_ev - gamma * gamma,
+                },
+                PointClaim {
+                    point: ac_c_point,
+                    ev: claims_ac_c.evs[0],
+                },
+                PointClaim {
+                    point: ac_d_point,
+                    ev: claims_ac_d.evs[0],
+                },
+                PointClaim {
+                    point: combined_opening_point,
+                    ev: combined_evaluation,
+                },
+            ],
+        );
+
+        let q = transcript.challenge(128);
+        let qs = make_gamma_pows(q, 4);
+
+        let folded_commitment = qs.iter().zip([
+            (p_0 + p_1 * gamma).into(),
+            ac_c,
+            ac_d,
+            combined_matrix_commitment.into(),
+        ].iter()).map(|(a, b)| {
+            b * a
+        }).sum::<Ctx::G1>();
+
+        let ps_pair = opener.verify(
             transcript,
             OpeningClaim{
-                commitment: combined_matrix_commitment.into(),
-                point: combined_opening_point,
-                ev: combined_evaluation
-            }
+                commitment: folded_commitment.into(),
+                point: multiopen_claims.point,
+                ev: gamma_rlc(q, &multiopen_claims.evs)
+            },
         );
 
         self.vkey.kzg_vk.verify_pair(ps_pair);
-        self.vkey.kzg_vk.verify_pair(ac_c_pair);
-        self.vkey.kzg_vk.verify_pair(ac_d_pair);
-        self.vkey.kzg_vk.verify_pair(cd_comb_pair);
     }
 }
 
@@ -478,9 +519,9 @@ pub mod benchutils {
             commitment_log_multiplicity,
             commitment_key,
         );
-
+        let claim_span = info_span!("claim computation").entered();
         let dense_output: Vec<Vec<_>> = triangle_add::builder::witness::last_step(
-            pip_wg.ending.advices.last().unwrap().into(),
+            pip_wg.ending.last().unwrap(),
             y_logsize + d_logsize - 2 - SplitIdx::HI(y_logsize).hi_usize(y_logsize + d_logsize - 2)
         );
 
@@ -488,6 +529,8 @@ pub mod benchutils {
             evs: dense_output.iter().map(|output| evaluate_poly(output, &r)).collect(),
             point: r.clone(),
         };
+        claim_span.exit();
+        span.exit();
 
         let pippenger = Pippenger::new(
             y_size,
@@ -498,7 +541,6 @@ pub mod benchutils {
             commitment_log_multiplicity,
         );
 
-        span.exit();
 
         pippenger.prove(p_transcript, claims.clone(), pip_wg);
         PippengerOutput {

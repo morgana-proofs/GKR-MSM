@@ -888,7 +888,6 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use ark_bls12_381::g1::Config;
@@ -1076,7 +1075,6 @@ mod tests {
 
         let SinglePointClaims { point : new_point, evs } = output_claims;
         assert_eq!(polys.iter().map(|poly| evaluate_poly(poly, &new_point)).collect_vec(), evs);
-
     }
 
     #[test]

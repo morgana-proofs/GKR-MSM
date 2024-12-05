@@ -30,6 +30,7 @@ profi = { version = "*", default-features = true, optional = true }
 num-traits = "0.2.19"
 clap = { version = "4.5.22", features = ["cargo"]}
 tracing = { version = "0.1.41", features = ["log-always"] }
+tracing-tree = "0.4.0"
 tracing-span-tree = "0.1.1"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 

@@ -15,6 +15,7 @@ use crate::protocol::protocol::{Protocol, ProtocolProver, ProtocolVerifier};
 
 #[cfg(feature = "prof")]
 use profi::{prof, prof_guard};
+use tracing::instrument;
 use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
 use crate::cleanup::protocols::gkrs::gkr::GKRLayer;
@@ -420,6 +421,7 @@ impl <Transcript: TProofTranscript2, F: PrimeField, Fun: AlgFn<F>> Protocol2<Tra
     type ClaimsBefore = SinglePointClaims<F>;
     type ClaimsAfter = SinglePointClaims<F>;
 
+    #[instrument(name="VecVecDeg2Sumcheck::prove", level="trace", skip_all)]
     fn prove(&self, transcript: &mut Transcript, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
         assert_eq!(self.f.deg(), 2);
 

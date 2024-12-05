@@ -3,7 +3,7 @@ use std::{cmp::min, iter::repeat_n, marker::PhantomData};
 use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
 use ark_ec::twisted_edwards::{Affine, TECurveConfig};
-use ark_ff::{BigInteger, PrimeField};
+use ark_ff::{BigInteger, Field, PrimeField};
 use ark_std::log2;
 use hashcaster::ptr_utils::{AsSharedMutPtr, UnsafeIndexRawMut};
 use itertools::Itertools;
@@ -11,7 +11,7 @@ use liblasso::poly::{eq_poly::EqPolynomial, unipoly::UniPoly};
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::{current_num_threads, iter::{repeatn, IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator}, slice::{ParallelSlice, ParallelSliceMut}};
 
-use num_traits::Zero;
+use num_traits::{One, Zero};
 use ark_ec::VariableBaseMSM;
 use tracing::instrument;
 use crate::msm_nonaffine::VariableBaseMsmNonaffine;
@@ -19,7 +19,7 @@ use crate::msm_nonaffine::VariableBaseMsmNonaffine;
 use crate::commitments::knuckles::KnucklesProvingKey;
 use crate::msm_nonaffine;
 use crate::{cleanup::{proof_transcript::TProofTranscript2, protocol2::Protocol2, protocols::{pushforward::logup_mainphase::LogupMainphaseProtocol, splits::{SplitAt, SplitIdx}, sumcheck::{decompress_coefficients, DenseEqSumcheckObject, FoldToSumcheckable, PointClaim}, verifier_polys::{EqPoly, EqTruncPoly, SelectorPoly, VerifierPoly}}, utils::{algfn::AlgFnUtils, arith::evaluate_poly}}, cleanup::polys::vecvec::VecVecPolynomial, utils::{eq_eval, eq_sum, make_gamma_pows, pad_vector}};
-use crate::cleanup::polys::common::EvaluateAtPoint;
+use crate::cleanup::polys::common::{Densify, EvaluateAtPoint};
 use super::super::{sumcheck::{compress_coefficients, evaluate_univar, DenseSumcheckObjectSO, SinglePointClaims, SumClaim, SumcheckVerifierConfig}, sumchecks::vecvec_eq::Sumcheckable};
 use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
 use crate::utils::TwistedEdwardsConfig;
@@ -352,12 +352,23 @@ impl<F: PrimeField, Ctx: Pairing<ScalarField = F>> PushForwardState<F, Ctx> {
 
         for x in 0..x_size {
             let coef : <CC::ScalarField as PrimeField>::BigInt = coefs[x].into_bigint();
-            let coef = coef.to_bits_be();
+            let coef = coef.to_bits_le();
             for y in 0..y_size {
-//                digits[y][x] = 0;
                 for i in 0..d_logsize {
                     digits[y][x] += (coef[y * d_logsize + i] as u32) << i;
                 }
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            let mrow_coef = CC::ScalarField::from(1u64 << d_logsize);
+            for x in 0..x_size {
+                let mut coef = CC::ScalarField::zero();
+                for y in 0..y_size {
+                    coef += mrow_coef.pow(&[y as u64]) * CC::ScalarField::from(digits[y][x]);
+                }
+                assert_eq!(coef, coefs[x], "{}", x);
             }
         }
 
@@ -366,8 +377,8 @@ impl<F: PrimeField, Ctx: Pairing<ScalarField = F>> PushForwardState<F, Ctx> {
         for poly in &polys {
             assert!(poly.len() == x_size);
         }
-        let row_pad = vec![F::zero(), F::zero(), F::zero()];
-        let col_pad = vec![F::zero(), F::zero(), F::zero()];
+        let row_pad = vec![F::zero(), F::one(), F::zero()];
+        let col_pad = vec![F::zero(), F::one(), F::zero()];
 
         assert!(digits.len() == y_size);
         for row in &digits {
@@ -627,7 +638,8 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
 
     type ClaimsAfter = PushforwardFinalClaims<F>; // Evaluation claims and gamma
 
-    fn prove(&self, transcript: &mut PT, claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
+    fn prove(&self, transcript: &mut PT, mut claims: Self::ClaimsBefore, advice: Self::ProverInput) -> (Self::ClaimsAfter, Self::ProverOutput) {
+        claims.evs[1] -= F::one();
 
         // Parse the point
         let (r_y, rest) = claims.point.split_at(self.y_logsize);
@@ -642,6 +654,8 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
             PipMSMPhase1Data { mut c, mut d, p_0, p_1, ac_c, ac_d },
             PipMSMPhase2Data { mut c_pull, mut d_pull }
         ) = advice;
+
+        let adj_p_1: Vec<_> = p_1.par_iter().map(|x| *x - F::one()).collect();
 
         let d_logsize = self.d_logsize;
         let x_logsize = self.x_logsize;
@@ -659,7 +673,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         assert!(c.len() == matrix_size);
         assert!(d.len() == matrix_size);
         assert!(p_0.len() == x_size);
-        assert!(p_1.len() == x_size);
+        assert!(adj_p_1.len() == x_size);
         assert!(ac_c.len() == 1 << x_logsize);
         assert!(ac_d.len() == 1 << d_logsize);
         assert!(c_pull.len() == matrix_size);
@@ -672,7 +686,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
 
         // get challenges
 
-        let [psi, tau_c, tau_d, tau_suppression_term] = transcript.challenge_vec::<F>(4, 512).try_into().unwrap(); // can be smaller bitsize, but let's make it simple for now.
+        let [psi, tau_c, tau_d, tau_suppression_term]: [F; 4] = transcript.challenge_vec::<F>(4, 512).try_into().unwrap(); // can be smaller bitsize, but let's make it simple for now.
         let gamma : F = transcript.challenge(128);
 
         // gamma is a folding challenge, psi is a linear combination challenge, tau_c and tau_d are affine offset challenges
@@ -734,7 +748,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         let gammas = make_gamma_pows(gamma, 5);
 
         // (P0 + gamma * P1 + gamma^2 * 1) c_pull d_pull
-        let p_folded : Vec<F> = p_0.par_iter().zip(p_1.par_iter()).map(|(&p0, &p1)| p0 + gammas[1] * p1 + gammas[2]).collect();
+        let p_folded : Vec<F> = p_0.par_iter().zip(adj_p_1.par_iter()).map(|(&p0, &p1)| p0 + gammas[1] * p1 + gammas[2]).collect();
         let eq_sel_y = EqTruncPoly::new(y_logsize, y_size, &r_y).evals();
 
         let p_selector_prod : Vec<F> = (0 .. 1 << matrix_logsize).into_par_iter().map(|i| {
@@ -791,9 +805,10 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         let [p_selector_prod_ev, c_pull_ev, d_pull_ev] = prod3_object.final_evals().try_into().unwrap();
         let [c_adj_ev, d_adj_ev, _] = frac_object.final_evals().try_into().unwrap();
 
-        let p_folded_ev = p_selector_prod_ev * eq_sel_y.evaluate(&output_point[..y_logsize]).inverse().unwrap();
+        let adj_p_folded_ev = p_selector_prod_ev * eq_sel_y.evaluate(&output_point[..y_logsize]).inverse().unwrap();
+        let p_folded_ev = adj_p_folded_ev + gamma;
         // SANITY:
-        assert!(evaluate_poly(&p_folded, &output_point[y_logsize..]) == p_folded_ev);
+        debug_assert!(evaluate_poly(&p_folded, &output_point[y_logsize..]) == adj_p_folded_ev);
 
         // c_adj_ev = c_pull_ev + psi c_ev - tau_c * sel_ev + tau_suppression_term * (1 - sel_ev)
         // similar for d
@@ -809,7 +824,6 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         let d_ev = psi_inv * (d_adj_ev - d_pull_ev + tau_d * sel_ev - tmp);
 
         let output_evs = vec![p_folded_ev, c_pull_ev, d_pull_ev, c_ev, d_ev];
-
         transcript.write_scalars(&output_evs);
 
         c.truncate(matrix_size);
@@ -832,7 +846,8 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
 
     }
 
-    fn verify(&self, transcript: &mut PT, claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
+    fn verify(&self, transcript: &mut PT, mut claims: Self::ClaimsBefore) -> Self::ClaimsAfter {
+        claims.evs[1] -= F::one();
 
         // Parse the point
         let (r_y, rest) = claims.point.split_at(self.y_logsize);
@@ -854,7 +869,7 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
 
         // get challenges
 
-        let [psi, tau_c, tau_d, tau_suppression_term] = transcript.challenge_vec::<F>(4, 512).try_into().unwrap(); // can be smaller bitsize, but let's make it simple for now.
+        let [psi, tau_c, tau_d, tau_suppression_term]: [F; 4] = transcript.challenge_vec::<F>(4, 512).try_into().unwrap(); // can be smaller bitsize, but let's make it simple for now.
         let gamma : F = transcript.challenge(128);
 
         // gamma is a folding challenge, psi is a linear combination challenge, tau_c and tau_d are affine offset challenges
@@ -917,12 +932,13 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         output_point.reverse();
 
         let [p_folded_ev, c_pull_ev, d_pull_ev, c_ev, d_ev] = transcript.read_scalars(5).try_into().unwrap();
+        let adj_p_folded_ev = p_folded_ev - gamma;
 
         // c_adj_ev = c_pull_ev + psi c_ev - tau_c * sel_ev + tau_suppression_term * (1 - sel_ev)
         // similar for d
         let eq_sel_y = EqTruncPoly::new(y_logsize, y_size, &r_y);
 
-        let p_selector_prod_ev = p_folded_ev * eq_sel_y.evaluate(&output_point[..y_logsize]);
+        let p_selector_prod_ev = adj_p_folded_ev * eq_sel_y.evaluate(&output_point[..y_logsize]);
 
 
         let sel_ev =
@@ -944,7 +960,6 @@ impl<F: PrimeField, PT: TProofTranscript2> Protocol2<PT> for PushforwardProtocol
         );
 
         let output_evs = vec![p_folded_ev, c_pull_ev, d_pull_ev, c_ev, d_ev];
-
 
         PushforwardFinalClaims{ gamma,
             claims_about_matrix: SinglePointClaims{ point: output_point, evs: output_evs },
@@ -1066,8 +1081,8 @@ mod tests {
             log2(y_size) as usize,
             x_size,
             y_size,
-            vec![Fr::zero(); 3],
-            vec![Fr::zero(); 3]
+            vec![Fr::zero(), Fr::one(), Fr::zero()],
+            vec![Fr::zero(), Fr::one(), Fr::zero()]
         );
 
         let r : Vec<Fr> = (0 .. x_logsize + y_logsize + d_logsize).map(|_|Fr::rand(rng)).collect();
@@ -1161,11 +1176,14 @@ mod tests {
         pad_vector(&mut c, x_logsize + y_logsize, Fr::zero());
         pad_vector(&mut d, x_logsize + y_logsize, Fr::zero());
 
-        assert!(p_folded_ev == evaluate_poly(&polys[0], &output_point[y_logsize..]) + gamma * evaluate_poly(&polys[1], &output_point[y_logsize..]) + gamma * gamma);
         assert!(c_ev == evaluate_poly(&c, &output_point));
         assert!(d_ev == evaluate_poly(&d, &output_point));
         assert!(c_pull_ev == evaluate_poly(&c_pull, &output_point));
         assert!(d_pull_ev == evaluate_poly(&d_pull, &output_point));
+        assert!(p_folded_ev == evaluate_poly(&polys[0], &output_point[y_logsize..]) +
+            gamma * evaluate_poly(&polys[1], &output_point[y_logsize..]) +
+            gamma * gamma
+        );
 
 
     }

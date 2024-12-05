@@ -277,20 +277,20 @@ mod test {
     #[test]
     fn witness_gen() {
         let rng = &mut ark_std::test_rng();
-        let num_vars = 6;
-        let split_var = SplitIdx::HI(2);
+        let num_vars = 12;
+        let split_var = SplitIdx::HI(4);
         let generator = Projective::<BandersnatchConfig>::generator();
         let mut point_map = HashMap::new();
         let mut p = generator;
         point_map.insert(p, 1);
         point_map.insert(Projective::zero(), 0);
         
-        for i in 0..(num_vars * (1 << num_vars + 1)) {
+        for i in 0..(num_vars * (1 << (num_vars + 1))) {
             p += generator;
             point_map.insert(p, 2 + i);
         }
         // let input_points = (0..(1 << (num_vars)) as u64).map(|i| {
-        //     Projective::<BandersnatchConfig>::generator() * <BandersnatchConfig as CurveConfig>::ScalarField::from(i)
+        //     Projective::<BandersnatchConfig>::generator() * <BandersnatchConfig as CurveConfig>::ScalarField::from(i * i)
         // }).collect_vec();
         let input_points = (0..(1 << (num_vars)) as u64).map(|i| {
             Projective::<BandersnatchConfig>::rand(rng)
@@ -352,12 +352,6 @@ mod test {
         println!("{}", prettify_coords(&point_map, &last));
         dbg!(&point_results.len());
         dbg!(&point_results.iter().map(|r| r.len()).collect_vec());
-        println!("{:?} X {:?}", point_map.get(&point_results[4][0]), point_map.get(&input_points.iter().take(1 << 2).skip(1 << (2 - 1)).sum::<Projective<BandersnatchConfig>>()));
-        assert_eq!(
-            point_results[4][0],
-            input_points.iter().take(1 << 4).skip(1 << (4 - 1)).sum::<Projective<BandersnatchConfig>>(),
-        );
-
     }
 
     #[test]

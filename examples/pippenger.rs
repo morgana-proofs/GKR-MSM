@@ -2,8 +2,10 @@ use clap::{arg, command, value_parser};
 use std::env;
 use std::error::Error;
 use std::fmt::Debug;
+use ark_ec::twisted_edwards::TECurveConfig;
+use ark_ed_on_bls12_381_bandersnatch::BandersnatchConfig;
 use clap::ArgAction::SetTrue;
-use tracing::{instrument, Subscriber};
+use tracing::{info_span, instrument, Subscriber};
 use tracing::dispatcher::DefaultGuard;
 use tracing::level_filters::LevelFilter;
 use GKR_MSM::cleanup::proof_transcript::{ProofTranscript2, TProofTranscript2};
@@ -93,26 +95,26 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 #[instrument(skip_all)]
 fn example(d_logsize: usize, x_logsize: usize, num_bits: usize, commitment_log_multiplicity: usize) {
-
+    
+    let span = info_span!("generating inputs").entered();
     let rng = &mut rand::thread_rng();
     let data = build_pippenger_data(rng, d_logsize, x_logsize, num_bits, commitment_log_multiplicity);
     let config = data.config.clone();
+    span.exit();
+    let span = info_span!("computing correct answer").entered();
+    let expected_msm = BandersnatchConfig::msm(&data.points, &data.coefs).unwrap();
+    span.exit();
 
     let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
-    transcript_p.record_current_time("Start");
     let output = run_pippenger(&mut transcript_p, data);
     let time_records = transcript_p.time_records();
     let proof = transcript_p.end();
 
     println!("MSM params:");
     println!("log num points: {}, num bits: {}, d_logsize: {}", x_logsize, num_bits, d_logsize);
-    // println!("Timings:");
-    // for i in 0..time_records.len() - 1 {
-    //     println!("{} : {}ms", time_records[i+1].1, (time_records[i+1].0 - time_records[i].0).as_millis());
-    // }
     println!("Proof size: {} B", proof.len());
     let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);
-    verify_pippenger(&mut transcript_v, config, output);
+    verify_pippenger(&mut transcript_v, config, output, Some(expected_msm));
     transcript_v.end();
     println!("Trace:");
 }

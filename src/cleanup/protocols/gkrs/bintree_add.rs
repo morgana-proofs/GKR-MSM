@@ -415,12 +415,21 @@ mod test {
         let inputs = VecVecPolynomial::algfn_map_split(&points, IdAlgFn::new(2), SplitIdx::LO(0), 2);
         let witness_gen = VecVecBintreeAddWG::new_common(SplitVecVecMapGKRAdvice::VecVecMAP(inputs), row_logsize, num_adds, false);
 
+		let last = builder::witness::last_step(witness_gen.advices.last().as_ref().unwrap(), num_adds - 1);
+        let dense_output = match last {
+            SplitVecVecMapGKRAdvice::VecVecMAP(vv) => { vv.to_dense( ())}
+            SplitVecVecMapGKRAdvice::DenseMAP(d) => { d.iter().map(|c| c.to_dense(num_vars - num_adds)).collect_vec() }
+            SplitVecVecMapGKRAdvice::EMPTY(_) => { unreachable!() }
+        };
+
+		
         let prover = VecVecBintreeAdd::new(
             num_adds,
             num_vars,
             row_logsize,
             false,
         );
+		
         #[cfg(debug_assertions)]
         prover.gkr.layers
             .iter()
@@ -431,17 +440,13 @@ mod test {
             )   
             .count();
 
-        let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
-        let last = builder::witness::last_step(witness_gen.advices.last().as_ref().unwrap(), num_adds - 1);
-        let dense_output = match last {
-            SplitVecVecMapGKRAdvice::VecVecMAP(vv) => { vv.to_dense( ())}
-            SplitVecVecMapGKRAdvice::DenseMAP(d) => { d.iter().map(|c| c.to_dense(num_vars - num_adds - match false {true => 1, false => 0})).collect_vec() }
-            SplitVecVecMapGKRAdvice::EMPTY(_) => { unreachable!() }
-        };
-
-        let point = (0..(num_vars - 1 - num_adds + match false {true => 0, false => 1})).map(|_| Fr::rand(rng)).collect_vec();
-        dbg!("{}, {:?}", dense_output.len(), dense_output.iter().map(|x| x.len()).collect_vec());
-        dbg!("{}", point.len());
+		let mut transcript_p = ProofTranscript2::start_prover(b"fgstglsp");
+        
+        let point = (0..(num_vars - num_adds)).map(|_| Fr::rand(rng)).collect_vec();
+		
+        dbg!(dense_output.len(), dense_output.iter().map(|x| x.len()).collect_vec());
+        dbg!(point.len());
+		
         let claims = SinglePointClaims {
             point: point.clone(),
             evs: dense_output.iter().map(|output| evaluate_poly(output, &point)).collect(),

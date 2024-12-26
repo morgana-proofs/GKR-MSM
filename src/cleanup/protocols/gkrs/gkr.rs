@@ -1,10 +1,7 @@
 use std::marker::PhantomData;
-use ark_ff::PrimeField;
 use itertools::Itertools;
-use crate::cleanup::proof_transcript::{TProofTranscript2};
+use crate::cleanup::proof_transcript::TProofTranscript2;
 use crate::cleanup::protocol2::Protocol2;
-use crate::cleanup::utils::algfn::{AlgFn, AlgFnSO};
-
 
 
 pub trait GKRLayer<Transcript: TProofTranscript2, Claims, Advice> {

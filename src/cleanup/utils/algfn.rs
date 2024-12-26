@@ -223,7 +223,7 @@ impl<F: PrimeField, Fun: AlgFn<F>> AlgFn<F> for RepeatedAlgFn<F, Fun> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct StackedAlgFn<F: PrimeField, Fun1: AlgFn<F>, Fun2: AlgFn<F>> {
     fun1: Fun1,
     fun2: Fun2,

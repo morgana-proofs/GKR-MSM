@@ -147,6 +147,7 @@ pub mod algfns {
             }
         };
     }
+	pub(crate) use make_algfn;
 
     make_algfn!(affine_twisted_edwards_add_l1(2, 4, 3));
     make_algfn!(affine_twisted_edwards_add_l2(2, 3, 3));

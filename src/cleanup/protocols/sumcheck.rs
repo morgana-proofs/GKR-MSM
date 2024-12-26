@@ -354,29 +354,6 @@ pub struct DensePolyPadded<F: PrimeField> {
     pub pad: F,
 }
 
-impl<F: PrimeField> DensePolyPadded<F> {
-    pub fn new(data: Vec<F>, logsize: usize, pad: F) -> Self {
-        assert!(1 << logsize >= data.len());
-        Self { data, logsize, pad }
-    }
-
-    pub fn bind(&mut self, t: F) {
-        let half = self.data.len() / 2;
-        
-        let tmp = *self.data.last().unwrap();
-        let maybe_pad = tmp + t * (self.pad - tmp);
-
-        assert!(self.logsize > 0);
-        self.logsize -= 1;
-
-        let iter = (0..half).into_par_iter().map(|i| self.data[i] + t * (self.data[i+1] - self.data[i]))
-            .chain(repeatn(maybe_pad, self.data.len() % 2));
-
-        self.data = iter.collect()
-    }
-}
-
-
 // Naive impl without Gruen's trick. Will be added later.
 pub struct DenseEqSumcheckObject<F: PrimeField, Fun: AlgFn<F>> {
     polys: Vec<Vec<F>>,
@@ -414,159 +391,6 @@ impl<F: PrimeField, Fun: AlgFn<F>> FoldToSumcheckable<F> for DenseEqSumcheckObje
         )
     }
 }
-
-// #[derive(Clone, Debug)]
-// pub struct DenseEqSumcheckObjectSO<F: PrimeField, Fun: AlgFnSO<F>> {
-//     polys: Vec<DensePolyPadded<F>>,
-//     point: Vec<F>,
-
-//     eq_seq: Vec<Vec<F>>,
-//     multiplier: F,
-
-//     challenges: Vec<F>,
-//     f: Fun,
-//     num_vars: usize,
-//     round_idx: usize,
-//     cached_unipoly: Option<UniPoly<F>>,
-
-//     claim: F,
-// }
-
-
-// impl<F: PrimeField, Fun: AlgFnSO<F>> DenseEqSumcheckObjectSO<F, Fun> {
-//     pub fn new(polys: Vec<DensePolyPadded<F>>, f: Fun, point: Vec<F>, claim_hint: F) -> Self {
-//         let l = polys.len();
-//         let num_vars = point.len();
-//         assert!(l == f.n_ins());
-//         let size = polys[0].data.len();
-//         for i in 0..l {
-//             assert!(polys[i].data.len() == size, "different lengths of polynomials in a bundle are currently unsupported");
-//         }
-
-//         let eq_seq = eq_poly_sequence(&point);
-
-//         Self { polys, f, num_vars, round_idx: 0, cached_unipoly: None, eq_seq, multiplier: F::one(), point, challenges: vec![], claim: claim_hint }
-//     }
-// }
-
-
-// impl<F: PrimeField, Fun: AlgFnSO<F>> Sumcheckable<F> for DenseEqSumcheckObjectSO<F, Fun> {
-//     fn bind(&mut self, t: F) {
-//         assert!(self.round_idx < self.num_vars, "the protocol has already ended");
-        
-//         let q = self.point.pop().unwrap();
-//         self.multiplier *=  F::one() - q - t + (q * t).double();
-        
-//         self.eq_seq.pop();
-
-//         self.challenges.push(t);
-//         for poly in &mut self.polys {
-//             poly.bind(t);
-//         }
-//         self.round_idx += 1;
-//         match self.cached_unipoly.take() {
-//             None => {panic!("should evaluate unipoly before binding - it has an opportunity to change the state due to in-place evaluation")}
-//             Some(u) => {self.claim = u.evaluate(&t)}
-//         }
-//     }
-
-//     fn unipoly(&mut self) -> UniPoly<F> {
-//         assert!(self.round_idx < self.num_vars, "the protocol has already ended");
-        
-//         let eq_data = self.eq_seq.last().unwrap();
-
-//         match self.cached_unipoly.as_ref() {
-//             Some(p) => {return p.clone()},
-//             None => {
-//                 let half = self.polys[0].data.len() / 2;
-//                 let n_polys = self.polys.len();
-//                 let odd_case = self.polys[0].data.len() % 2 == 1;
-
-//                 let num_tasks = 8 * current_num_threads();
-
-//                 let task_size = (half + num_tasks - 1) / num_tasks;
-
-//                 let acc: Vec<Vec<F>> = (0..num_tasks).into_par_iter().map(|task_idx| {
-//                     let mut difs = vec![F::zero(); n_polys];
-//                     let mut args = vec![F::zero(); n_polys];
-//                     let mut acc = vec![F::zero(); self.f.deg()];
-    
-//                     (task_idx * task_size .. min((task_idx + 1) * task_size, half)).map(|i| {
-//                         for j in 0..n_polys {
-//                             args[j] = self.polys[j].data[2 * i + 1];
-//                         }
-    
-//                         acc[0] += self.f.exec(&args);
-    
-//                         for j in 0..n_polys {
-//                             difs[j] = self.polys[j].data[2 * i + 1] - self.polys[j].data[2 * i]
-//                         }
-    
-//                         for s in 1..self.f.deg() {
-//                             for j in 0..n_polys {
-//                                 args[j] += difs[j];
-//                             }
-    
-//                             acc[s] += self.f.exec(&args);
-//                         }                    
-//                     }).count();
-
-//                     if (task_idx == num_tasks - 1) && odd_case {
-//                         for j in 0..n_polys {
-//                             args[j] = self.polys[j].pad;
-//                         }
-    
-//                         acc[0] += self.f.exec(&args);
-    
-//                         for j in 0..n_polys {
-//                             difs[j] = self.polys[j].pad - self.polys[j].data[2 * half]
-//                         }
-    
-//                         for s in 1..self.f.deg() {
-//                             for j in 0..n_polys {
-//                                 args[j] += difs[j];
-//                             }
-    
-//                             acc[s] += self.f.exec(&args);
-//                         }                                   
-//                     }
-
-//                     acc
-//                 }).collect();
-
-//                 let mut total_acc = vec![F::zero(); self.f.deg() + 1];
-
-//                 for i in 0..acc.len() {
-//                     for j in 0..self.f.deg() {
-//                         total_acc[j + 1] += acc[i][j]
-//                     }
-//                 }
-//                 total_acc[0] = self.claim - total_acc[1];
-
-//                 self.cached_unipoly = Some(UniPoly::from_evals(&total_acc));
-//             }
-//         }
-//         self.cached_unipoly.as_ref().unwrap().clone()
-        
-//     }
-
-
-//     fn final_evals(&self) -> Vec<F> {
-//         assert!(self.round_idx == self.num_vars, "can only call final evals after the last round");
-//         self.polys.iter().map(|poly| poly.data[0]).collect()
-//     }
-
-//     fn challenges(&self) -> &[F] {
-//         &self.challenges
-//     }
-
-//     fn current_round(&self) -> usize {
-//         self.round_idx
-//     }
-// }
-
-
-//pub type DenseSumcheckObject<F, Fun> = ExampleSumcheckObject<F, Fun>; // To be replaced with optimized implementation.
 
 pub struct ExampleSumcheckObject<F: PrimeField, Fun: AlgFn<F>> {
     polys: Vec<Vec<F>>,
@@ -640,6 +464,12 @@ pub struct SinglePointClaims<F: PrimeField> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SumClaim<F: PrimeField> {
     pub sum: F,
+}
+
+impl<F: PrimeField> From<F> for SumClaim<F> {
+    fn from(value: F) -> Self {
+		Self { sum: value }
+    }
 }
 
 
@@ -1064,7 +894,7 @@ mod tests {
         let sumcheck = DenseEqSumcheck::new(f, dim);
 
         let (output_claims, _) = sumcheck.prove(&mut transcript_p, ev_claims.clone(), polys.clone());
-        
+
         let proof = transcript_p.end();
 
         let mut transcript_v = ProofTranscript2::start_verifier(b"fgstglsp", proof);

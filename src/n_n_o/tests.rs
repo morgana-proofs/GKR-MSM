@@ -195,7 +195,6 @@ fn test_polynomial_sum_evals(){
 }
 
 
-use std::os::unix::thread;
 use rand::thread_rng;
 use super::n_n_sumcheck::NonNatOpen;
 use crate::protocol::sumcheck::Sumcheckable;

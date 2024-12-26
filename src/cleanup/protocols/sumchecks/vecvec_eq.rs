@@ -172,9 +172,11 @@ impl<F: PrimeField, Fun: AlgFn<F>> VecVecDeg2LoSumcheckObjectSO<F, Fun> {
                 .collect_vec()
             )
             .collect_vec();
-        
+
+		let pt_at_bind_idx = self.eq_poly_data.point[self.eq_poly_data.point_parts.binding_var_idx.unwrap()];
+		
         polys.push(eq_poly_sequence_from_multiplier_last(
-            self.eq_poly_data.multiplier * (F::one() - self.eq_poly_data.point[self.eq_poly_data.point_parts.binding_var_idx.unwrap()] - t + (self.eq_poly_data.point[self.eq_poly_data.point_parts.binding_var_idx.unwrap()] * t).double()),
+            self.eq_poly_data.multiplier * (F::one() - pt_at_bind_idx - t + (pt_at_bind_idx * t).double()),
             &self.eq_poly_data.point[self.eq_poly_data.point_parts.vertical_vars_range()]).unwrap(),
         );
 
